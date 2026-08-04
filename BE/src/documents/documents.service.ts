@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import sanitizeHtml = require("sanitize-html");
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateDocumentDto } from "./dto/create-document.dto";
@@ -41,7 +42,7 @@ export class DocumentsService {
       }
     });
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const document = await tx.document.create({
         data: {
           projectId: dto.projectId,

@@ -1,4 +1,5 @@
 import type { CommentThread, DocumentStatus, Project, ProjectDocument } from "./types";
+import { getAccessToken, refreshSession } from "./authApi";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "/api/v1";
 
@@ -43,16 +44,27 @@ type BackendComment = {
   createdAt: string;
 };
 
-export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+export async function apiFetch<T>(path: string, options?: RequestInit, retry = true): Promise<T> {
+  const token = getAccessToken();
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
+    credentials: "include",
     headers: options?.body instanceof FormData
-      ? options.headers
+      ? {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...options.headers
+        }
       : {
           "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...options?.headers
         }
   });
+
+  if (response.status === 401 && retry) {
+    const refreshed = await refreshSession().catch(() => null);
+    if (refreshed) return apiFetch<T>(path, options, false);
+  }
 
   if (!response.ok) {
     const message = await response.text();

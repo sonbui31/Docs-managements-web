@@ -27,6 +27,30 @@ enum ImportStatus {
   FAILED
 }
 
+enum GlobalRole {
+  ADMIN
+  MANAGER
+  EMPLOYEE
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+  LOCKED
+}
+
+enum ProjectRole {
+  VIEWER
+  REVIEWER
+  EDITOR
+  MANAGER
+}
+
+enum TokenType {
+  EMAIL_CONFIRMATION
+  PASSWORD_RESET
+}
+
 model Project {
   id          String     @id @default(cuid())
   code        String     @unique
@@ -36,6 +60,8 @@ model Project {
   documents   Document[]
   mediaAssets MediaAsset[]
   importJobs  ImportJob[]
+  members     ProjectMember[]
+  documentPermissions DocumentPermission[]
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 }
@@ -55,10 +81,109 @@ model Document {
   comments        Comment[]
   mediaAssets     MediaAsset[]
   importJob       ImportJob?
+  permissions     DocumentPermission[]
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
   @@index([projectId])
+}
+
+model User {
+  id                    String           @id @default(cuid())
+  email                 String           @unique
+  passwordHash          String
+  name                  String
+  globalRole            GlobalRole       @default(EMPLOYEE)
+  status                UserStatus       @default(ACTIVE)
+  failedLoginAttempts   Int              @default(0)
+  lockedUntil           DateTime?
+  emailConfirmedAt      DateTime?
+  deletedAt             DateTime?
+  refreshSessions       RefreshSession[]
+  projectMemberships    ProjectMember[]
+  documentPermissions   DocumentPermission[]
+  verificationTokens    VerificationToken[]
+  auditLogs             AuditLog[]       @relation("AuditActor")
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  @@index([globalRole, status])
+}
+
+model RefreshSession {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash      String    @unique
+  userAgent      String?
+  ipAddress      String?
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  lastUsedAt      DateTime?
+
+  @@index([userId, expiresAt])
+}
+
+model ProjectMember {
+  id          String      @id @default(cuid())
+  projectId   String
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        ProjectRole @default(VIEWER)
+  assignedBy  String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([projectId, userId])
+  @@index([userId, role])
+}
+
+model DocumentPermission {
+  id          String      @id @default(cuid())
+  documentId  String
+  document    Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  projectId   String
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        ProjectRole @default(VIEWER)
+  assignedBy  String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([documentId, userId])
+  @@index([projectId, userId])
+}
+
+model VerificationToken {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  type        TokenType
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, type, expiresAt])
+}
+
+model AuditLog {
+  id          String    @id @default(cuid())
+  actorId     String?
+  actor       User?     @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action      String
+  entityType  String?
+  entityId    String?
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
 }
 
 model DocumentVersion {

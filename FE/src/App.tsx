@@ -1,46 +1,44 @@
 import {
+  AlertTriangle,
   Archive,
+  BarChart2,
   BookOpen,
   CheckCircle2,
-  ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Download,
   Eye,
+  File,
   FileCheck2,
   FileCode,
+  FilePlus,
   FileText,
   FolderKanban,
-  Maximize2,
-  Minimize2,
-  MessageSquareText,
-  MessageSquarePlus,
-  Plus,
-  Search,
-  Share2,
-  Sparkles,
-  UploadCloud,
-  X,
-  Send,
-  UserCheck,
-  Layers,
-  File,
   FolderPlus,
-  FilePlus,
-  BarChart2,
+  Layers,
+  ListTree,
+  LogOut,
+  Maximize2,
+  MessageSquarePlus,
+  MessageSquareText,
+  Minimize2,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
-  PanelRightOpen,
-  ChevronDown,
-  ChevronUp,
-  LayoutGrid,
   Pencil,
+  Search,
+  Send,
+  Share2,
+  Sparkles,
   Trash2,
-  AlertTriangle
+  UploadCloud,
+  UserCheck,
+  Users,
+  X
 } from "lucide-react";
-import { useMemo, useState, useEffect, useRef } from "react";
 import mermaid from "mermaid";
-import { initialComments, documents as initialDocuments, projects as initialProjects } from "./data";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createComment,
   createDocument,
@@ -51,7 +49,13 @@ import {
   getExportUrl,
   importDocument
 } from "./api";
-import type { DocumentStatus, ProjectDocument, Project, CommentThread, ToastMessage } from "./types";
+import { AdminPanel } from "./AdminPanel";
+import { AuthPage } from "./AuthPage";
+import { fetchCurrentUser, getStoredUser, logout } from "./authApi";
+import { initialComments, documents as initialDocuments, projects as initialProjects } from "./data";
+import { SessionsModal } from "./SessionsModal";
+import type { CommentThread, DocumentStatus, Project, ProjectDocument, ToastMessage, User } from "./types";
+
 
 // Initialize Mermaid Diagram Engine with a clean, high-contrast, white-background theme
 mermaid.initialize({
@@ -185,22 +189,33 @@ const EMPTY_DOCUMENT: ProjectDocument = {
   contentHtml: `<h3>Chưa có tài liệu trong dự án</h3><p>Hãy tạo tài liệu mới hoặc import file .md, .docx, .pdf để xem nội dung HTML tại đây.</p>`
 };
 
+interface TocItem {
+  id: string;
+  index: number;
+  text: string;
+  level: number;
+}
+
 function App() {
+  // Authentication State
+  const [currentUser, setCurrentUser] = useState<User | null>(() => getStoredUser());
+
   // State for dynamic projects & documents lists
   const [projectsList, setProjectsList] = useState<Project[]>(initialProjects);
+
   const [documentsList, setDocumentsList] = useState<ProjectDocument[]>(() =>
     initialDocuments.map((doc) => ({
       ...doc,
       contentHtml: doc.contentHtml || DEFAULT_DOC_CONTENT
     }))
   );
-  
+
   const [selectedProjectId, setSelectedProjectId] = useState<string>(projectsList[0].id);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string>(documentsList[0].id);
-  const [activeTabNav, setActiveTabNav] = useState<"projects" | "review" | "vault">("projects");
+  const [activeTabNav, setActiveTabNav] = useState<"projects" | "review" | "vault" | "admin">("projects");
   const [statusFilter, setStatusFilter] = useState<"All" | DocumentStatus>("All");
   const [searchQuery, setSearchQuery] = useState<string>("");
-  
+
   // Metric Scope Switcher State ("project" vs "document")
   const [metricScope, setMetricScope] = useState<"project" | "document">("project");
   // Show / Hide top metrics strip (default hidden for clean reading focus)
@@ -211,6 +226,13 @@ function App() {
   const [showCommentsPanel, setShowCommentsPanel] = useState<boolean>(true);
   const [fontSize, setFontSize] = useState<"sm" | "md" | "lg">("md");
   const [isZenMode, setIsZenMode] = useState<boolean>(false);
+
+  // Left Panel Tab Mode ("docs" vs "toc")
+  const [leftPanelMode, setLeftPanelMode] = useState<"docs" | "toc">("docs");
+  // Interactive Table of Contents (Outline) State
+  const [tocItems, setTocItems] = useState<TocItem[]>([]);
+  const [activeTocId, setActiveTocId] = useState<string>("");
+  const [isTocPopoverOpen, setIsTocPopoverOpen] = useState<boolean>(false);
 
   // Interactive Block selection
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
@@ -287,6 +309,7 @@ function App() {
   });
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [isSessionsModalOpen, setIsSessionsModalOpen] = useState(false);
 
   // Update importTargetProjectId when selectedProjectId changes
   useEffect(() => {
@@ -296,6 +319,13 @@ function App() {
 
   useEffect(() => {
     void loadWorkspaceFromBackend();
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    void fetchCurrentUser()
+      .then(setCurrentUser)
+      .catch(() => setCurrentUser(null));
   }, []);
 
   useEffect(() => {
@@ -766,14 +796,14 @@ function App() {
       prev.map((d) =>
         d.id === editingDoc.id
           ? {
-              ...d,
-              title: editDocTitle.trim(),
-              type: editDocType,
-              owner: editDocOwner.trim(),
-              status: editDocStatus,
-              version: editDocVersion.trim(),
-              updatedAt: "Vừa sửa"
-            }
+            ...d,
+            title: editDocTitle.trim(),
+            type: editDocType,
+            owner: editDocOwner.trim(),
+            status: editDocStatus,
+            version: editDocVersion.trim(),
+            updatedAt: "Vừa sửa"
+          }
           : d
       )
     );
@@ -1047,6 +1077,87 @@ function App() {
     };
   }, [selectedDocument.id, selectedDocument.contentHtml, fontSize]);
 
+  // Extract document headings (h1, h2, h3, h4) to generate Table of Contents (TOC)
+  useEffect(() => {
+    let isSubscribed = true;
+
+    const parseHeadings = () => {
+      if (!documentContainerRef.current) return;
+      const container = documentContainerRef.current;
+      const headings = container.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5");
+      const items: TocItem[] = [];
+
+      headings.forEach((heading, index) => {
+        let headingId = heading.id;
+        if (!headingId) {
+          headingId = `doc-heading-${selectedDocument.id}-${index}`;
+          heading.setAttribute("id", headingId);
+        }
+        const level = parseInt(heading.tagName.replace("H", ""), 10) || 1;
+        const text = heading.textContent?.trim() || `Mục ${index + 1}`;
+        items.push({ id: headingId, index, text, level });
+      });
+
+      if (isSubscribed) {
+        setTocItems(items);
+      }
+    };
+
+    parseHeadings();
+    const timer = window.setTimeout(parseHeadings, 300);
+
+    return () => {
+      isSubscribed = false;
+      window.clearTimeout(timer);
+    };
+  }, [selectedDocument.id, selectedDocument.contentHtml]);
+
+  // Smooth scroll and focus target heading in reader
+  const scrollToHeading = (item: TocItem) => {
+    setActiveTocId(item.id);
+    setIsTocPopoverOpen(false);
+
+    if (!documentContainerRef.current) return;
+    const container = documentContainerRef.current;
+    const headings = container.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5");
+
+    let targetHeading: HTMLElement | null = headings[item.index] || document.getElementById(item.id);
+
+    if (!targetHeading && item.text) {
+      headings.forEach((h) => {
+        if (h.textContent?.trim() === item.text) {
+          targetHeading = h;
+        }
+      });
+    }
+
+    if (targetHeading) {
+      targetHeading.setAttribute("id", item.id);
+      const docPage = (targetHeading.closest(".doc-page") || container.closest(".doc-page")) as HTMLElement | null;
+
+      if (docPage) {
+        const elTop = targetHeading.getBoundingClientRect().top;
+        const docPageTop = docPage.getBoundingClientRect().top;
+        const targetScrollTop = docPage.scrollTop + (elTop - docPageTop) - 24;
+
+        docPage.scrollTo({
+          top: Math.max(0, targetScrollTop),
+          behavior: "smooth"
+        });
+      } else {
+        targetHeading.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+
+      targetHeading.classList.remove("heading-focus-pulse");
+      void targetHeading.offsetWidth;
+      targetHeading.classList.add("heading-focus-pulse");
+
+      setTimeout(() => {
+        targetHeading?.classList.remove("heading-focus-pulse");
+      }, 2500);
+    }
+  };
+
   function normalizeMermaidCode(value: string) {
     const textarea = document.createElement("textarea");
     textarea.innerHTML = value;
@@ -1089,24 +1200,35 @@ function App() {
 
   // Compute grid layout class name
   const gridLayoutClass = useMemo(() => {
-    if (isZenMode) return "work-grid zen-mode";
-    if (!showLibraryPanel && !showCommentsPanel) return "work-grid zen-mode";
-    if (!showLibraryPanel) return "work-grid hide-library";
-    if (!showCommentsPanel) return "work-grid hide-comments";
-    return "work-grid";
+    let base = "work-grid";
+    if (isZenMode) base += " zen-mode";
+    if (!showLibraryPanel && !showCommentsPanel) return `${base} hide-both`;
+    if (!showLibraryPanel) return `${base} hide-library`;
+    if (!showCommentsPanel) return `${base} hide-comments`;
+    return base;
   }, [isZenMode, showLibraryPanel, showCommentsPanel]);
+
+  if (!currentUser) {
+    return (
+      <AuthPage
+        onSuccess={(user) => {
+          setCurrentUser(user);
+          addToast("success", "Đăng nhập thành công", `Chào mừng ${user.name} quay trở lại hệ thống!`);
+        }}
+      />
+    );
+  }
 
   return (
     <main className={isZenMode ? "app-shell zen-mode" : "app-shell"}>
+
       {/* Sidebar Navigation */}
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">
-            <BookOpen size={20} />
-          </div>
+          <img src="/logo.png" alt="BA DocControl" className="sidebar-logo-img" />
           <div className="brand-info">
-            <strong>Team Doc Hub</strong>
-            <small>Trung tâm Đọc Tài liệu</small>
+            <strong>BA DocControl</strong>
+            <small>Quản Lý Tài Liệu BA</small>
           </div>
         </div>
 
@@ -1120,7 +1242,7 @@ function App() {
             >
               <div className="nav-item-content">
                 <FolderKanban size={17} />
-                  <span>Dự án ({isLoadingBackend ? "..." : projectsList.length})</span>
+                <span>Dự án ({isLoadingBackend ? "..." : projectsList.length})</span>
               </div>
             </button>
 
@@ -1147,6 +1269,19 @@ function App() {
               </div>
               <span className="nav-badge">{approvedDocsTotalCount}</span>
             </button>
+
+            {currentUser.role === "ADMIN" && (
+              <button
+                className={activeTabNav === "admin" ? "nav-item active" : "nav-item"}
+                type="button"
+                onClick={() => setActiveTabNav("admin")}
+              >
+                <div className="nav-item-content">
+                  <Users size={17} />
+                  <span>Quản trị user</span>
+                </div>
+              </button>
+            )}
           </nav>
         </div>
 
@@ -1209,13 +1344,40 @@ function App() {
 
         <div className="sidebar-footer">
           <div className="user-profile">
-            <div className="avatar">TM</div>
+            <img
+              src={currentUser.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80"}
+              alt={currentUser.name}
+              style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover", border: "1.5px solid var(--accent-primary)" }}
+            />
             <div className="user-info">
-              <strong>Team Member</strong>
-              <small>Reader Workspace</small>
+              <strong>{currentUser.name}</strong>
+              <small style={{ color: "var(--accent-primary)", fontWeight: 500 }}>
+                {currentUser.role === "ADMIN" ? "Admin" : currentUser.role === "MANAGER" ? "Manager" : "Nhân viên"}
+              </small>
             </div>
+            <button
+              type="button"
+              className="logout-icon-btn"
+              title="Phiên đăng nhập"
+              onClick={() => setIsSessionsModalOpen(true)}
+            >
+              <UserCheck size={16} />
+            </button>
+            <button
+              type="button"
+              className="logout-icon-btn"
+              title="Đăng xuất khỏi tài khoản"
+              onClick={() => {
+                void logout();
+                setCurrentUser(null);
+                addToast("info", "Đã đăng xuất", "Hẹn gặp lại bạn!");
+              }}
+            >
+              <LogOut size={16} />
+            </button>
           </div>
         </div>
+
       </aside>
 
       {/* Main Workspace */}
@@ -1224,21 +1386,26 @@ function App() {
         <header className="topbar">
           <div className="topbar-title-area">
             <p className="eyebrow">
-              {activeTabNav === "vault"
+              {activeTabNav === "admin"
+                ? "Quản trị hệ thống • Users & Permissions"
+                : activeTabNav === "vault"
                 ? "Tài Liệu Đã Duyệt • Approved Vault"
                 : activeTabNav === "review"
-                ? "Hàng chờ Kiểm duyệt • Ghi chú & Review"
-                : `${selectedProject.code} / ${selectedProject.client}`}
+                  ? "Hàng chờ Kiểm duyệt • Ghi chú & Review"
+                  : `${selectedProject.code} / ${selectedProject.client}`}
             </p>
             <h1>
-              {activeTabNav === "vault"
+              {activeTabNav === "admin"
+                ? "Quản Lý User & Phân Quyền"
+                : activeTabNav === "vault"
                 ? "Kho Tài Liệu Approved"
                 : activeTabNav === "review"
-                ? "Hàng Chờ Đánh Giá & Ghi Chú"
-                : selectedProject.name}
+                  ? "Hàng Chờ Đánh Giá & Ghi Chú"
+                  : selectedProject.name}
             </h1>
           </div>
 
+          {activeTabNav !== "admin" && (
           <div className="topbar-actions">
             <label className="search-box">
               <Search size={15} />
@@ -1251,32 +1418,9 @@ function App() {
               <span className="kbd-shortcut">⌘K</span>
             </label>
 
-            {/* Persistent Panel Toggle Buttons in Topbar */}
-            <button
-              className={showLibraryPanel && !isZenMode ? "icon-btn active" : "icon-btn"}
-              type="button"
-              title="Mở/Ẩn danh sách tài liệu"
-              onClick={() => {
-                if (isZenMode) setIsZenMode(false);
-                setShowLibraryPanel(!showLibraryPanel);
-              }}
-            >
-              {showLibraryPanel ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
-              <span>Danh sách</span>
-            </button>
 
-            <button
-              className={showCommentsPanel && !isZenMode ? "icon-btn active" : "icon-btn"}
-              type="button"
-              title="Mở/Ẩn bảng trao đổi ghi chú"
-              onClick={() => {
-                if (isZenMode) setIsZenMode(false);
-                setShowCommentsPanel(!showCommentsPanel);
-              }}
-            >
-              {showCommentsPanel ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
-              <span>Ý kiến</span>
-            </button>
+
+
 
             {/* Toggle Metrics Strip Button */}
             <button
@@ -1290,23 +1434,24 @@ function App() {
               {showMetrics ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             </button>
 
-              <button
-                className="icon-btn"
-                type="button"
-                title="Import file vào dự án"
-                disabled={!selectedProjectId}
-                onClick={() => {
-                  setImportTargetProjectId(selectedProjectId);
-                  setIsImportModalOpen(true);
-                }}
+            <button
+              className="icon-btn"
+              type="button"
+              title="Import file vào dự án"
+              disabled={!selectedProjectId}
+              onClick={() => {
+                setImportTargetProjectId(selectedProjectId);
+                setIsImportModalOpen(true);
+              }}
             >
               <UploadCloud size={15} /> Import File
             </button>
           </div>
+          )}
         </header>
 
         {/* Collapsible Dashboard Control Strip */}
-        {showMetrics && (
+        {showMetrics && activeTabNav !== "admin" && (
           <section className="control-strip-wrapper">
             <div className="control-strip-header">
               <div className="metric-scope-switcher">
@@ -1399,44 +1544,14 @@ function App() {
           </section>
         )}
 
-        {/* Persistent Layout Re-Open Bar when panels are collapsed or in Zen Mode */}
-        {(!showLibraryPanel || !showCommentsPanel || isZenMode) && (
-          <aside className="layout-reopen-bar">
-            <LayoutGrid size={15} color="var(--accent-primary)" />
-            <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>Bố cục đang thu gọn:</span>
 
-            {!showLibraryPanel && !isZenMode && (
-              <button
-                className="btn-reopen-pill"
-                type="button"
-                onClick={() => setShowLibraryPanel(true)}
-              >
-                <PanelLeftOpen size={14} /> 📂 Mở danh sách tài liệu
-              </button>
-            )}
 
-            {!showCommentsPanel && !isZenMode && (
-              <button
-                className="btn-reopen-pill"
-                type="button"
-                onClick={() => setShowCommentsPanel(true)}
-              >
-                <PanelRightOpen size={14} /> 💬 Mở bảng ghi chú & ý kiến
-              </button>
-            )}
-
-            {isZenMode && (
-              <span style={{ fontSize: "0.78rem", color: "var(--accent-primary)", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-                ⚡ Nhấn phím <kbd className="kbd-shortcut">ESC</kbd> trên bàn phím để quay về giao diện chuẩn
-              </span>
-            )}
-          </aside>
-        )}
-
-        {/* Work Grid Layout (Optimized for Dominant Document Reading Workspace) */}
+        {activeTabNav === "admin" ? (
+          <AdminPanel projects={projectsList} onToast={addToast} />
+        ) : (
         <section className={gridLayoutClass}>
           {/* Panel 1: Document Library (Collapsible) */}
-          {showLibraryPanel && !isZenMode && (
+          {showLibraryPanel && (
             <div className="panel library">
               <div className="panel-header">
                 <div className="panel-title">
@@ -1444,8 +1559,8 @@ function App() {
                     {activeTabNav === "vault"
                       ? "Kho Approved"
                       : activeTabNav === "review"
-                      ? "Hàng chờ Review"
-                      : `Thư viện • ${selectedProject.code}`}
+                        ? "Hàng chờ Review"
+                        : `Thư viện • ${selectedProject.code}`}
                   </p>
                   <h2>Tài liệu ({filteredDocuments.length})</h2>
                 </div>
@@ -1473,58 +1588,102 @@ function App() {
                 </div>
               </div>
 
-              {/* Status Filter Tabs (Draft | In Review | Approved) */}
-              <div className="library-filter-tabs">
-                {(["All", "Draft", "In Review", "Approved"] as const).map((tab) => (
-                  <button
-                    key={tab}
-                    className={statusFilter === tab ? "tab-btn active" : "tab-btn"}
-                    type="button"
-                    onClick={() => setStatusFilter(tab)}
-                  >
-                    {tab === "All" ? "Tất cả" : tab}
-                  </button>
-                ))}
+              {/* Panel Mode Switcher Tabs (Tài liệu vs Mục lục) */}
+              <div className="panel-mode-tabs">
+                <button
+                  className={leftPanelMode === "docs" ? "mode-tab active" : "mode-tab"}
+                  type="button"
+                  onClick={() => setLeftPanelMode("docs")}
+                >
+                  <FileText size={12} /> Tài liệu ({filteredDocuments.length})
+                </button>
+                <button
+                  className={leftPanelMode === "toc" ? "mode-tab active" : "mode-tab"}
+                  type="button"
+                  onClick={() => setLeftPanelMode("toc")}
+                >
+                  <ListTree size={12} /> Mục lục ({tocItems.length})
+                </button>
               </div>
 
-              {/* Documents List */}
-              <div className="document-table">
-                {filteredDocuments.length === 0 ? (
-                  <div style={{ padding: 16, textAlign: "center", color: "var(--text-muted)", fontSize: "0.78rem" }}>
-                    Không có tài liệu nào phù hợp.
+              {leftPanelMode === "docs" ? (
+                <>
+                  {/* Status Filter Tabs (Draft | In Review | Approved) */}
+                  <div className="library-filter-tabs">
+                    {(["All", "Draft", "In Review", "Approved"] as const).map((tab) => (
+                      <button
+                        key={tab}
+                        className={statusFilter === tab ? "tab-btn active" : "tab-btn"}
+                        type="button"
+                        onClick={() => setStatusFilter(tab)}
+                      >
+                        {tab === "All" ? "Tất cả" : tab}
+                      </button>
+                    ))}
                   </div>
-                ) : (
-                  filteredDocuments.map((doc) => (
-                    <button
-                      key={doc.id}
-                      className={doc.id === selectedDocumentId ? "document-row selected" : "document-row"}
-                      type="button"
-                      onClick={() => setSelectedDocumentId(doc.id)}
-                    >
-                      <div className="doc-icon">
-                        {doc.fileType === "pdf" ? (
-                          <FileText size={16} />
-                        ) : doc.fileType === "md" ? (
-                          <FileCode size={16} />
-                        ) : (
-                          <FileCheck2 size={16} />
-                        )}
+
+                  {/* Documents List */}
+                  <div className="document-table">
+                    {filteredDocuments.length === 0 ? (
+                      <div style={{ padding: 16, textAlign: "center", color: "var(--text-muted)", fontSize: "0.78rem" }}>
+                        Không có tài liệu nào phù hợp.
                       </div>
-                      <div className="doc-info">
-                        <strong>{doc.title}</strong>
-                        <small>{doc.type} • {doc.owner}</small>
-                      </div>
-                      <div className="doc-status-col">
-                        <span className="version-tag">{doc.version}</span>
-                        <span className={`status-pill ${doc.status.toLowerCase().replace(" ", "")}`}>
-                          <span className="status-dot" />
-                          {doc.status}
-                        </span>
-                      </div>
-                    </button>
-                  ))
-                )}
-              </div>
+                    ) : (
+                      filteredDocuments.map((doc) => (
+                        <button
+                          key={doc.id}
+                          className={doc.id === selectedDocumentId ? "document-row selected" : "document-row"}
+                          type="button"
+                          onClick={() => setSelectedDocumentId(doc.id)}
+                        >
+                          <div className="doc-icon">
+                            {doc.fileType === "pdf" ? (
+                              <FileText size={16} />
+                            ) : doc.fileType === "md" ? (
+                              <FileCode size={16} />
+                            ) : (
+                              <FileCheck2 size={16} />
+                            )}
+                          </div>
+                          <div className="doc-info">
+                            <strong>{doc.title}</strong>
+                            <small>{doc.type} • {doc.owner}</small>
+                          </div>
+                          <div className="doc-status-col">
+                            <span className="version-tag">{doc.version}</span>
+                            <span className={`status-pill ${doc.status.toLowerCase().replace(" ", "")}`}>
+                              <span className="status-dot" />
+                              {doc.status}
+                            </span>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="toc-container">
+                  {tocItems.length === 0 ? (
+                    <div className="toc-empty-state">
+                      <BookOpen size={24} color="var(--text-muted)" />
+                      <p>Tài liệu này chưa có tiêu đề (H1, H2, H3)</p>
+                    </div>
+                  ) : (
+                    <div className="toc-tree">
+                      {tocItems.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={`toc-item level-${item.level} ${activeTocId === item.id ? "active" : ""}`}
+                          onClick={() => scrollToHeading(item)}
+                        >
+                          <span className="toc-item-text">{item.text}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -1605,80 +1764,54 @@ function App() {
             {/* Reading Toolbar Controls */}
             <div className="reader-controls-bar">
               <div className="reader-controls-group">
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <Eye size={14} color="var(--accent-primary)" />
-                  <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>
-                    Chế độ Xem & Đọc Tài Liệu (Team Reader Mode)
-                  </span>
-                </div>
-                <span>•</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <Clock size={13} />
-                  <span>Ước tính 4 phút đọc</span>
+                <span style={{ fontSize: "0.74rem", fontWeight: 600, color: "var(--text-muted)" }}>Cỡ chữ:</span>
+                <div style={{ display: "flex", gap: 3 }}>
+                  <button
+                    className={fontSize === "sm" ? "font-size-btn active" : "font-size-btn"}
+                    type="button"
+                    onClick={() => setFontSize("sm")}
+                  >
+                    Nhỏ
+                  </button>
+                  <button
+                    className={fontSize === "md" ? "font-size-btn active" : "font-size-btn"}
+                    type="button"
+                    onClick={() => setFontSize("md")}
+                  >
+                    Vừa
+                  </button>
+                  <button
+                    className={fontSize === "lg" ? "font-size-btn active" : "font-size-btn"}
+                    type="button"
+                    onClick={() => setFontSize("lg")}
+                  >
+                    Lớn
+                  </button>
                 </div>
               </div>
 
-              {/* Panel Toggle & Font Size Controls */}
               <div className="reader-controls-group">
-                <span style={{ fontSize: "0.74rem" }}>Cỡ chữ:</span>
-                <button
-                  className={fontSize === "sm" ? "font-size-btn active" : "font-size-btn"}
-                  type="button"
-                  onClick={() => setFontSize("sm")}
-                >
-                  Nhỏ
-                </button>
-                <button
-                  className={fontSize === "md" ? "font-size-btn active" : "font-size-btn"}
-                  type="button"
-                  onClick={() => setFontSize("md")}
-                >
-                  Vừa
-                </button>
-                <button
-                  className={fontSize === "lg" ? "font-size-btn active" : "font-size-btn"}
-                  type="button"
-                  onClick={() => setFontSize("lg")}
-                >
-                  Lớn
-                </button>
-
-                <span>•</span>
                 <button
                   className={isZenMode ? "font-size-btn active" : "font-size-btn"}
                   type="button"
                   title="Chế độ đọc tập trung (Nhấn ESC để thoát)"
-                  onClick={() => setIsZenMode(!isZenMode)}
+                  onClick={() => {
+                    const nextZen = !isZenMode;
+                    setIsZenMode(nextZen);
+                    if (nextZen) {
+                      setShowLibraryPanel(true);
+                      setShowCommentsPanel(true);
+                    }
+                  }}
                 >
                   {isZenMode ? <Minimize2 size={13} style={{ display: "inline", marginRight: 4 }} /> : <Maximize2 size={13} style={{ display: "inline", marginRight: 4 }} />}
-                  <span>{isZenMode ? "Đang Zen Mode (ESC)" : "Tập Trung Đọc"}</span>
+                  <span>{isZenMode ? "Focus Mode" : "Tập Trung Đọc"}</span>
                 </button>
               </div>
             </div>
 
             {/* Pure Document Reader View */}
             <div className="doc-page">
-              {/* Left Ruler for Requirement Block Tags */}
-              <div className="block-ruler">
-                <span
-                  className={activeBlockId === "REQ-001" ? "ruler-tag active" : "ruler-tag"}
-                  onClick={() => setActiveBlockId(activeBlockId === "REQ-001" ? null : "REQ-001")}
-                >
-                  REQ-001
-                </span>
-                <span
-                  className={activeBlockId === "REQ-002" ? "ruler-tag active" : "ruler-tag"}
-                  onClick={() => setActiveBlockId(activeBlockId === "REQ-002" ? null : "REQ-002")}
-                >
-                  REQ-002
-                </span>
-                <span
-                  className={activeBlockId === "REQ-004" ? "ruler-tag active" : "ruler-tag"}
-                  onClick={() => setActiveBlockId(activeBlockId === "REQ-004" ? null : "REQ-004")}
-                >
-                  REQ-004
-                </span>
-              </div>
 
               {/* Rendered HTML Document Content for Reading & Comment Discussion */}
               <section
@@ -1739,7 +1872,7 @@ function App() {
           </article>
 
           {/* Panel 3: Dynamic Comments & Line Review Panel (Collapsible) */}
-          {showCommentsPanel && !isZenMode && (
+          {showCommentsPanel && (
             <aside className="panel comments-panel">
               <div className="panel-header">
                 <div className="panel-title">
@@ -1912,6 +2045,7 @@ function App() {
             </aside>
           )}
         </section>
+        )}
       </section>
 
       {/* Modal 1: Create New Project */}
@@ -2296,6 +2430,17 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {isSessionsModalOpen && (
+        <SessionsModal
+          onClose={() => setIsSessionsModalOpen(false)}
+          onLogoutAll={() => {
+            setIsSessionsModalOpen(false);
+            setCurrentUser(null);
+            addToast("info", "Đã đăng xuất mọi thiết bị", "Tất cả phiên đăng nhập đã bị thu hồi.");
+          }}
+        />
       )}
 
       {/* Floating Toast Notifications */}

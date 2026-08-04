@@ -53,3 +53,19 @@ export type ToastMessage = {
   title: string;
   message: string;
 };
+
+export type UserRole = "ADMIN" | "MANAGER" | "EMPLOYEE";
+export type UserStatus = "ACTIVE" | "DISABLED" | "LOCKED";
+export type ProjectRole = "VIEWER" | "REVIEWER" | "EDITOR" | "MANAGER";
+
+export type User = {
+  id: string;
+  email: string;
+  name: string;
+  avatar?: string;
+  role: UserRole;
+  status?: UserStatus;
+  department?: string;
+  createdAt: string;
+};
+
