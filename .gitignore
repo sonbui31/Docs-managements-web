@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+.DS_Store
+.agents
+
+FE/node_modules/
+FE/dist/
+FE/.env
+
+BE/node_modules/
+BE/dist/
+BE/.env

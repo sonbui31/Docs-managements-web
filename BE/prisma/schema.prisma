@@ -1,0 +1,127 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DocumentStatus {
+  DRAFT
+  IN_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+  SIGNED_OFF
+  ARCHIVED
+}
+
+enum CommentStatus {
+  OPEN
+  RESOLVED
+}
+
+enum ImportStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model Project {
+  id          String     @id @default(cuid())
+  code        String     @unique
+  name        String
+  client      String?
+  description String?
+  documents   Document[]
+  mediaAssets MediaAsset[]
+  importJobs  ImportJob[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Document {
+  id              String            @id @default(cuid())
+  projectId       String
+  project         Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title           String
+  type            String
+  status          DocumentStatus    @default(DRAFT)
+  currentVersion  String            @default("v0.1")
+  htmlContent     String
+  sourceType      String            @default("manual")
+  sourceFileName  String?
+  versions        DocumentVersion[]
+  comments        Comment[]
+  mediaAssets     MediaAsset[]
+  importJob       ImportJob?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([projectId])
+}
+
+model DocumentVersion {
+  id          String   @id @default(cuid())
+  documentId  String
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  version     String
+  htmlContent String
+  changeNote  String?
+  createdBy   String?
+  createdAt   DateTime @default(now())
+
+  @@unique([documentId, version])
+}
+
+model Comment {
+  id          String        @id @default(cuid())
+  documentId  String
+  document    Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  parentId    String?
+  blockId     String
+  selectedText String?
+  content     String
+  status      CommentStatus @default(OPEN)
+  createdBy   String?
+  resolvedBy  String?
+  createdAt   DateTime      @default(now())
+  resolvedAt  DateTime?
+
+  @@index([documentId, blockId])
+  @@index([parentId])
+}
+
+model MediaAsset {
+  id                 String    @id @default(cuid())
+  projectId          String
+  project            Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  documentId         String?
+  document           Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  cloudinaryPublicId String
+  url                String
+  mimeType           String?
+  size               Int?
+  width              Int?
+  height             Int?
+  uploadedBy         String?
+  createdAt          DateTime  @default(now())
+
+  @@index([projectId, documentId])
+}
+
+model ImportJob {
+  id             String       @id @default(cuid())
+  projectId      String
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  documentId     String?      @unique
+  document       Document?    @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  sourceFileName String
+  sourceFileType String
+  sourceFileUrl  String?
+  status         ImportStatus @default(PENDING)
+  errorMessage   String?
+  createdBy      String?
+  createdAt      DateTime     @default(now())
+  completedAt    DateTime?
+}
