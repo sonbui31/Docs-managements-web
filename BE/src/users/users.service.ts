@@ -3,13 +3,18 @@ import { GlobalRole } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuthenticatedUser } from "../auth/auth.types";
+import { PermissionsService } from "../permissions/permissions.service";
+import { AssignDocumentDto } from "./dto/assign-document.dto";
 import { AssignProjectDto } from "./dto/assign-project.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly permissions: PermissionsService
+  ) {}
 
   async findAll(actor: AuthenticatedUser) {
     this.assertAdmin(actor);
@@ -20,6 +25,10 @@ export class UsersService {
       include: {
         projectMemberships: {
           include: { project: { select: { id: true, code: true, name: true } } },
+          orderBy: { createdAt: "desc" }
+        },
+        documentPermissions: {
+          include: { document: { select: { id: true, title: true, type: true, project: { select: { code: true } } } } },
           orderBy: { createdAt: "desc" }
         },
         _count: { select: { refreshSessions: true } }
@@ -39,6 +48,14 @@ export class UsersService {
         role: membership.role,
         code: membership.project.code,
         name: membership.project.name
+      })),
+      documents: user.documentPermissions.map((permission) => ({
+        documentId: permission.documentId,
+        projectId: permission.projectId,
+        role: permission.role,
+        title: permission.document.title,
+        type: permission.document.type,
+        projectCode: permission.document.project.code
       }))
     }));
   }
@@ -124,6 +141,52 @@ export class UsersService {
   async removeProject(userId: string, projectId: string, actor: AuthenticatedUser) {
     this.assertAdminOrManager(actor);
     await this.prisma.projectMember.deleteMany({ where: { userId, projectId } });
+    return { ok: true };
+  }
+
+  async assignDocument(userId: string, dto: AssignDocumentDto, actor: AuthenticatedUser) {
+    const document = await this.prisma.document.findUnique({
+      where: { id: dto.documentId },
+      select: { id: true, projectId: true }
+    });
+    if (!document) throw new NotFoundException("Document not found");
+
+    if (actor.role !== "ADMIN") {
+      await this.permissions.assertProjectRole(actor, document.projectId, ["MANAGER"]);
+    }
+
+    const user = await this.prisma.user.findFirst({ where: { id: userId, deletedAt: null } });
+    if (!user) throw new NotFoundException("User not found");
+
+    return this.prisma.documentPermission.upsert({
+      where: { documentId_userId: { documentId: dto.documentId, userId } },
+      create: {
+        documentId: dto.documentId,
+        projectId: document.projectId,
+        userId,
+        role: dto.role,
+        assignedBy: actor.id
+      },
+      update: {
+        projectId: document.projectId,
+        role: dto.role,
+        assignedBy: actor.id
+      }
+    });
+  }
+
+  async removeDocument(userId: string, documentId: string, actor: AuthenticatedUser) {
+    const document = await this.prisma.document.findUnique({
+      where: { id: documentId },
+      select: { projectId: true }
+    });
+    if (!document) throw new NotFoundException("Document not found");
+
+    if (actor.role !== "ADMIN") {
+      await this.permissions.assertProjectRole(actor, document.projectId, ["MANAGER"]);
+    }
+
+    await this.prisma.documentPermission.deleteMany({ where: { userId, documentId } });
     return { ok: true };
   }
 

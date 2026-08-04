@@ -1,13 +1,19 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import HTMLtoDOCX from "html-to-docx";
 import { chromium } from "playwright";
+import { AuthenticatedUser } from "../auth/auth.types";
+import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
 export class ExportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly permissions: PermissionsService
+  ) {}
 
-  async exportPdf(id: string) {
+  async exportPdf(id: string, user: AuthenticatedUser) {
+    await this.permissions.assertDocumentRole(user, id, ["VIEWER"]);
     const document = await this.getDocument(id);
     const browser = await chromium.launch({ headless: true });
     try {
@@ -25,7 +31,8 @@ export class ExportsService {
     }
   }
 
-  async exportDocx(id: string) {
+  async exportDocx(id: string, user: AuthenticatedUser) {
+    await this.permissions.assertDocumentRole(user, id, ["VIEWER"]);
     const document = await this.getDocument(id);
     return HTMLtoDOCX(document.htmlContent, undefined, {
       title: document.title,

@@ -3196,7 +3196,7 @@ button {
 }
 
 .admin-summary {
-  grid-template-columns: repeat(2, minmax(180px, 1fr)) auto;
+  grid-template-columns: repeat(3, minmax(160px, 1fr)) auto;
   align-items: stretch;
 }
 
@@ -3325,6 +3325,12 @@ button {
   padding: 5px 8px;
   font-size: 0.72rem;
   color: var(--text-secondary);
+}
+
+.project-chip.document-chip {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #047857;
 }
 
 .admin-empty {

@@ -1,14 +1,21 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import sanitizeHtml = require("sanitize-html");
+import { AuthenticatedUser } from "../auth/auth.types";
+import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateDocumentDto } from "./dto/create-document.dto";
 
 @Injectable()
 export class DocumentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly permissions: PermissionsService
+  ) {}
 
-  findByProject(projectId: string) {
+  async findByProject(projectId: string, user: AuthenticatedUser) {
+    await this.permissions.assertProjectRole(user, projectId, ["VIEWER"]);
+
     return this.prisma.document.findMany({
       where: { projectId },
       orderBy: { updatedAt: "desc" },
@@ -16,7 +23,9 @@ export class DocumentsService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user: AuthenticatedUser) {
+    await this.permissions.assertDocumentRole(user, id, ["VIEWER"]);
+
     const document = await this.prisma.document.findUnique({
       where: { id },
       include: {
@@ -32,7 +41,9 @@ export class DocumentsService {
     return document;
   }
 
-  create(dto: CreateDocumentDto) {
+  async create(dto: CreateDocumentDto, user: AuthenticatedUser) {
+    await this.permissions.assertProjectRole(user, dto.projectId, ["EDITOR", "MANAGER"]);
+
     const cleanHtml = sanitizeHtml(dto.htmlContent, {
       allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img", "h1", "h2", "table", "thead", "tbody", "tr", "th", "td"]),
       allowedAttributes: {

@@ -1,18 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, Lock, Plus, RefreshCw, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
 import {
+  assignUserToDocument,
   assignUserToProject,
   createUser,
   deleteUser,
   fetchUsers,
   type ManagedUser,
+  removeUserFromDocument,
   removeUserFromProject,
   updateUser
 } from "./authApi";
-import type { Project, ProjectRole, UserRole, UserStatus } from "./types";
+import type { Project, ProjectDocument, ProjectRole, UserRole, UserStatus } from "./types";
 
 type Props = {
   projects: Project[];
+  documents: ProjectDocument[];
   onToast: (type: "success" | "info" | "warning" | "error", title: string, message: string) => void;
 };
 
@@ -35,7 +38,7 @@ const projectRoleLabels: Record<ProjectRole, string> = {
   MANAGER: "Manager"
 };
 
-export function AdminPanel({ projects, onToast }: Props) {
+export function AdminPanel({ projects, documents, onToast }: Props) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [newName, setNewName] = useState("");
@@ -45,6 +48,9 @@ export function AdminPanel({ projects, onToast }: Props) {
   const [assignUserId, setAssignUserId] = useState("");
   const [assignProjectId, setAssignProjectId] = useState(projects[0]?.id ?? "");
   const [assignRole, setAssignRole] = useState<ProjectRole>("VIEWER");
+  const [assignDocumentUserId, setAssignDocumentUserId] = useState("");
+  const [assignDocumentId, setAssignDocumentId] = useState(documents[0]?.id ?? "");
+  const [assignDocumentRole, setAssignDocumentRole] = useState<ProjectRole>("VIEWER");
 
   const activeUsers = useMemo(() => users.filter((user) => user.status === "ACTIVE").length, [users]);
 
@@ -56,12 +62,17 @@ export function AdminPanel({ projects, onToast }: Props) {
     setAssignProjectId((current) => current || projects[0]?.id || "");
   }, [projects]);
 
+  useEffect(() => {
+    setAssignDocumentId((current) => current || documents[0]?.id || "");
+  }, [documents]);
+
   async function loadUsers(showToastOnError = false) {
     setLoading(true);
     try {
       const data = await fetchUsers();
       setUsers(data);
       setAssignUserId((current) => current || data.find((user) => user.role !== "ADMIN")?.id || "");
+      setAssignDocumentUserId((current) => current || data.find((user) => user.role !== "ADMIN")?.id || "");
     } catch (error: any) {
       console.error("Load users failed:", error);
       if (showToastOnError) {
@@ -141,6 +152,33 @@ export function AdminPanel({ projects, onToast }: Props) {
     }
   }
 
+  async function handleAssignDocument() {
+    if (!assignDocumentUserId || !assignDocumentId) {
+      onToast("warning", "Chưa chọn đủ", "Chọn user và tài liệu trước khi gán quyền.");
+      return;
+    }
+
+    try {
+      await assignUserToDocument(assignDocumentUserId, assignDocumentId, assignDocumentRole);
+      await loadUsers();
+      onToast("success", "Đã gán quyền tài liệu", "Quyền riêng trên tài liệu đã được cập nhật.");
+    } catch (error) {
+      console.error("Assign document failed:", error);
+      onToast("error", "Không gán được tài liệu", "Kiểm tra quyền manager/admin hoặc tài liệu được chọn.");
+    }
+  }
+
+  async function handleRemoveDocument(userId: string, documentId: string) {
+    try {
+      await removeUserFromDocument(userId, documentId);
+      await loadUsers();
+      onToast("info", "Đã bỏ quyền tài liệu", "User sẽ quay về quyền theo project nếu có.");
+    } catch (error) {
+      console.error("Remove document failed:", error);
+      onToast("error", "Không bỏ quyền tài liệu", "Vui lòng thử lại sau.");
+    }
+  }
+
   return (
     <section className="admin-panel">
       <div className="admin-summary">
@@ -153,6 +191,11 @@ export function AdminPanel({ projects, onToast }: Props) {
           <span className="admin-kicker">Projects</span>
           <strong>{projects.length}</strong>
           <small>Dùng để gán quyền theo dự án</small>
+        </div>
+        <div>
+          <span className="admin-kicker">Documents</span>
+          <strong>{documents.length}</strong>
+          <small>Quyền riêng ưu tiên hơn quyền dự án</small>
         </div>
         <button className="btn-secondary" type="button" onClick={() => void loadUsers(true)} disabled={loading}>
           <RefreshCw size={16} /> Làm mới
@@ -206,6 +249,35 @@ export function AdminPanel({ projects, onToast }: Props) {
             <Check size={16} /> Lưu phân quyền
           </button>
         </section>
+
+        <section className="admin-block">
+          <div className="admin-block-header">
+            <ShieldCheck size={18} />
+            <h3>Gán quyền tài liệu</h3>
+          </div>
+          <div className="admin-form-grid">
+            <select value={assignDocumentUserId} onChange={(event) => setAssignDocumentUserId(event.target.value)}>
+              {users.filter((user) => user.role !== "ADMIN").map((user) => (
+                <option key={user.id} value={user.id}>{user.name} - {user.email}</option>
+              ))}
+            </select>
+            <select value={assignDocumentId} onChange={(event) => setAssignDocumentId(event.target.value)}>
+              {documents.map((document) => (
+                <option key={document.id} value={document.id}>
+                  {projects.find((project) => project.id === document.projectId)?.code ?? "DOC"} - {document.title}
+                </option>
+              ))}
+            </select>
+            <select value={assignDocumentRole} onChange={(event) => setAssignDocumentRole(event.target.value as ProjectRole)}>
+              {Object.entries(projectRoleLabels).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
+          <button className="btn-primary" type="button" onClick={() => void handleAssignDocument()}>
+            <Check size={16} /> Lưu quyền tài liệu
+          </button>
+        </section>
       </div>
 
       <section className="admin-users">
@@ -221,7 +293,10 @@ export function AdminPanel({ projects, onToast }: Props) {
                 <div>
                   <strong>{user.name}</strong>
                   <span>{user.email}</span>
-                  <small>{user.projects.length ? user.projects.map((project) => `${project.code}:${project.role}`).join(" | ") : "Chưa được gán dự án"}</small>
+                  <small>
+                    {user.projects.length ? user.projects.map((project) => `${project.code}:${project.role}`).join(" | ") : "Chưa được gán dự án"}
+                    {user.documents.length ? ` • Doc: ${user.documents.map((document) => `${document.projectCode}/${document.type}:${document.role}`).join(" | ")}` : ""}
+                  </small>
                 </div>
               </div>
               <select
@@ -252,6 +327,17 @@ export function AdminPanel({ projects, onToast }: Props) {
                     onClick={() => void handleRemoveProject(user.id, project.projectId)}
                   >
                     {project.code} x
+                  </button>
+                ))}
+                {user.documents.map((document) => (
+                  <button
+                    key={document.documentId}
+                    type="button"
+                    className="project-chip document-chip"
+                    title={`Bỏ quyền riêng: ${document.title}`}
+                    onClick={() => void handleRemoveDocument(user.id, document.documentId)}
+                  >
+                    {document.projectCode}/{document.type} x
                   </button>
                 ))}
                 <button

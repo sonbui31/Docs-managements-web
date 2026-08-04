@@ -3,7 +3,9 @@ import mammoth from "mammoth";
 import pdfParse from "pdf-parse";
 import sanitizeHtml = require("sanitize-html");
 import * as showdown from "showdown";
+import { AuthenticatedUser } from "../auth/auth.types";
 import { DocumentsService } from "../documents/documents.service";
+import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ImportDocumentDto } from "./dto/import-document.dto";
 
@@ -18,13 +20,16 @@ export class ImportsService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly documentsService: DocumentsService
+    private readonly documentsService: DocumentsService,
+    private readonly permissions: PermissionsService
   ) {}
 
-  async importDocument(file: Express.Multer.File | undefined, dto: ImportDocumentDto) {
+  async importDocument(file: Express.Multer.File | undefined, dto: ImportDocumentDto, user: AuthenticatedUser) {
     if (!file) {
       throw new BadRequestException("File is required");
     }
+
+    await this.permissions.assertProjectRole(user, dto.projectId, ["EDITOR", "MANAGER"]);
 
     const importJob = await this.prisma.importJob.create({
       data: {
@@ -43,7 +48,7 @@ export class ImportsService {
         htmlContent,
         sourceType: "imported",
         sourceFileName: file.originalname
-      });
+      }, user);
 
       await this.prisma.importJob.update({
         where: { id: importJob.id },

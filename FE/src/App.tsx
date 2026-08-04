@@ -43,10 +43,10 @@ import {
   createComment,
   createDocument,
   createProject,
+  downloadExport,
   fetchComments,
   fetchDocumentsByProject,
   fetchProjects,
-  getExportUrl,
   importDocument
 } from "./api";
 import { AdminPanel } from "./AdminPanel";
@@ -1547,7 +1547,7 @@ function App() {
 
 
         {activeTabNav === "admin" ? (
-          <AdminPanel projects={projectsList} onToast={addToast} />
+          <AdminPanel projects={projectsList} documents={documentsList} onToast={addToast} />
         ) : (
         <section className={gridLayoutClass}>
           {/* Panel 1: Document Library (Collapsible) */}
@@ -1743,7 +1743,7 @@ function App() {
                   type="button"
                   onClick={() => {
                     if (selectedDocument.id === "empty-document") return;
-                    window.open(getExportUrl(selectedDocument.id, "pdf"), "_blank", "noopener,noreferrer");
+                    void downloadExport(selectedDocument.id, "pdf");
                   }}
                 >
                   <Download size={14} /> Xuất PDF
@@ -1753,7 +1753,7 @@ function App() {
                   type="button"
                   onClick={() => {
                     if (selectedDocument.id === "empty-document") return;
-                    window.open(getExportUrl(selectedDocument.id, "docx"), "_blank", "noopener,noreferrer");
+                    void downloadExport(selectedDocument.id, "docx");
                   }}
                 >
                   <Download size={14} /> Xuất Word

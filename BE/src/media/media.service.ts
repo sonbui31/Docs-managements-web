@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { v2 as cloudinary } from "cloudinary";
+import { AuthenticatedUser } from "../auth/auth.types";
+import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { UploadMediaDto } from "./dto/upload-media.dto";
 
@@ -8,7 +10,8 @@ import { UploadMediaDto } from "./dto/upload-media.dto";
 export class MediaService {
   constructor(
     private readonly config: ConfigService,
-    private readonly prisma: PrismaService
+    private readonly prisma: PrismaService,
+    private readonly permissions: PermissionsService
   ) {
     cloudinary.config({
       cloud_name: this.config.get<string>("CLOUDINARY_CLOUD_NAME"),
@@ -17,9 +20,15 @@ export class MediaService {
     });
   }
 
-  async upload(file: Express.Multer.File | undefined, dto: UploadMediaDto) {
+  async upload(file: Express.Multer.File | undefined, dto: UploadMediaDto, user: AuthenticatedUser) {
     if (!file) {
       throw new BadRequestException("File is required");
+    }
+
+    if (dto.documentId) {
+      await this.permissions.assertDocumentRole(user, dto.documentId, ["EDITOR", "MANAGER"]);
+    } else {
+      await this.permissions.assertProjectRole(user, dto.projectId, ["EDITOR", "MANAGER"]);
     }
 
     const result = await new Promise<{

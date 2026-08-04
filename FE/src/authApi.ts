@@ -133,6 +133,14 @@ export type ManagedUser = User & {
     name: string;
     role: ProjectRole;
   }>;
+  documents: Array<{
+    documentId: string;
+    projectId: string;
+    projectCode: string;
+    title: string;
+    type: string;
+    role: ProjectRole;
+  }>;
 };
 
 export async function fetchUsers() {
@@ -169,4 +177,15 @@ export async function assignUserToProject(userId: string, projectId: string, rol
 
 export async function removeUserFromProject(userId: string, projectId: string) {
   return authFetch<{ ok: boolean }>(`/users/${userId}/projects/${projectId}`, { method: "DELETE" });
+}
+
+export async function assignUserToDocument(userId: string, documentId: string, role: ProjectRole) {
+  return authFetch<{ id: string }>(`/users/${userId}/documents`, {
+    method: "POST",
+    body: JSON.stringify({ documentId, role })
+  });
+}
+
+export async function removeUserFromDocument(userId: string, documentId: string) {
+  return authFetch<{ ok: boolean }>(`/users/${userId}/documents/${documentId}`, { method: "DELETE" });
 }

@@ -74,6 +74,30 @@ export async function apiFetch<T>(path: string, options?: RequestInit, retry = t
   return response.json() as Promise<T>;
 }
 
+export async function apiFetchBlob(path: string, options?: RequestInit, retry = true): Promise<Blob> {
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    credentials: "include",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options?.headers
+    }
+  });
+
+  if (response.status === 401 && retry) {
+    const refreshed = await refreshSession().catch(() => null);
+    if (refreshed) return apiFetchBlob(path, options, false);
+  }
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `API error ${response.status}`);
+  }
+
+  return response.blob();
+}
+
 export function mapProject(project: BackendProject): Project {
   return {
     id: project.id,
@@ -186,8 +210,16 @@ export async function createComment(payload: {
   return mapComment(comment);
 }
 
-export function getExportUrl(documentId: string, type: "pdf" | "docx") {
-  return `${API_BASE}/exports/documents/${documentId}/${type}`;
+export async function downloadExport(documentId: string, type: "pdf" | "docx") {
+  const blob = await apiFetchBlob(`/exports/documents/${documentId}/${type}`);
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `document-${documentId}.${type}`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function mapDocumentStatus(status: BackendDocument["status"]): DocumentStatus {

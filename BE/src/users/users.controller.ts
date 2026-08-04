@@ -3,6 +3,7 @@ import { ApiTags } from "@nestjs/swagger";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { AssignDocumentDto } from "./dto/assign-document.dto";
 import { AssignProjectDto } from "./dto/assign-project.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
@@ -42,5 +43,15 @@ export class UsersController {
   @Delete(":id/projects/:projectId")
   removeProject(@Param("id") id: string, @Param("projectId") projectId: string, @CurrentUser() user: AuthenticatedUser) {
     return this.usersService.removeProject(id, projectId, user);
+  }
+
+  @Post(":id/documents")
+  assignDocument(@Param("id") id: string, @Body() dto: AssignDocumentDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.usersService.assignDocument(id, dto, user);
+  }
+
+  @Delete(":id/documents/:documentId")
+  removeDocument(@Param("id") id: string, @Param("documentId") documentId: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.usersService.removeDocument(id, documentId, user);
   }
 }

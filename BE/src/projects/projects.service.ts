@@ -1,13 +1,19 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { AuthenticatedUser } from "../auth/auth.types";
+import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateProjectDto } from "./dto/create-project.dto";
 
 @Injectable()
 export class ProjectsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly permissions: PermissionsService
+  ) {}
 
-  findAll() {
+  findAll(user: AuthenticatedUser) {
     return this.prisma.project.findMany({
+      where: this.permissions.projectVisibilityWhere(user),
       orderBy: { updatedAt: "desc" },
       include: {
         _count: {
@@ -17,7 +23,9 @@ export class ProjectsService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user: AuthenticatedUser) {
+    await this.permissions.assertProjectRole(user, id, ["VIEWER"]);
+
     const project = await this.prisma.project.findUnique({
       where: { id },
       include: {
@@ -33,7 +41,22 @@ export class ProjectsService {
     return project;
   }
 
-  create(dto: CreateProjectDto) {
-    return this.prisma.project.create({ data: dto });
+  async create(dto: CreateProjectDto, user: AuthenticatedUser) {
+    await this.permissions.assertCanCreateProject(user);
+
+    return this.prisma.$transaction(async (tx) => {
+      const project = await tx.project.create({ data: dto });
+      if (user.role === "MANAGER") {
+        await tx.projectMember.create({
+          data: {
+            projectId: project.id,
+            userId: user.id,
+            role: "MANAGER",
+            assignedBy: user.id
+          }
+        });
+      }
+      return project;
+    });
   }
 }
