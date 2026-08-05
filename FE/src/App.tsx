@@ -40,7 +40,7 @@ import {
   X
 } from "lucide-react";
 import mermaid from "mermaid";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   createComment,
   createDocument,
@@ -247,6 +247,9 @@ function App() {
       contentHtml: doc.contentHtml || DEFAULT_DOC_CONTENT
     }))
   );
+  const [documentCommentCounts, setDocumentCommentCounts] = useState<Record<string, number>>(() =>
+    Object.fromEntries(initialDocuments.map((doc) => [doc.id, doc.openCommentsCount ?? 0]))
+  );
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>(projectsList[0]?.id ?? "");
   const [selectedDocumentId, setSelectedDocumentId] = useState<string>(documentsList[0]?.id ?? "");
@@ -358,6 +361,31 @@ function App() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isSessionsModalOpen, setIsSessionsModalOpen] = useState(false);
 
+  function setSyncedDocumentCommentCount(documentId: string, count: number) {
+    const safeCount = Math.max(0, count);
+    setDocumentCommentCounts((prev) => ({ ...prev, [documentId]: safeCount }));
+    setDocumentsList((prev) =>
+      prev.map((document) =>
+        document.id === documentId ? { ...document, openCommentsCount: safeCount } : document
+      )
+    );
+  }
+
+  function adjustDocumentCommentCount(documentId: string | undefined, delta: number) {
+    if (!documentId) return;
+    const current =
+      documentCommentCounts[documentId] ??
+      documentsList.find((document) => document.id === documentId)?.openCommentsCount ??
+      0;
+    const nextCount = Math.max(0, current + delta);
+    setDocumentCommentCounts((prev) => ({ ...prev, [documentId]: nextCount }));
+    setDocumentsList((prev) =>
+      prev.map((document) =>
+        document.id === documentId ? { ...document, openCommentsCount: nextCount } : document
+      )
+    );
+  }
+
   // Update importTargetProjectId when selectedProjectId changes
   useEffect(() => {
     setImportTargetProjectId(selectedProjectId);
@@ -393,20 +421,17 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (currentUser && currentUser.role !== "ADMIN" && currentUser.role !== "MANAGER" && activeTabNav === "admin") {
+      setActiveTabNav("projects");
+    }
+  }, [currentUser?.role, activeTabNav]);
+
+  useEffect(() => {
     if (!isBackendConnected || !selectedDocumentId || selectedDocumentId === "empty-document") return;
     setSelectedCommentTarget(null);
     setActiveBlockId(null);
     void loadCommentsForDocument(selectedDocumentId);
   }, [isBackendConnected, selectedDocumentId]);
-
-  useEffect(() => {
-    if (!isBackendConnected || documentsList.length === 0) return;
-    documentsList.forEach((doc) => {
-      if (doc.id && doc.id !== "empty-document") {
-        void loadCommentsForDocument(doc.id);
-      }
-    });
-  }, [isBackendConnected, documentsList]);
 
   async function loadWorkspaceFromBackend(preferredProjectId?: string, preferredDocumentId?: string) {
     setIsLoadingBackend(true);
@@ -442,6 +467,9 @@ function App() {
 
       setProjectsList(projectsWithCounts);
       setDocumentsList(hydratedDocuments);
+      setDocumentCommentCounts(
+        Object.fromEntries(hydratedDocuments.map((document) => [document.id, document.openCommentsCount ?? 0]))
+      );
       setSelectedProjectId(finalProjectId);
       setSelectedDocumentId(firstDocument?.id ?? "empty-document");
       setIsBackendConnected(true);
@@ -461,6 +489,10 @@ function App() {
         const remaining = prev.filter((comment) => comment.documentId !== documentId);
         return [...backendComments, ...remaining.filter((comment) => !comment.documentId)];
       });
+      setSyncedDocumentCommentCount(
+        documentId,
+        backendComments.filter((comment) => comment.status === "open").length
+      );
     } catch (error) {
       console.error("Cannot load comments:", error);
     }
@@ -946,6 +978,12 @@ function App() {
     }
   };
 
+  function handleProjectCardKeyDown(event: ReactKeyboardEvent<HTMLDivElement>, projectId: string) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    handleSelectProject(projectId);
+  }
+
   const selectedDocument = useMemo(() => {
     const doc = documentsList.find((doc) => doc.id === selectedDocumentId) ?? projectDocuments[0] ?? documentsList[0] ?? EMPTY_DOCUMENT;
     return {
@@ -987,7 +1025,7 @@ function App() {
         ...comment,
         replies: repliesByParent.get(comment.id) ?? []
       }));
-  }, [commentsList, selectedDocument]);
+  }, [commentsList, selectedDocument.id]);
 
   useEffect(() => {
     if (!documentContainerRef.current) return;
@@ -1214,6 +1252,10 @@ function App() {
       await deleteDocument(documentId);
       const updatedDocs = documentsList.filter((d) => d.id !== documentId);
       setDocumentsList(updatedDocs);
+      setDocumentCommentCounts((prev) => {
+        const { [documentId]: _removed, ...remaining } = prev;
+        return remaining;
+      });
       setCommentsList((prev) => prev.filter((comment) => comment.documentId !== documentId));
 
       if (selectedDocumentId === documentId) {
@@ -1241,9 +1283,12 @@ function App() {
 
   // Delete Comment Logic
   async function handleDeleteComment(commentId: string) {
+    const commentsToRemove = commentsList.filter((comment) => comment.id === commentId || comment.parentId === commentId);
+    const removedDocumentId = commentsToRemove[0]?.documentId;
     try {
       await deleteComment(commentId);
       setCommentsList((prev) => prev.filter((c) => c.id !== commentId && c.parentId !== commentId));
+      adjustDocumentCommentCount(removedDocumentId, -commentsToRemove.filter((comment) => comment.status === "open").length);
       addToast("info", "Đã xóa nhận xét", "Ghi chú nhận xét đã được xóa khỏi Neon.");
     } catch (error) {
       console.error("Delete comment error:", error);
@@ -1284,6 +1329,10 @@ function App() {
         }
         return [importedDoc, ...prev];
       });
+      setDocumentCommentCounts((prev) => ({
+        ...prev,
+        [importedDoc.id]: importedDoc.openCommentsCount ?? prev[importedDoc.id] ?? 0
+      }));
       if (!targetDocumentId) {
         setProjectsList((prev) =>
           prev.map((p) => (p.id === targetProject.id ? { ...p, documents: p.documents + 1 } : p))
@@ -1354,6 +1403,7 @@ function App() {
         createdBy: "BA User"
       });
       setCommentsList((prev) => [newComment, ...prev]);
+      adjustDocumentCommentCount(newComment.documentId, 1);
       setNewCommentText("");
       clearSelectedCommentTarget();
       addToast("success", "Đã thêm nhận xét", "Comment đã được lưu theo đoạn bạn bôi đen.");
@@ -1376,6 +1426,7 @@ function App() {
         createdBy: "BA User"
       });
       setCommentsList((prev) => [newReply, ...prev]);
+      adjustDocumentCommentCount(newReply.documentId, 1);
       setReplyText("");
       setReplyingCommentId(null);
       addToast("success", "Đã trả lời nhận xét", "Reply đã được lưu vào thread.");
@@ -1675,25 +1726,24 @@ function App() {
 
   // Compute counts for navigation badges
   const openCommentsTotalCount = useMemo(() => {
-    return commentsList.filter((c) => c.status === "open").length;
-  }, [commentsList]);
+    return documentsList.reduce(
+      (total, document) => total + (documentCommentCounts[document.id] ?? document.openCommentsCount ?? 0),
+      0
+    );
+  }, [documentCommentCounts, documentsList]);
 
   const approvedDocsTotalCount = useMemo(() => {
     return documentsList.filter((d) => d.status === "Approved").length;
   }, [documentsList]);
 
   const docOpenCommentsCount = useMemo(() => {
-    return commentsList.filter((c) => (c.documentId === selectedDocument.id || c.documentId === "d-brd") && c.status === "open").length;
-  }, [commentsList, selectedDocument]);
+    return documentCommentCounts[selectedDocument.id] ?? selectedDocument.openCommentsCount ?? 0;
+  }, [documentCommentCounts, selectedDocument]);
 
   function getProjectOpenCommentsCount(projectId: string) {
-    const projectDocumentIds = new Set(
-      documentsList.filter((document) => document.projectId === projectId).map((document) => document.id)
-    );
-
-    return commentsList.filter(
-      (comment) => comment.status === "open" && comment.documentId && projectDocumentIds.has(comment.documentId)
-    ).length;
+    return documentsList
+      .filter((document) => document.projectId === projectId)
+      .reduce((total, document) => total + (documentCommentCounts[document.id] ?? document.openCommentsCount ?? 0), 0);
   }
 
   // Compute grid layout class name
@@ -1802,11 +1852,13 @@ function App() {
               const projectOpenComments = getProjectOpenCommentsCount(project.id);
 
               return (
-                <button
+                <div
                   key={project.id}
                   className={project.id === selectedProjectId && activeTabNav === "projects" ? "project-card selected" : "project-card"}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handleSelectProject(project.id)}
+                  onKeyDown={(event) => handleProjectCardKeyDown(event, project.id)}
                 >
                   <div className="project-card-header">
                     <span className="project-code">{project.code}</span>
@@ -1834,8 +1886,9 @@ function App() {
                     <span>
                       {documentsList.filter((d) => d.projectId === project.id).length} tài liệu
                     </span>
+                    {projectOpenComments > 0 && <span>{projectOpenComments} trao đổi</span>}
                   </div>
-                </button>
+                </div>
               );
             })}
           </section>
@@ -1885,7 +1938,7 @@ function App() {
         <header className="topbar">
           <div className="topbar-title-area">
             <p className="eyebrow">
-              {activeTabNav === "admin"
+              {activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
                 ? "Quản trị hệ thống • Users & Permissions"
                 : activeTabNav === "vault"
                 ? "Tài Liệu Đã Duyệt • Approved Vault"
@@ -1894,7 +1947,7 @@ function App() {
                   : `${selectedProject.code} / ${selectedProject.client}`}
             </p>
             <h1>
-              {activeTabNav === "admin"
+              {activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
                 ? "Quản Lý User & Phân Quyền"
                 : activeTabNav === "vault"
                 ? "Kho Tài Liệu Approved"
@@ -2023,12 +2076,7 @@ function App() {
                       </div>
                     ) : (
                       filteredDocuments.map((doc) => {
-                        const docCommentsCount = Math.max(
-                          doc.openCommentsCount ?? 0,
-                          commentsList.filter(
-                            (c) => (c.documentId === doc.id || (doc.id === "d-brd" && !c.documentId)) && c.status === "open"
-                          ).length
-                        );
+                        const docCommentsCount = documentCommentCounts[doc.id] ?? doc.openCommentsCount ?? 0;
                         return (
                           <button
                             key={doc.id}
@@ -2312,8 +2360,7 @@ function App() {
           </article>
 
           {/* Panel 3: Dynamic Comments & Line Review Panel (Collapsible) */}
-          {showCommentsPanel && (
-            <aside className="panel comments-panel">
+            <aside className="panel comments-panel" aria-hidden={!showCommentsPanel}>
               <div className="panel-header">
                 <div className="panel-title">
                   <p className="eyebrow">Thảo luận Team</p>
@@ -2483,7 +2530,6 @@ function App() {
                 ))}
               </div>
             </aside>
-          )}
         </section>
         )}
       </section>

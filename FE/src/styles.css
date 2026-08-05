@@ -266,6 +266,11 @@ button {
   border-color: var(--border-medium);
 }
 
+.project-card:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
 .project-card.selected {
   background: rgba(79, 70, 229, 0.05);
   border-color: var(--border-highlight);
@@ -336,12 +341,16 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .user-profile {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
 }
 
 .avatar {
@@ -354,18 +363,31 @@ button {
   place-items: center;
   font-size: 0.78rem;
   font-weight: 700;
+  flex-shrink: 0;
+}
+
+.user-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .user-info strong {
   display: block;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .user-info small {
   display: block;
   font-size: 0.68rem;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Main Workspace */
@@ -5566,7 +5588,7 @@ button {
   border-radius: 6px;
   color: var(--text-muted);
   transition: all 0.2s ease;
-  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .logout-icon-btn:hover {
