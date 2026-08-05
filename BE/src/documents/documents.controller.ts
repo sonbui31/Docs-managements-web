@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CreateDocumentDto } from "./dto/create-document.dto";
+import { UpdateDocumentDto } from "./dto/update-document.dto";
 import { DocumentsService } from "./documents.service";
 
 @ApiTags("documents")
@@ -25,5 +26,15 @@ export class DocumentsController {
   @Post()
   create(@Body() dto: CreateDocumentDto, @CurrentUser() user: AuthenticatedUser) {
     return this.documentsService.create(dto, user);
+  }
+
+  @Patch(":id")
+  update(@Param("id") id: string, @Body() dto: UpdateDocumentDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.documentsService.update(id, dto, user);
+  }
+
+  @Delete(":id")
+  remove(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.documentsService.remove(id, user);
   }
 }

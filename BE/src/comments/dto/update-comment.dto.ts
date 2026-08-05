@@ -1,20 +1,18 @@
 import { IsOptional, IsString, MaxLength } from "class-validator";
 
-export class ImportDocumentDto {
+export class UpdateCommentDto {
+  @IsOptional()
   @IsString()
-  projectId: string;
+  @MaxLength(2000)
+  content?: string;
 
   @IsOptional()
   @IsString()
-  documentId?: string;
+  @MaxLength(2000)
+  selectedText?: string;
 
   @IsOptional()
   @IsString()
-  @MaxLength(180)
-  title?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(40)
-  type?: string;
+  @MaxLength(80)
+  blockId?: string;
 }

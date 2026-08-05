@@ -1,8 +1,9 @@
-import { Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateCommentDto } from "./dto/create-comment.dto";
+import { UpdateCommentDto } from "./dto/update-comment.dto";
 
 @Injectable()
 export class CommentsService {
@@ -36,5 +37,33 @@ export class CommentsService {
         resolvedAt: new Date()
       }
     });
+  }
+
+  async update(id: string, dto: UpdateCommentDto, user: AuthenticatedUser) {
+    await this.permissions.assertCommentRole(user, id, ["REVIEWER", "EDITOR", "MANAGER"]);
+    if (Object.keys(dto).length === 0) {
+      throw new BadRequestException("No comment fields to update");
+    }
+
+    return this.prisma.comment.update({
+      where: { id },
+      data: {
+        content: dto.content?.trim(),
+        selectedText: dto.selectedText?.trim(),
+        blockId: dto.blockId?.trim()
+      }
+    });
+  }
+
+  async remove(id: string, user: AuthenticatedUser) {
+    await this.permissions.assertCommentRole(user, id, ["REVIEWER", "EDITOR", "MANAGER"]);
+
+    await this.prisma.comment.deleteMany({
+      where: {
+        OR: [{ id }, { parentId: id }]
+      }
+    });
+
+    return { ok: true };
   }
 }

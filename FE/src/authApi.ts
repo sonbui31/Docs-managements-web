@@ -168,10 +168,21 @@ export async function deleteUser(id: string) {
   return authFetch<{ ok: boolean }>(`/users/${id}`, { method: "DELETE" });
 }
 
-export async function assignUserToProject(userId: string, projectId: string, role: ProjectRole) {
+function rolePayload(role: ProjectRole | ProjectRole[]) {
+  return Array.isArray(role) ? { roles: role } : { role };
+}
+
+export async function assignUserToProject(userId: string, projectId: string, role: ProjectRole | ProjectRole[]) {
   return authFetch<{ id: string }>(`/users/${userId}/projects`, {
     method: "POST",
-    body: JSON.stringify({ projectId, role })
+    body: JSON.stringify({ projectId, ...rolePayload(role) })
+  });
+}
+
+export async function assignUsersToProjects(userIds: string[], projectIds: string[], role: ProjectRole | ProjectRole[]) {
+  return authFetch<{ ok: boolean; assigned: number }>("/users/batch/projects", {
+    method: "POST",
+    body: JSON.stringify({ userIds, projectIds, ...rolePayload(role) })
   });
 }
 
@@ -179,10 +190,17 @@ export async function removeUserFromProject(userId: string, projectId: string) {
   return authFetch<{ ok: boolean }>(`/users/${userId}/projects/${projectId}`, { method: "DELETE" });
 }
 
-export async function assignUserToDocument(userId: string, documentId: string, role: ProjectRole) {
+export async function assignUserToDocument(userId: string, documentId: string, role: ProjectRole | ProjectRole[]) {
   return authFetch<{ id: string }>(`/users/${userId}/documents`, {
     method: "POST",
-    body: JSON.stringify({ documentId, role })
+    body: JSON.stringify({ documentId, ...rolePayload(role) })
+  });
+}
+
+export async function assignUsersToDocuments(userIds: string[], documentIds: string[], role: ProjectRole | ProjectRole[]) {
+  return authFetch<{ ok: boolean; assigned: number }>("/users/batch/documents", {
+    method: "POST",
+    body: JSON.stringify({ userIds, documentIds, ...rolePayload(role) })
   });
 }
 

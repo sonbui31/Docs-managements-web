@@ -4,7 +4,9 @@ import { AuthenticatedUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { AssignDocumentDto } from "./dto/assign-document.dto";
+import { AssignDocumentsBatchDto } from "./dto/assign-documents-batch.dto";
 import { AssignProjectDto } from "./dto/assign-project.dto";
+import { AssignProjectsBatchDto } from "./dto/assign-projects-batch.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { UsersService } from "./users.service";
@@ -35,6 +37,11 @@ export class UsersController {
     return this.usersService.softDelete(id, user);
   }
 
+  @Post("batch/projects")
+  assignProjectsBatch(@Body() dto: AssignProjectsBatchDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.usersService.assignProjectsBatch(dto, user);
+  }
+
   @Post(":id/projects")
   assignProject(@Param("id") id: string, @Body() dto: AssignProjectDto, @CurrentUser() user: AuthenticatedUser) {
     return this.usersService.assignProject(id, dto, user);
@@ -43,6 +50,11 @@ export class UsersController {
   @Delete(":id/projects/:projectId")
   removeProject(@Param("id") id: string, @Param("projectId") projectId: string, @CurrentUser() user: AuthenticatedUser) {
     return this.usersService.removeProject(id, projectId, user);
+  }
+
+  @Post("batch/documents")
+  assignDocumentsBatch(@Body() dto: AssignDocumentsBatchDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.usersService.assignDocumentsBatch(dto, user);
   }
 
   @Post(":id/documents")

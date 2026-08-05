@@ -11,6 +11,7 @@
     "lint": "eslint \"src/**/*.ts\""
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.3",
     "@neondatabase/serverless": "^1.1.0",
     "@nestjs/common": "^11.1.28",
     "@nestjs/config": "^4.0.4",
@@ -30,6 +31,7 @@
     "mammoth": "^1.8.0",
     "multer": "^1.4.5-lts.1",
     "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^6.2.108",
     "playwright": "^1.49.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",

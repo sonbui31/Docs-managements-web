@@ -1,11 +1,13 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { GlobalRole } from "@prisma/client";
+import { GlobalRole, ProjectRole } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { PermissionsService } from "../permissions/permissions.service";
 import { AssignDocumentDto } from "./dto/assign-document.dto";
+import { AssignDocumentsBatchDto } from "./dto/assign-documents-batch.dto";
 import { AssignProjectDto } from "./dto/assign-project.dto";
+import { AssignProjectsBatchDto } from "./dto/assign-projects-batch.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 
@@ -119,6 +121,7 @@ export class UsersService {
   }
 
   async assignProject(userId: string, dto: AssignProjectDto, actor: AuthenticatedUser) {
+    const role = this.effectiveRole(dto);
     if (actor.role !== "ADMIN") {
       const managerMembership = await this.prisma.projectMember.findUnique({
         where: { projectId_userId: { projectId: dto.projectId, userId: actor.id } }
@@ -133,9 +136,42 @@ export class UsersService {
 
     return this.prisma.projectMember.upsert({
       where: { projectId_userId: { projectId: dto.projectId, userId } },
-      create: { projectId: dto.projectId, userId, role: dto.role, assignedBy: actor.id },
-      update: { role: dto.role, assignedBy: actor.id }
+      create: { projectId: dto.projectId, userId, role, assignedBy: actor.id },
+      update: { role, assignedBy: actor.id }
     });
+  }
+
+  async assignProjectsBatch(dto: AssignProjectsBatchDto, actor: AuthenticatedUser) {
+    const role = this.effectiveRole(dto);
+    const userIds = this.uniqueIds(dto.userIds);
+    const projectIds = this.uniqueIds(dto.projectIds);
+    if (!userIds.length || !projectIds.length) {
+      throw new BadRequestException("Vui lòng chọn ít nhất một người dùng và một dự án");
+    }
+
+    if (actor.role !== "ADMIN") {
+      await Promise.all(projectIds.map((projectId) => this.permissions.assertProjectRole(actor, projectId, ["MANAGER"])));
+    }
+
+    const [usersCount, projectsCount] = await Promise.all([
+      this.prisma.user.count({ where: { id: { in: userIds }, deletedAt: null } }),
+      this.prisma.project.count({ where: { id: { in: projectIds } } })
+    ]);
+    if (usersCount !== userIds.length) throw new NotFoundException("Một hoặc nhiều người dùng không tồn tại");
+    if (projectsCount !== projectIds.length) throw new NotFoundException("Một hoặc nhiều dự án không tồn tại");
+
+    const operations = projectIds.flatMap((projectId) =>
+      userIds.map((userId) =>
+        this.prisma.projectMember.upsert({
+          where: { projectId_userId: { projectId, userId } },
+          create: { projectId, userId, role, assignedBy: actor.id },
+          update: { role, assignedBy: actor.id }
+        })
+      )
+    );
+
+    await this.prisma.$transaction(operations);
+    return { ok: true, assigned: operations.length };
   }
 
   async removeProject(userId: string, projectId: string, actor: AuthenticatedUser) {
@@ -145,6 +181,7 @@ export class UsersService {
   }
 
   async assignDocument(userId: string, dto: AssignDocumentDto, actor: AuthenticatedUser) {
+    const role = this.effectiveRole(dto);
     const document = await this.prisma.document.findUnique({
       where: { id: dto.documentId },
       select: { id: true, projectId: true }
@@ -164,15 +201,63 @@ export class UsersService {
         documentId: dto.documentId,
         projectId: document.projectId,
         userId,
-        role: dto.role,
+        role,
         assignedBy: actor.id
       },
       update: {
         projectId: document.projectId,
-        role: dto.role,
+        role,
         assignedBy: actor.id
       }
     });
+  }
+
+  async assignDocumentsBatch(dto: AssignDocumentsBatchDto, actor: AuthenticatedUser) {
+    const role = this.effectiveRole(dto);
+    const userIds = this.uniqueIds(dto.userIds);
+    const documentIds = this.uniqueIds(dto.documentIds);
+    if (!userIds.length || !documentIds.length) {
+      throw new BadRequestException("Vui lòng chọn ít nhất một người dùng và một tài liệu");
+    }
+
+    const [usersCount, documents] = await Promise.all([
+      this.prisma.user.count({ where: { id: { in: userIds }, deletedAt: null } }),
+      this.prisma.document.findMany({
+        where: { id: { in: documentIds } },
+        select: { id: true, projectId: true }
+      })
+    ]);
+    if (usersCount !== userIds.length) throw new NotFoundException("Một hoặc nhiều người dùng không tồn tại");
+    if (documents.length !== documentIds.length) throw new NotFoundException("Một hoặc nhiều tài liệu không tồn tại");
+
+    if (actor.role !== "ADMIN") {
+      const projectIds = this.uniqueIds(documents.map((document) => document.projectId));
+      await Promise.all(projectIds.map((projectId) => this.permissions.assertProjectRole(actor, projectId, ["MANAGER"])));
+    }
+
+    const documentProjectMap = new Map(documents.map((document) => [document.id, document.projectId]));
+    const operations = documentIds.flatMap((documentId) =>
+      userIds.map((userId) =>
+        this.prisma.documentPermission.upsert({
+          where: { documentId_userId: { documentId, userId } },
+          create: {
+            documentId,
+            projectId: documentProjectMap.get(documentId)!,
+            userId,
+            role,
+            assignedBy: actor.id
+          },
+          update: {
+            projectId: documentProjectMap.get(documentId)!,
+            role,
+            assignedBy: actor.id
+          }
+        })
+      )
+    );
+
+    await this.prisma.$transaction(operations);
+    return { ok: true, assigned: operations.length };
   }
 
   async removeDocument(userId: string, documentId: string, actor: AuthenticatedUser) {
@@ -198,6 +283,24 @@ export class UsersService {
     if (!["ADMIN", "MANAGER"].includes(actor.role)) {
       throw new ForbiddenException("Bạn không có quyền thực hiện thao tác này");
     }
+  }
+
+  private uniqueIds(ids: string[]) {
+    return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
+  }
+
+  private effectiveRole(dto: { role?: ProjectRole; roles?: ProjectRole[] }) {
+    const roleRank: Record<ProjectRole, number> = {
+      VIEWER: 1,
+      REVIEWER: 2,
+      EDITOR: 3,
+      MANAGER: 4
+    };
+    const roles = [...(dto.roles ?? []), ...(dto.role ? [dto.role] : [])];
+    const uniqueRoles = Array.from(new Set(roles));
+    if (!uniqueRoles.length) throw new BadRequestException("Vui lòng chọn ít nhất một quyền hạn");
+
+    return uniqueRoles.reduce((highest, role) => (roleRank[role] > roleRank[highest] ? role : highest), uniqueRoles[0]);
   }
 
   private toPublicUser(user: { id: string; email: string; name: string; globalRole: GlobalRole; status: string; createdAt: Date }) {

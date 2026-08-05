@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiConsumes, ApiTags } from "@nestjs/swagger";
 import { AuthenticatedUser } from "../auth/auth.types";
@@ -18,5 +18,20 @@ export class MediaController {
   @UseInterceptors(FileInterceptor("file"))
   upload(@UploadedFile() file: Express.Multer.File, @Body() dto: UploadMediaDto, @CurrentUser() user: AuthenticatedUser) {
     return this.mediaService.upload(file, dto, user);
+  }
+
+  @Get("project/:projectId")
+  findByProject(@Param("projectId") projectId: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.mediaService.findByProject(projectId, user);
+  }
+
+  @Get("document/:documentId")
+  findByDocument(@Param("documentId") documentId: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.mediaService.findByDocument(documentId, user);
+  }
+
+  @Delete(":id")
+  remove(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.mediaService.remove(id, user);
   }
 }

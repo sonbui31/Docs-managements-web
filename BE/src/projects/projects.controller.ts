@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CreateProjectDto } from "./dto/create-project.dto";
+import { UpdateProjectDto } from "./dto/update-project.dto";
 import { ProjectsService } from "./projects.service";
 
 @ApiTags("projects")
@@ -25,5 +26,15 @@ export class ProjectsController {
   @Post()
   create(@Body() dto: CreateProjectDto, @CurrentUser() user: AuthenticatedUser) {
     return this.projectsService.create(dto, user);
+  }
+
+  @Patch(":id")
+  update(@Param("id") id: string, @Body() dto: UpdateProjectDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.projectsService.update(id, dto, user);
+  }
+
+  @Delete(":id")
+  remove(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.projectsService.remove(id, user);
   }
 }

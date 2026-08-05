@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
+  Copy,
   Download,
   Eye,
   File,
@@ -26,6 +27,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
+  PanelRightOpen,
   Pencil,
   Search,
   Send,
@@ -38,16 +40,22 @@ import {
   X
 } from "lucide-react";
 import mermaid from "mermaid";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   createComment,
   createDocument,
   createProject,
+  deleteComment,
+  deleteDocument,
+  deleteProject,
   downloadExport,
   fetchComments,
   fetchDocumentsByProject,
   fetchProjects,
-  importDocument
+  importDocument,
+  updateComment,
+  updateDocument,
+  updateProject
 } from "./api";
 import { AdminPanel } from "./AdminPanel";
 import { AuthPage } from "./AuthPage";
@@ -80,6 +88,36 @@ mermaid.initialize({
     fontSize: "14px"
   }
 });
+
+export function normalizeVietnameseText(str: string): string {
+  if (!str) return "";
+
+  // 1. Standard NFC normalization
+  let result = str.normalize("NFC");
+
+  // 2. Fix TCVN3 / VNI corrupted title patterns & legacy font artifacts
+  result = result
+    .replace(/Mò̀\s*Ì\s*rò̀i£ì\s*ng/gi, "Mô hình hệ thống")
+    .replace(/tỉ̀\s*nh\s*nà̀\s*ng/gi, "tính năng")
+    .replace(/quả̀\s*n\s*lý̀/gi, "quản lý")
+    .replace(/tà̀\s*m/gi, "tâm")
+    .replace(/Ä̀\s*aì\s*o/gi, "đào")
+    .replace(/tài£o/gi, "tạo")
+    .replace(/ò̀/g, "ô")
+    .replace(/à̀/g, "à")
+    .replace(/ỉ̀/g, "ỉ")
+    .replace(/ý̀/g, "ý");
+
+  // 3. Clean up orphan/duplicate combining diacritic marks (\u0300-\u036F)
+  result = result
+    .replace(
+      /([àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴ])[\u0300-\u036F]+/g,
+      "$1"
+    )
+    .replace(/[\u0300-\u036F]/g, "");
+
+  return result.normalize("NFC");
+}
 
 // Standard formatted reading document template
 const DEFAULT_DOC_CONTENT = `
@@ -186,7 +224,7 @@ const EMPTY_DOCUMENT: ProjectDocument = {
   progress: 0,
   reqCount: 0,
   openCommentsCount: 0,
-  contentHtml: `<h3>Chưa có tài liệu trong dự án</h3><p>Hãy tạo tài liệu mới hoặc import file .md, .docx, .pdf để xem nội dung HTML tại đây.</p>`
+  contentHtml: `<h3>Chưa có tài liệu trong dự án</h3><p>Hãy tạo tài liệu mới hoặc import file Word, Markdown, PDF để xem nội dung HTML tại đây.</p>`
 };
 
 interface TocItem {
@@ -210,8 +248,8 @@ function App() {
     }))
   );
 
-  const [selectedProjectId, setSelectedProjectId] = useState<string>(projectsList[0].id);
-  const [selectedDocumentId, setSelectedDocumentId] = useState<string>(documentsList[0].id);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>(projectsList[0]?.id ?? "");
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string>(documentsList[0]?.id ?? "");
   const [activeTabNav, setActiveTabNav] = useState<"projects" | "review" | "vault" | "admin">("projects");
   const [statusFilter, setStatusFilter] = useState<"All" | DocumentStatus>("All");
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -244,6 +282,12 @@ function App() {
     top: number;
     left: number;
   } | null>(null);
+  const [selectionHighlightRects, setSelectionHighlightRects] = useState<Array<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+  }>>([]);
   const [isSelectionComposerOpen, setIsSelectionComposerOpen] = useState<boolean>(false);
 
   // Comments state
@@ -261,6 +305,8 @@ function App() {
   // Modals state
   const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
   const [importTargetProjectId, setImportTargetProjectId] = useState<string>(selectedProjectId);
+  const [importMode, setImportMode] = useState<"create" | "update">("create");
+  const [importTargetDocumentId, setImportTargetDocumentId] = useState<string>(selectedDocumentId);
   const [isImporting, setIsImporting] = useState<boolean>(false);
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
 
@@ -318,8 +364,25 @@ function App() {
   }, [selectedProjectId]);
 
   useEffect(() => {
+    const projectDocs = documentsList.filter((document) => document.projectId === importTargetProjectId);
+    const selectedDocInProject = projectDocs.some((document) => document.id === selectedDocumentId);
+    setImportTargetDocumentId((current) => {
+      if (projectDocs.some((document) => document.id === current)) return current;
+      if (selectedDocInProject) return selectedDocumentId;
+      return projectDocs[0]?.id ?? "";
+    });
+    if (!projectDocs.length) setImportMode("create");
+  }, [documentsList, importTargetProjectId, selectedDocumentId]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setIsBackendConnected(false);
+      setIsLoadingBackend(false);
+      return;
+    }
+
     void loadWorkspaceFromBackend();
-  }, []);
+  }, [currentUser?.id]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -334,6 +397,15 @@ function App() {
     setActiveBlockId(null);
     void loadCommentsForDocument(selectedDocumentId);
   }, [isBackendConnected, selectedDocumentId]);
+
+  useEffect(() => {
+    if (!isBackendConnected || documentsList.length === 0) return;
+    documentsList.forEach((doc) => {
+      if (doc.id && doc.id !== "empty-document") {
+        void loadCommentsForDocument(doc.id);
+      }
+    });
+  }, [isBackendConnected, documentsList]);
 
   async function loadWorkspaceFromBackend(preferredProjectId?: string, preferredDocumentId?: string) {
     setIsLoadingBackend(true);
@@ -395,9 +467,8 @@ function App() {
 
   function handleDocumentSelection() {
     const selection = window.getSelection();
-    const selectedText = selection?.toString().replace(/\s+/g, " ").trim() ?? "";
 
-    if (!selection || selectedText.length < 2 || !documentContainerRef.current) return;
+    if (!selection || selection.rangeCount === 0 || !documentContainerRef.current) return;
 
     const anchorNode = selection.anchorNode;
     const focusNode = selection.focusNode;
@@ -411,18 +482,28 @@ function App() {
       return;
     }
 
-    const range = selection.getRangeAt(0);
+    const rawRange = selection.getRangeAt(0);
+    const range = getCommentSelectionRange(rawRange, anchorNode, focusNode);
+    if (range.collapsed) return;
+
+    const selectedText = getSelectedRangeText(range);
+    if (selectedText.length < 2) return;
+
+    clearActiveCommentHighlight();
+    activeCommentSelectionRangeRef.current = range.cloneRange();
+    setSelectionHighlightRects(getSelectionOverlayRects(range));
+    applyBrowserSelectionRange(selection, range);
+
     const sourceElement =
+      closestReadableElement(focusNode) ??
       closestReadableElement(range.commonAncestorContainer) ??
-      closestReadableElement(anchorNode);
+      closestReadableElement(range.endContainer);
     const explicitReq = sourceElement?.closest<HTMLElement>("[data-req], [data-block-id]");
     const blockId =
       explicitReq?.dataset.req ??
       explicitReq?.dataset.blockId ??
       `SEL-${Math.abs(hashText(selectedText)).toString().slice(0, 6)}`;
-    const rect = range.getBoundingClientRect();
-    const fallbackRect = range.getClientRects()[0];
-    const targetRect = rect.width || rect.height ? rect : fallbackRect;
+    const targetRect = getSelectionEndRect(range);
 
     setSelectedCommentTarget({
       blockId,
@@ -430,22 +511,129 @@ function App() {
     });
     setIsSelectionComposerOpen(false);
     if (targetRect) {
-      setSelectionPopover({
-        top: Math.max(72, targetRect.top - 46),
-        left: Math.min(window.innerWidth - 56, Math.max(16, targetRect.left + targetRect.width / 2 - 18))
-      });
+      setSelectionPopover(getSelectionPopoverPosition(targetRect));
     }
     setActiveBlockId(blockId);
     setShowCommentsPanel(true);
   }
 
+  function getCommentSelectionRange(range: Range, anchorNode: Node, focusNode: Node) {
+    const anchorElement = closestReadableElement(anchorNode);
+    const focusElement = closestReadableElement(focusNode);
+
+    if (!focusElement || !anchorElement || focusElement === anchorElement) {
+      return range.cloneRange();
+    }
+
+    const focusRange = document.createRange();
+    focusRange.selectNodeContents(focusElement);
+
+    const clampedRange = range.cloneRange();
+    if (clampedRange.compareBoundaryPoints(Range.START_TO_START, focusRange) < 0) {
+      clampedRange.setStart(focusRange.startContainer, focusRange.startOffset);
+    }
+    if (clampedRange.compareBoundaryPoints(Range.END_TO_END, focusRange) > 0) {
+      clampedRange.setEnd(focusRange.endContainer, focusRange.endOffset);
+    }
+
+    return clampedRange;
+  }
+
+  function applyBrowserSelectionRange(selection: Selection, range: Range) {
+    if (!documentContainerRef.current || !documentContainerRef.current.contains(range.commonAncestorContainer)) {
+      return;
+    }
+
+    const currentRange = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    if (
+      currentRange &&
+      currentRange.startContainer === range.startContainer &&
+      currentRange.startOffset === range.startOffset &&
+      currentRange.endContainer === range.endContainer &&
+      currentRange.endOffset === range.endOffset
+    ) {
+      return;
+    }
+
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function restoreActiveCommentSelection() {
+    const selection = window.getSelection();
+    const range = activeCommentSelectionRangeRef.current;
+    if (!selection || !range) return;
+    applyBrowserSelectionRange(selection, range);
+  }
+
+  function getSelectedRangeText(range: Range) {
+    return (range.cloneContents().textContent ?? "").replace(/\s+/g, " ").trim();
+  }
+
+  function getSelectionEndRect(range: Range) {
+    const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
+    const lastRect = rects[rects.length - 1];
+    if (lastRect) return lastRect;
+
+    const boundingRect = range.getBoundingClientRect();
+    return boundingRect.width || boundingRect.height ? boundingRect : null;
+  }
+
+  function getSelectionPopoverPosition(rect: DOMRect) {
+    const toolbarWidth = 128;
+    const toolbarHeight = 38;
+    const gutter = 10;
+    const preferredTop = rect.bottom + 8;
+    const top = preferredTop + toolbarHeight + gutter > window.innerHeight
+      ? Math.max(72, rect.top - toolbarHeight - 8)
+      : Math.max(72, preferredTop);
+    const left = Math.min(
+      window.innerWidth - toolbarWidth - gutter,
+      Math.max(gutter, rect.right - toolbarWidth)
+    );
+
+    return { top, left };
+  }
+
   function clearSelectedCommentTarget() {
+    activeCommentSelectionRangeRef.current = null;
+    setSelectionHighlightRects([]);
     setSelectedCommentTarget(null);
     setSelectionPopover(null);
     setIsSelectionComposerOpen(false);
     setActiveBlockId(null);
     window.getSelection()?.removeAllRanges();
     clearActiveCommentHighlight();
+  }
+
+  function getSelectionOverlayRects(range: Range) {
+    const docPage = documentContainerRef.current?.closest(".doc-page") as HTMLElement | null;
+    if (!docPage) return [];
+
+    const pageRect = docPage.getBoundingClientRect();
+    return Array.from(range.getClientRects())
+      .filter((rect) => rect.width > 0 && rect.height > 0)
+      .map((rect) => ({
+        top: rect.top - pageRect.top + docPage.scrollTop,
+        left: rect.left - pageRect.left + docPage.scrollLeft,
+        width: rect.width,
+        height: rect.height
+      }));
+  }
+
+  function isPointInsideActiveSelection(clientX: number, clientY: number) {
+    const range = activeCommentSelectionRangeRef.current;
+    if (!range) return false;
+
+    return Array.from(range.getClientRects()).some((rect) => {
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      return (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      );
+    });
   }
 
   function closestReadableElement(node: Node) {
@@ -466,6 +654,19 @@ function App() {
     setShowCommentsPanel(true);
     setIsSelectionComposerOpen(true);
     window.setTimeout(() => inlineCommentTextareaRef.current?.focus(), 50);
+  }
+
+  async function handleCopySelectedText() {
+    if (!selectedCommentTarget?.selectedText) return;
+
+    try {
+      await navigator.clipboard.writeText(selectedCommentTarget.selectedText);
+      addToast("success", "Đã copy", "Đoạn bôi đen đã được copy vào clipboard.");
+      window.setTimeout(restoreActiveCommentSelection, 20);
+    } catch (error) {
+      console.error("Copy selected text error:", error);
+      addToast("error", "Không copy được", "Trình duyệt chưa cấp quyền clipboard.");
+    }
   }
 
   function handleCommentCardClick(comment: CommentThread) {
@@ -606,9 +807,18 @@ function App() {
     }
   };
 
-  const selectedDocument = useMemo(
-    () => documentsList.find((doc) => doc.id === selectedDocumentId) ?? projectDocuments[0] ?? documentsList[0] ?? EMPTY_DOCUMENT,
-    [documentsList, selectedDocumentId, projectDocuments]
+  const selectedDocument = useMemo(() => {
+    const doc = documentsList.find((doc) => doc.id === selectedDocumentId) ?? projectDocuments[0] ?? documentsList[0] ?? EMPTY_DOCUMENT;
+    return {
+      ...doc,
+      title: normalizeVietnameseText(doc.title),
+      contentHtml: normalizeVietnameseText(doc.contentHtml || "")
+    };
+  }, [documentsList, selectedDocumentId, projectDocuments]);
+
+  const importTargetDocuments = useMemo(
+    () => documentsList.filter((doc) => doc.projectId === importTargetProjectId),
+    [documentsList, importTargetProjectId]
   );
 
   // Filtered documents list
@@ -687,23 +897,27 @@ function App() {
   }
 
   // Save Edit Project Handler
-  function handleSaveEditProject() {
+  async function handleSaveEditProject() {
     if (!editingProject) return;
     if (!editProjName.trim() || !editProjCode.trim()) {
       addToast("warning", "Thiếu thông tin", "Vui lòng nhập Mã và Tên dự án.");
       return;
     }
 
-    setProjectsList((prev) =>
-      prev.map((p) =>
-        p.id === editingProject.id
-          ? { ...p, code: editProjCode.trim().toUpperCase(), name: editProjName.trim(), client: editProjClient.trim() }
-          : p
-      )
-    );
-    setIsEditProjectModalOpen(false);
-    setEditingProject(null);
-    addToast("success", "Đã cập nhật dự án", `Dự án "${editProjName}" đã lưu thay đổi.`);
+    try {
+      const updatedProject = await updateProject(editingProject.id, {
+        code: editProjCode.trim().toUpperCase(),
+        name: editProjName.trim(),
+        client: editProjClient.trim()
+      });
+      setProjectsList((prev) => prev.map((p) => (p.id === updatedProject.id ? { ...p, ...updatedProject } : p)));
+      setIsEditProjectModalOpen(false);
+      setEditingProject(null);
+      addToast("success", "Đã cập nhật dự án", `Dự án "${updatedProject.name}" đã lưu vào Neon.`);
+    } catch (error) {
+      console.error("Update project error:", error);
+      addToast("error", "Không cập nhật được dự án", "BE chưa lưu được thay đổi dự án.");
+    }
   }
 
   // Request Project Deletion (Opens Confirmation Modal)
@@ -724,20 +938,31 @@ function App() {
   }
 
   // Delete Project Logic
-  function handleDeleteProject(projectId: string) {
+  async function handleDeleteProject(projectId: string) {
     const projToDelete = projectsList.find((p) => p.id === projectId);
-    const updatedProjects = projectsList.filter((p) => p.id !== projectId);
-    setProjectsList(updatedProjects);
-    setDocumentsList((prev) => prev.filter((d) => d.projectId !== projectId));
 
-    if (selectedProjectId === projectId) {
-      const nextProj = updatedProjects[0];
-      setSelectedProjectId(nextProj.id);
-      const nextDoc = documentsList.find((d) => d.projectId === nextProj.id);
-      if (nextDoc) setSelectedDocumentId(nextDoc.id);
+    try {
+      await deleteProject(projectId);
+      const updatedProjects = projectsList.filter((p) => p.id !== projectId);
+      const removedDocumentIds = new Set(
+        documentsList.filter((document) => document.projectId === projectId).map((document) => document.id)
+      );
+      setProjectsList(updatedProjects);
+      setDocumentsList((prev) => prev.filter((d) => d.projectId !== projectId));
+      setCommentsList((prev) => prev.filter((comment) => !comment.documentId || !removedDocumentIds.has(comment.documentId)));
+
+      if (selectedProjectId === projectId) {
+        const nextProj = updatedProjects[0];
+        setSelectedProjectId(nextProj?.id ?? "");
+        const nextDoc = documentsList.find((d) => nextProj && d.projectId === nextProj.id);
+        setSelectedDocumentId(nextDoc?.id ?? "empty-document");
+      }
+
+      addToast("info", "Đã xóa dự án", `Dự án "${projToDelete?.name || projectId}" và các tài liệu liên quan đã bị xóa khỏi Neon.`);
+    } catch (error) {
+      console.error("Delete project error:", error);
+      addToast("error", "Không xóa được dự án", "BE chưa xóa được dự án này. Kiểm tra quyền hoặc thử lại.");
     }
-
-    addToast("info", "Đã xóa dự án", `Dự án "${projToDelete?.name || projectId}" và các tài liệu liên quan đã bị xóa.`);
   }
 
   // Create New Document Handler
@@ -785,32 +1010,39 @@ function App() {
   }
 
   // Save Edit Document Metadata Handler
-  function handleSaveEditDocument() {
+  async function handleSaveEditDocument() {
     if (!editingDoc) return;
     if (!editDocTitle.trim()) {
       addToast("warning", "Thiếu tiêu đề", "Vui lòng nhập tên/tiêu đề tài liệu.");
       return;
     }
 
-    setDocumentsList((prev) =>
-      prev.map((d) =>
-        d.id === editingDoc.id
-          ? {
-            ...d,
-            title: editDocTitle.trim(),
-            type: editDocType,
-            owner: editDocOwner.trim(),
-            status: editDocStatus,
-            version: editDocVersion.trim(),
-            updatedAt: "Vừa sửa"
-          }
-          : d
-      )
-    );
+    try {
+      const updatedDocument = await updateDocument(editingDoc.id, {
+        title: editDocTitle.trim(),
+        type: editDocType.trim(),
+        status: editDocStatus,
+        currentVersion: editDocVersion.trim()
+      });
+      setDocumentsList((prev) =>
+        prev.map((d) =>
+          d.id === updatedDocument.id
+            ? {
+              ...d,
+              ...updatedDocument,
+              owner: editDocOwner.trim() || d.owner
+            }
+            : d
+        )
+      );
 
-    setIsEditDocModalOpen(false);
-    setEditingDoc(null);
-    addToast("success", "Đã cập nhật thuộc tính tài liệu", `Tài liệu "${editDocTitle}" đã lưu các thay đổi.`);
+      setIsEditDocModalOpen(false);
+      setEditingDoc(null);
+      addToast("success", "Đã cập nhật thuộc tính tài liệu", `Tài liệu "${updatedDocument.title}" đã lưu vào Neon.`);
+    } catch (error) {
+      console.error("Update document error:", error);
+      addToast("error", "Không cập nhật được tài liệu", "BE chưa lưu được thay đổi tài liệu.");
+    }
   }
 
   // Request Document Deletion (Opens Confirmation Modal)
@@ -826,17 +1058,25 @@ function App() {
   }
 
   // Delete Document Logic
-  function handleDeleteDocument(documentId: string) {
+  async function handleDeleteDocument(documentId: string) {
     const docToDelete = documentsList.find((d) => d.id === documentId);
-    const updatedDocs = documentsList.filter((d) => d.id !== documentId);
-    setDocumentsList(updatedDocs);
 
-    if (selectedDocumentId === documentId) {
-      const nextDoc = updatedDocs.find((d) => d.projectId === selectedProjectId) || updatedDocs[0];
-      if (nextDoc) setSelectedDocumentId(nextDoc.id);
+    try {
+      await deleteDocument(documentId);
+      const updatedDocs = documentsList.filter((d) => d.id !== documentId);
+      setDocumentsList(updatedDocs);
+      setCommentsList((prev) => prev.filter((comment) => comment.documentId !== documentId));
+
+      if (selectedDocumentId === documentId) {
+        const nextDoc = updatedDocs.find((d) => d.projectId === selectedProjectId) || updatedDocs[0];
+        setSelectedDocumentId(nextDoc?.id ?? "empty-document");
+      }
+
+      addToast("info", "Đã xóa tài liệu", `Tài liệu "${docToDelete?.title || documentId}" đã được xóa khỏi Neon.`);
+    } catch (error) {
+      console.error("Delete document error:", error);
+      addToast("error", "Không xóa được tài liệu", "BE chưa xóa được tài liệu này. Kiểm tra quyền hoặc thử lại.");
     }
-
-    addToast("info", "Đã xóa tài liệu", `Tài liệu "${docToDelete?.title || documentId}" đã được xóa.`);
   }
 
   // Request Comment Deletion (Opens Confirmation Modal)
@@ -851,22 +1091,28 @@ function App() {
   }
 
   // Delete Comment Logic
-  function handleDeleteComment(commentId: string) {
-    setCommentsList((prev) => prev.filter((c) => c.id !== commentId && c.parentId !== commentId));
-    addToast("info", "Đã xóa nhận xét", "Ghi chú nhận xét đã được xóa thành công.");
+  async function handleDeleteComment(commentId: string) {
+    try {
+      await deleteComment(commentId);
+      setCommentsList((prev) => prev.filter((c) => c.id !== commentId && c.parentId !== commentId));
+      addToast("info", "Đã xóa nhận xét", "Ghi chú nhận xét đã được xóa khỏi Neon.");
+    } catch (error) {
+      console.error("Delete comment error:", error);
+      addToast("error", "Không xóa được nhận xét", "BE chưa xóa được comment này. Vui lòng thử lại.");
+    }
   }
 
   // Execute Confirmed Delete Handler
-  function executeConfirmDelete() {
+  async function executeConfirmDelete() {
     const { type, id } = confirmDeleteModal;
     if (!id) return;
 
     if (type === "project") {
-      handleDeleteProject(id);
+      await handleDeleteProject(id);
     } else if (type === "document") {
-      handleDeleteDocument(id);
+      await handleDeleteDocument(id);
     } else if (type === "comment") {
-      handleDeleteComment(id);
+      await handleDeleteComment(id);
     }
 
     setConfirmDeleteModal({ isOpen: false, type: null, id: null, title: "", message: "" });
@@ -877,20 +1123,34 @@ function App() {
     if (!file) return;
     setIsImporting(true);
     const targetProject = projectsList.find((p) => p.id === importTargetProjectId) || selectedProject;
+    const targetDocumentId = importMode === "update" ? importTargetDocumentId : undefined;
 
     try {
-      const importedDoc = await importDocument(file, targetProject.id);
+      const importedDoc = await importDocument(file, targetProject.id, targetDocumentId);
 
-      setDocumentsList((prev) => [importedDoc, ...prev]);
-      setProjectsList((prev) =>
-        prev.map((p) => (p.id === targetProject.id ? { ...p, documents: p.documents + 1 } : p))
-      );
+      setDocumentsList((prev) => {
+        if (targetDocumentId) {
+          return prev.map((doc) => (doc.id === importedDoc.id ? importedDoc : doc));
+        }
+        return [importedDoc, ...prev];
+      });
+      if (!targetDocumentId) {
+        setProjectsList((prev) =>
+          prev.map((p) => (p.id === targetProject.id ? { ...p, documents: p.documents + 1 } : p))
+        );
+      }
 
       setSelectedProjectId(targetProject.id);
       setSelectedDocumentId(importedDoc.id);
       setIsImportModalOpen(false);
 
-      addToast("success", "Import file thành công!", `BE đã chuyển "${file.name}" sang HTML và lưu vào Neon.`);
+      addToast(
+        "success",
+        targetDocumentId ? "Đã cập nhật tài liệu!" : "Import file thành công!",
+        targetDocumentId
+          ? `Nội dung "${importedDoc.title}" đã được thay bằng file "${file.name}".`
+          : `BE đã chuyển "${file.name}" sang HTML và lưu vào Neon.`
+      );
     } catch (error) {
       console.error("Import file error:", error);
       addToast("error", "Import thất bại", "BE chưa nhận được file hoặc định dạng chưa được hỗ trợ.");
@@ -900,14 +1160,18 @@ function App() {
   }
 
   // Edit Comment Handler
-  function handleSaveEditComment(commentId: string) {
+  async function handleSaveEditComment(commentId: string) {
     if (!editingCommentText.trim()) return;
-    setCommentsList((prev) =>
-      prev.map((c) => (c.id === commentId ? { ...c, text: editingCommentText.trim() } : c))
-    );
-    setEditingCommentId(null);
-    setEditingCommentText("");
-    addToast("success", "Đã cập nhật nhận xét", "Nội dung nhận xét đã được lưu thay đổi.");
+    try {
+      const updatedComment = await updateComment(commentId, { content: editingCommentText.trim() });
+      setCommentsList((prev) => prev.map((c) => (c.id === commentId ? { ...c, ...updatedComment } : c)));
+      setEditingCommentId(null);
+      setEditingCommentText("");
+      addToast("success", "Đã cập nhật nhận xét", "Nội dung nhận xét đã được lưu vào Neon.");
+    } catch (error) {
+      console.error("Update comment error:", error);
+      addToast("error", "Không cập nhật được nhận xét", "BE chưa lưu được thay đổi nhận xét.");
+    }
   }
 
   // Add new comment
@@ -932,10 +1196,7 @@ function App() {
       });
       setCommentsList((prev) => [newComment, ...prev]);
       setNewCommentText("");
-      setSelectedCommentTarget(null);
-      setSelectionPopover(null);
-      setIsSelectionComposerOpen(false);
-      window.getSelection()?.removeAllRanges();
+      clearSelectedCommentTarget();
       addToast("success", "Đã thêm nhận xét", "Comment đã được lưu theo đoạn bạn bôi đen.");
     } catch (error) {
       console.error("Create comment error:", error);
@@ -982,6 +1243,12 @@ function App() {
 
   const documentContainerRef = useRef<HTMLDivElement>(null);
   const inlineCommentTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const activeCommentSelectionRangeRef = useRef<Range | null>(null);
+
+  useLayoutEffect(() => {
+    if (!selectedCommentTarget || !selectionPopover || isSelectionComposerOpen) return;
+    restoreActiveCommentSelection();
+  }, [selectedCommentTarget, selectionPopover, isSelectionComposerOpen]);
 
   useEffect(() => {
     let timer = 0;
@@ -990,15 +1257,36 @@ function App() {
       timer = window.setTimeout(handleDocumentSelection, 90);
     };
 
-    document.addEventListener("selectionchange", scheduleSelectionCheck);
     document.addEventListener("mouseup", scheduleSelectionCheck);
 
     return () => {
       window.clearTimeout(timer);
-      document.removeEventListener("selectionchange", scheduleSelectionCheck);
       document.removeEventListener("mouseup", scheduleSelectionCheck);
     };
   }, [selectedDocument.id]);
+
+  useEffect(() => {
+    if (!selectedCommentTarget && !selectionPopover && !isSelectionComposerOpen) return;
+
+    const handleOutsidePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+
+      const targetElement = target.nodeType === Node.ELEMENT_NODE ? (target as Element) : target.parentElement;
+      if (targetElement?.closest(".selection-action-toolbar, .selection-comment-editor")) {
+        return;
+      }
+
+      if (isPointInsideActiveSelection(event.clientX, event.clientY)) {
+        return;
+      }
+
+      clearSelectedCommentTarget();
+    };
+
+    document.addEventListener("pointerdown", handleOutsidePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handleOutsidePointerDown, true);
+  }, [selectedCommentTarget, selectionPopover, isSelectionComposerOpen]);
 
   function renderMermaidBlocks() {
     if (!documentContainerRef.current) return;
@@ -1198,6 +1486,16 @@ function App() {
     return commentsList.filter((c) => (c.documentId === selectedDocument.id || c.documentId === "d-brd") && c.status === "open").length;
   }, [commentsList, selectedDocument]);
 
+  function getProjectOpenCommentsCount(projectId: string) {
+    const projectDocumentIds = new Set(
+      documentsList.filter((document) => document.projectId === projectId).map((document) => document.id)
+    );
+
+    return commentsList.filter(
+      (comment) => comment.status === "open" && comment.documentId && projectDocumentIds.has(comment.documentId)
+    ).length;
+  }
+
   // Compute grid layout class name
   const gridLayoutClass = useMemo(() => {
     let base = "work-grid";
@@ -1300,45 +1598,46 @@ function App() {
 
           {/* Project List with Edit & Delete Action Buttons */}
           <section className="project-list" aria-label="Projects">
-            {projectsList.map((project) => (
-              <button
-                key={project.id}
-                className={project.id === selectedProjectId && activeTabNav === "projects" ? "project-card selected" : "project-card"}
-                type="button"
-                onClick={() => handleSelectProject(project.id)}
-              >
-                <div className="project-card-header">
-                  <span className="project-code">{project.code}</span>
-                  <div className="project-action-group">
-                    <button
-                      className="project-action-btn"
-                      type="button"
-                      title="Sửa thông tin dự án"
-                      onClick={(e) => openEditProjectModal(project, e)}
-                    >
-                      <Pencil size={11} />
-                    </button>
-                    <button
-                      className="project-action-btn danger"
-                      type="button"
-                      title="Xóa dự án này"
-                      onClick={(e) => requestDeleteProject(project.id, e)}
-                    >
-                      <Trash2 size={11} />
-                    </button>
+            {projectsList.map((project) => {
+              const projectOpenComments = getProjectOpenCommentsCount(project.id);
+
+              return (
+                <button
+                  key={project.id}
+                  className={project.id === selectedProjectId && activeTabNav === "projects" ? "project-card selected" : "project-card"}
+                  type="button"
+                  onClick={() => handleSelectProject(project.id)}
+                >
+                  <div className="project-card-header">
+                    <span className="project-code">{project.code}</span>
+                    <div className="project-action-group">
+                      <button
+                        className="project-action-btn"
+                        type="button"
+                        title="Sửa thông tin dự án"
+                        onClick={(e) => openEditProjectModal(project, e)}
+                      >
+                        <Pencil size={11} />
+                      </button>
+                      <button
+                        className="project-action-btn danger"
+                        type="button"
+                        title="Xóa dự án này"
+                        onClick={(e) => requestDeleteProject(project.id, e)}
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
                   </div>
-                </div>
-                <strong>{project.name}</strong>
-                <div className="project-card-meta">
-                  <span>
-                    {documentsList.filter((d) => d.projectId === project.id).length} tài liệu
-                  </span>
-                  <span style={{ color: project.openComments > 0 ? "var(--accent-amber)" : "var(--text-muted)" }}>
-                    {project.openComments} trao đổi
-                  </span>
-                </div>
-              </button>
-            ))}
+                  <strong>{project.name}</strong>
+                  <div className="project-card-meta">
+                    <span>
+                      {documentsList.filter((d) => d.projectId === project.id).length} tài liệu
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
           </section>
         </div>
 
@@ -1516,7 +1815,7 @@ function App() {
                   <MessageSquareText size={16} color="var(--accent-amber)" />
                 </div>
                 <div className="metric-value">
-                  {metricScope === "project" ? selectedProject.openComments : docOpenCommentsCount}
+                  {metricScope === "project" ? getProjectOpenCommentsCount(selectedProject.id) : docOpenCommentsCount}
                 </div>
                 <small style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>
                   {metricScope === "project" ? "Tổng trao đổi trong dự án" : "Ghi chú cần giải đáp"}
@@ -1527,7 +1826,7 @@ function App() {
               <div className="import-card">
                 <div className="import-card-text">
                   <strong>Import tệp vào dự án ({selectedProject.code})</strong>
-                  <small>Chuyển đổi .md, .docx, .pdf sang chuẩn xem cho team</small>
+                  <small>Chuyển đổi Word, Markdown, PDF sang chuẩn xem cho team</small>
                 </div>
                 <button
                   className="btn-import"
@@ -1629,35 +1928,48 @@ function App() {
                         Không có tài liệu nào phù hợp.
                       </div>
                     ) : (
-                      filteredDocuments.map((doc) => (
-                        <button
-                          key={doc.id}
-                          className={doc.id === selectedDocumentId ? "document-row selected" : "document-row"}
-                          type="button"
-                          onClick={() => setSelectedDocumentId(doc.id)}
-                        >
-                          <div className="doc-icon">
-                            {doc.fileType === "pdf" ? (
-                              <FileText size={16} />
-                            ) : doc.fileType === "md" ? (
-                              <FileCode size={16} />
-                            ) : (
-                              <FileCheck2 size={16} />
-                            )}
-                          </div>
-                          <div className="doc-info">
-                            <strong>{doc.title}</strong>
-                            <small>{doc.type} • {doc.owner}</small>
-                          </div>
-                          <div className="doc-status-col">
-                            <span className="version-tag">{doc.version}</span>
-                            <span className={`status-pill ${doc.status.toLowerCase().replace(" ", "")}`}>
-                              <span className="status-dot" />
-                              {doc.status}
-                            </span>
-                          </div>
-                        </button>
-                      ))
+                      filteredDocuments.map((doc) => {
+                        const docCommentsCount = Math.max(
+                          doc.openCommentsCount ?? 0,
+                          commentsList.filter(
+                            (c) => (c.documentId === doc.id || (doc.id === "d-brd" && !c.documentId)) && c.status === "open"
+                          ).length
+                        );
+                        return (
+                          <button
+                            key={doc.id}
+                            className={doc.id === selectedDocumentId ? "document-row selected" : "document-row"}
+                            type="button"
+                            onClick={() => setSelectedDocumentId(doc.id)}
+                          >
+                            <div className="doc-icon">
+                              {doc.fileType === "pdf" ? (
+                                <FileText size={16} />
+                              ) : doc.fileType === "md" ? (
+                                <FileCode size={16} />
+                              ) : (
+                                <FileCheck2 size={16} />
+                              )}
+                            </div>
+                            <div className="doc-info">
+                              <strong>{normalizeVietnameseText(doc.title)}</strong>
+                              <small>{doc.type} • {doc.owner}</small>
+                            </div>
+                            <div className="doc-status-col">
+                              <span className="version-tag">{doc.version}</span>
+                              <span className={`status-pill ${doc.status.toLowerCase().replace(" ", "")}`}>
+                                <span className="status-dot" />
+                                {doc.status}
+                              </span>
+                              {docCommentsCount > 0 && (
+                                <span className="doc-comments-badge">
+                                  <MessageSquareText size={10} /> {docCommentsCount} trao đổi
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })
                     )}
                   </div>
                 </>
@@ -1692,7 +2004,7 @@ function App() {
             <div className="doc-toolbar">
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 {/* Quick Toggle if Left Library Panel is hidden */}
-                {!showLibraryPanel && !isZenMode && (
+                {!showLibraryPanel && (
                   <button
                     className="btn-secondary"
                     type="button"
@@ -1810,6 +2122,20 @@ function App() {
               </div>
             </div>
 
+            {/* Floating Right Toggle for Team Discussion Panel when collapsed */}
+            {!showCommentsPanel && (
+              <button
+                className="floating-comments-toggle"
+                type="button"
+                title="Mở Bảng Thảo luận Team & Ghi chú"
+                onClick={() => setShowCommentsPanel(true)}
+              >
+                <MessageSquareText size={15} />
+                <span>Thảo luận ({docOpenCommentsCount})</span>
+                <PanelRightOpen size={14} />
+              </button>
+            )}
+
             {/* Pure Document Reader View */}
             <div className="doc-page">
 
@@ -1823,19 +2149,39 @@ function App() {
                   __html: selectedDocument.contentHtml || DEFAULT_DOC_CONTENT
                 }}
               />
+              {selectionHighlightRects.length > 0 && (
+                <div className="held-selection-layer" aria-hidden="true">
+                  {selectionHighlightRects.map((rect, index) => (
+                    <span
+                      key={`${index}-${rect.top}-${rect.left}`}
+                      className="held-selection-rect"
+                      style={{
+                        top: rect.top,
+                        left: rect.left,
+                        width: rect.width,
+                        height: rect.height
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
               {selectedCommentTarget && selectionPopover && !isSelectionComposerOpen && (
-                <button
-                  className="selection-comment-popover"
-                  type="button"
-                  title="Comment đoạn đã bôi đen"
+                <div
+                  className="selection-action-toolbar"
                   style={{ top: selectionPopover.top, left: selectionPopover.left }}
                   onPointerDown={(event) => event.preventDefault()}
                   onMouseDown={(event) => event.preventDefault()}
                   onMouseUp={(event) => event.stopPropagation()}
-                  onClick={focusSelectedCommentComposer}
                 >
-                  <MessageSquarePlus size={17} />
-                </button>
+                  <button type="button" title="Copy đoạn đã bôi đen" onClick={handleCopySelectedText}>
+                    <Copy size={15} />
+                    <span>Copy</span>
+                  </button>
+                  <button type="button" title="Nhận xét đoạn đã bôi đen" onClick={focusSelectedCommentComposer}>
+                    <MessageSquarePlus size={15} />
+                    <span>Nhận xét</span>
+                  </button>
+                </div>
               )}
               {selectedCommentTarget && selectionPopover && isSelectionComposerOpen && (
                 <div
@@ -2034,7 +2380,7 @@ function App() {
                             type="button"
                             onClick={() => handleAddReply(comment)}
                           >
-                            <Send size={12} /> Gửi reply
+                            <Send size={12} /> Reply
                           </button>
                         </div>
                       </div>
@@ -2375,7 +2721,7 @@ function App() {
               {/* Project Target Dropdown Selector */}
               <div className="form-group">
                 <label style={{ fontWeight: 700, color: "var(--accent-primary)" }}>
-                  🎯 Chọn Dự Án Đích để Import vào:
+                  Chọn Dự Án Đích để Import vào:
                 </label>
                 <select
                   className="form-select"
@@ -2389,6 +2735,48 @@ function App() {
                   ))}
                 </select>
               </div>
+
+              <div className="form-group">
+                <label style={{ fontWeight: 700, color: "var(--text-primary)" }}>Cách xử lý file import</label>
+                <div className="import-mode-grid">
+                  <button
+                    type="button"
+                    className={importMode === "create" ? "import-mode-card selected" : "import-mode-card"}
+                    onClick={() => setImportMode("create")}
+                  >
+                    <strong>Tạo tài liệu mới</strong>
+                    <small>File import sẽ xuất hiện như một tài liệu riêng trong dự án.</small>
+                  </button>
+                  <button
+                    type="button"
+                    className={importMode === "update" ? "import-mode-card selected" : "import-mode-card"}
+                    disabled={!importTargetDocuments.length}
+                    onClick={() => setImportMode("update")}
+                  >
+                    <strong>Cập nhật tài liệu đang có</strong>
+                    <small>Thay nội dung HTML, giữ nguyên comment và lịch sử tài liệu.</small>
+                  </button>
+                </div>
+              </div>
+
+              {importMode === "update" && (
+                <div className="form-group">
+                  <label style={{ fontWeight: 700, color: "var(--text-primary)" }}>
+                    Chọn tài liệu cần cập nhật:
+                  </label>
+                  <select
+                    className="form-select"
+                    value={importTargetDocumentId}
+                    onChange={(e) => setImportTargetDocumentId(e.target.value)}
+                  >
+                    {importTargetDocuments.map((doc) => (
+                      <option key={doc.id} value={doc.id}>
+                        [{doc.type}] {doc.title} ({doc.version})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* Drag & Drop File Zone */}
               <label
@@ -2407,7 +2795,7 @@ function App() {
               >
                 <input
                   type="file"
-                  accept=".md,.docx,.pdf"
+                  accept=".md,.doc,.docx,.pdf"
                   style={{ display: "none" }}
                   onChange={(e) => void handleImport(e.target.files?.[0])}
                 />
@@ -2419,7 +2807,7 @@ function App() {
                     {isImporting ? "Đang xử lý tệp & hiển thị tài liệu..." : "Kéo & thả tệp vào đây hoặc Click để chọn"}
                   </strong>
                   <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 4 }}>
-                    Hỗ trợ định dạng `.md`, `.docx`, `.pdf`
+                    Hỗ trợ định dạng `.md`, `.doc`, `.docx`, `.pdf`
                   </p>
                 </div>
               </label>

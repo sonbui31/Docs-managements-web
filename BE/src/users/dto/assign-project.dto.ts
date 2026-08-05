@@ -1,10 +1,16 @@
 import { ProjectRole } from "@prisma/client";
-import { IsEnum, IsString } from "class-validator";
+import { IsArray, IsEnum, IsOptional, IsString } from "class-validator";
 
 export class AssignProjectDto {
   @IsString()
   projectId: string;
 
+  @IsOptional()
   @IsEnum(ProjectRole)
-  role: ProjectRole;
+  role?: ProjectRole;
+
+  @IsOptional()
+  @IsArray()
+  @IsEnum(ProjectRole, { each: true })
+  roles?: ProjectRole[];
 }

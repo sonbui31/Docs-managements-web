@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import sanitizeHtml = require("sanitize-html");
 import { AuthenticatedUser } from "../auth/auth.types";
 import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateDocumentDto } from "./dto/create-document.dto";
+import { UpdateDocumentDto } from "./dto/update-document.dto";
 
 @Injectable()
 export class DocumentsService {
@@ -44,14 +45,7 @@ export class DocumentsService {
   async create(dto: CreateDocumentDto, user: AuthenticatedUser) {
     await this.permissions.assertProjectRole(user, dto.projectId, ["EDITOR", "MANAGER"]);
 
-    const cleanHtml = sanitizeHtml(dto.htmlContent, {
-      allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img", "h1", "h2", "table", "thead", "tbody", "tr", "th", "td"]),
-      allowedAttributes: {
-        ...sanitizeHtml.defaults.allowedAttributes,
-        "*": ["data-block-id", "class"],
-        img: ["src", "alt", "width", "height"]
-      }
-    });
+    const cleanHtml = this.cleanHtml(dto.htmlContent);
 
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const document = await tx.document.create({
@@ -75,6 +69,95 @@ export class DocumentsService {
       });
 
       return document;
+    });
+  }
+
+  async update(id: string, dto: UpdateDocumentDto, user: AuthenticatedUser) {
+    const document = await this.permissions.assertDocumentRole(user, id, ["EDITOR", "MANAGER"]);
+    if (Object.keys(dto).length === 0) {
+      throw new BadRequestException("No document fields to update");
+    }
+
+    const cleanHtml = dto.htmlContent ? this.cleanHtml(dto.htmlContent) : undefined;
+
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const updatedDocument = await tx.document.update({
+        where: { id },
+        data: {
+          title: dto.title?.trim(),
+          type: dto.type?.trim(),
+          status: dto.status,
+          currentVersion: dto.currentVersion?.trim(),
+          htmlContent: cleanHtml
+        },
+        include: { _count: { select: { comments: true, versions: true } } }
+      });
+
+      if (cleanHtml) {
+        await tx.documentVersion.upsert({
+          where: { documentId_version: { documentId: id, version: updatedDocument.currentVersion } },
+          create: {
+            documentId: id,
+            version: updatedDocument.currentVersion,
+            htmlContent: cleanHtml,
+            changeNote: dto.changeNote ?? "Updated content",
+            createdBy: user.id
+          },
+          update: {
+            htmlContent: cleanHtml,
+            changeNote: dto.changeNote ?? "Updated content",
+            createdBy: user.id
+          }
+        });
+      }
+
+      return updatedDocument;
+    });
+  }
+
+  async remove(id: string, user: AuthenticatedUser) {
+    await this.permissions.assertDocumentRole(user, id, ["MANAGER"]);
+
+    const document = await this.prisma.document.findUnique({
+      where: { id },
+      select: { id: true }
+    });
+
+    if (!document) {
+      throw new NotFoundException("Document not found");
+    }
+
+    await this.prisma.document.delete({ where: { id } });
+    return { ok: true };
+  }
+
+  private cleanHtml(html: string) {
+    return sanitizeHtml(html, {
+      allowedTags: sanitizeHtml.defaults.allowedTags.concat([
+        "img",
+        "h1",
+        "h2",
+        "table",
+        "thead",
+        "tbody",
+        "tr",
+        "th",
+        "td",
+        "section",
+        "figure",
+        "figcaption",
+        "iframe"
+      ]),
+      allowedAttributes: {
+        ...sanitizeHtml.defaults.allowedAttributes,
+        "*": ["data-block-id", "data-source", "data-page", "class"],
+        img: ["src", "alt", "width", "height", "loading"],
+        iframe: ["src", "title", "loading", "class"]
+      },
+      allowedSchemesByTag: {
+        img: ["http", "https", "data"],
+        iframe: ["http", "https"]
+      }
     });
   }
 }

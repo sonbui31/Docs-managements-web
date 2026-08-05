@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { v2 as cloudinary } from "cloudinary";
 import { AuthenticatedUser } from "../auth/auth.types";
@@ -68,5 +68,49 @@ export class MediaService {
         height: result.height
       }
     });
+  }
+
+  async findByProject(projectId: string, user: AuthenticatedUser) {
+    await this.permissions.assertProjectRole(user, projectId, ["VIEWER"]);
+
+    return this.prisma.mediaAsset.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" }
+    });
+  }
+
+  async findByDocument(documentId: string, user: AuthenticatedUser) {
+    await this.permissions.assertDocumentRole(user, documentId, ["VIEWER"]);
+
+    return this.prisma.mediaAsset.findMany({
+      where: { documentId },
+      orderBy: { createdAt: "desc" }
+    });
+  }
+
+  async remove(id: string, user: AuthenticatedUser) {
+    const asset = await this.prisma.mediaAsset.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        projectId: true,
+        documentId: true,
+        cloudinaryPublicId: true
+      }
+    });
+
+    if (!asset) {
+      throw new NotFoundException("Media asset not found");
+    }
+
+    if (asset.documentId) {
+      await this.permissions.assertDocumentRole(user, asset.documentId, ["EDITOR", "MANAGER"]);
+    } else {
+      await this.permissions.assertProjectRole(user, asset.projectId, ["EDITOR", "MANAGER"]);
+    }
+
+    await cloudinary.uploader.destroy(asset.cloudinaryPublicId, { resource_type: "image" }).catch(() => undefined);
+    await this.prisma.mediaAsset.delete({ where: { id } });
+    return { ok: true };
   }
 }

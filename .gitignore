@@ -3,6 +3,7 @@ dist/
 .env
 .DS_Store
 .agents
+.claude
 *.log
 
 FE/node_modules/

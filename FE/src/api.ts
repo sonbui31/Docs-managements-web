@@ -159,6 +159,23 @@ export async function createProject(payload: { code: string; name: string; clien
   return mapProject(project);
 }
 
+export async function updateProject(
+  projectId: string,
+  payload: Partial<{ code: string; name: string; client: string; description: string }>
+) {
+  const project = await apiFetch<BackendProject>(`/projects/${projectId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+  return mapProject(project);
+}
+
+export async function deleteProject(projectId: string) {
+  return apiFetch<{ ok: boolean }>(`/projects/${projectId}`, {
+    method: "DELETE"
+  });
+}
+
 export async function fetchDocumentsByProject(projectId: string) {
   const documents = await apiFetch<BackendDocument[]>(`/documents/project/${projectId}`);
   return documents.map(mapDocument);
@@ -177,10 +194,38 @@ export async function createDocument(payload: {
   return mapDocument(document);
 }
 
-export async function importDocument(file: File, projectId: string) {
+export async function updateDocument(
+  documentId: string,
+  payload: Partial<{
+    title: string;
+    type: string;
+    status: DocumentStatus;
+    currentVersion: string;
+    htmlContent: string;
+    changeNote: string;
+  }>
+) {
+  const document = await apiFetch<BackendDocument>(`/documents/${documentId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      ...payload,
+      status: payload.status ? toBackendDocumentStatus(payload.status) : undefined
+    })
+  });
+  return mapDocument(document);
+}
+
+export async function deleteDocument(documentId: string) {
+  return apiFetch<{ ok: boolean }>(`/documents/${documentId}`, {
+    method: "DELETE"
+  });
+}
+
+export async function importDocument(file: File, projectId: string, documentId?: string) {
   const body = new FormData();
   body.append("file", file);
   body.append("projectId", projectId);
+  if (documentId) body.append("documentId", documentId);
 
   const document = await apiFetch<BackendDocument>("/imports/documents", {
     method: "POST",
@@ -210,6 +255,20 @@ export async function createComment(payload: {
   return mapComment(comment);
 }
 
+export async function deleteComment(commentId: string) {
+  return apiFetch<{ ok: boolean }>(`/comments/${commentId}`, {
+    method: "DELETE"
+  });
+}
+
+export async function updateComment(commentId: string, payload: Partial<{ content: string; selectedText: string; blockId: string }>) {
+  const comment = await apiFetch<BackendComment>(`/comments/${commentId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+  return mapComment(comment);
+}
+
 export async function downloadExport(documentId: string, type: "pdf" | "docx") {
   const blob = await apiFetchBlob(`/exports/documents/${documentId}/${type}`);
   const url = URL.createObjectURL(blob);
@@ -228,10 +287,16 @@ function mapDocumentStatus(status: BackendDocument["status"]): DocumentStatus {
   return "Draft";
 }
 
+function toBackendDocumentStatus(status: DocumentStatus): BackendDocument["status"] {
+  if (status === "Approved") return "APPROVED";
+  if (status === "In Review") return "IN_REVIEW";
+  return "DRAFT";
+}
+
 function inferFileType(fileName?: string | null): ProjectDocument["fileType"] {
   if (!fileName) return "md";
   if (fileName.toLowerCase().endsWith(".pdf")) return "pdf";
-  if (fileName.toLowerCase().endsWith(".docx")) return "docx";
+  if (fileName.toLowerCase().endsWith(".doc") || fileName.toLowerCase().endsWith(".docx")) return "docx";
   return "md";
 }
 
