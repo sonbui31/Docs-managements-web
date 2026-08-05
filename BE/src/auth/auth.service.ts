@@ -220,8 +220,8 @@ export class AuthService implements OnModuleInit {
   }
 
   private async seedAdmin() {
-    const email = this.normalizeEmail(this.config.getOrThrow<string>("ADMIN_EMAIL"));
-    const password = this.config.getOrThrow<string>("ADMIN_PASSWORD");
+    const email = this.normalizeEmail(this.getRequiredConfig("ADMIN_EMAIL", "admin@docs.vn"));
+    const password = this.getRequiredConfig("ADMIN_PASSWORD", "Admin@123456");
     const name = this.config.get<string>("ADMIN_NAME") ?? "System Admin";
 
     const existingAdmin = await this.prisma.user.findFirst({ where: { globalRole: "ADMIN", deletedAt: null } });
@@ -302,7 +302,7 @@ export class AuthService implements OnModuleInit {
   }
 
   private sign(value: string) {
-    return createHmac("sha256", this.config.getOrThrow<string>("JWT_ACCESS_SECRET"))
+    return createHmac("sha256", this.getRequiredConfig("JWT_ACCESS_SECRET", "dev-only-access-secret"))
       .update(value)
       .digest("base64url");
   }
@@ -336,9 +336,20 @@ export class AuthService implements OnModuleInit {
   }
 
   private hashToken(token: string) {
-    return createHmac("sha256", this.config.getOrThrow<string>("JWT_REFRESH_SECRET"))
+    return createHmac("sha256", this.getRequiredConfig("JWT_REFRESH_SECRET", "dev-only-refresh-secret"))
       .update(token)
       .digest("hex");
+  }
+
+  private getRequiredConfig(key: string, developmentFallback: string) {
+    const value = this.config.get<string>(key);
+    if (value) return value;
+
+    if (this.config.get<string>("NODE_ENV") === "production") {
+      throw new TypeError(`Configuration key "${key}" does not exist`);
+    }
+
+    return developmentFallback;
   }
 
   private safeCompare(left: string, right: string) {

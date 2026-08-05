@@ -19,7 +19,7 @@
     "@nestjs/swagger": "^11.4.6",
     "@nestjs/throttler": "^6.5.0",
     "@prisma/adapter-neon": "^6.19.3",
-    "@prisma/client": "^7.9.1",
+    "@prisma/client": "^6.19.3",
     "@types/bcrypt": "^6.0.0",
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
@@ -46,7 +46,7 @@
     "@types/pdf-parse": "^1.1.4",
     "@types/sanitize-html": "^2.13.0",
     "@types/showdown": "^2.0.6",
-    "prisma": "^6.1.0",
+    "prisma": "^6.19.3",
     "typescript": "^5.7.2"
   }
 }
