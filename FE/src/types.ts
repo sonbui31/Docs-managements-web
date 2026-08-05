@@ -5,6 +5,8 @@ export type Project = {
   code: string;
   name: string;
   client: string;
+  externalCompanyId?: string | null;
+  externalDepartmentId?: string | null;
   progress: number;
   openComments: number;
   documents: number;
@@ -24,6 +26,8 @@ export type ProjectDocument = {
   version: string;
   updatedAt: string;
   projectId?: string;
+  externalCompanyId?: string | null;
+  externalDepartmentId?: string | null;
   fileType?: "docx" | "pdf" | "md";
   size?: string;
   progress?: number;
@@ -64,8 +68,10 @@ export type User = {
   name: string;
   avatar?: string;
   role: UserRole;
+  externalRole?: string | null;
+  externalCompanyId?: string | null;
+  externalDepartmentId?: string | null;
   status?: UserStatus;
   department?: string;
   createdAt: string;
 };
-

@@ -4,6 +4,9 @@ export type JwtPayload = {
   sub: string;
   email: string;
   role: GlobalRole;
+  externalRole?: string | null;
+  externalCompanyId?: string | null;
+  externalDepartmentId?: string | null;
   exp: number;
 };
 
@@ -12,6 +15,9 @@ export type AuthenticatedUser = {
   email: string;
   name: string;
   role: GlobalRole;
+  externalRole?: string | null;
+  externalCompanyId?: string | null;
+  externalDepartmentId?: string | null;
   status: UserStatus;
 };
 

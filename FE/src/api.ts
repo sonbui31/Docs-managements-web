@@ -9,6 +9,8 @@ type BackendProject = {
   name: string;
   client: string | null;
   description?: string | null;
+  externalCompanyId?: string | null;
+  externalDepartmentId?: string | null;
   _count?: {
     documents?: number;
     importJobs?: number;
@@ -25,6 +27,8 @@ type BackendDocument = {
   htmlContent: string;
   sourceFileName?: string | null;
   sourceType?: string;
+  externalCompanyId?: string | null;
+  externalDepartmentId?: string | null;
   updatedAt: string;
   _count?: {
     comments?: number;
@@ -104,6 +108,8 @@ export function mapProject(project: BackendProject): Project {
     code: project.code,
     name: project.name,
     client: project.client ?? "Internal Team",
+    externalCompanyId: project.externalCompanyId ?? null,
+    externalDepartmentId: project.externalDepartmentId ?? null,
     progress: 0,
     openComments: 0,
     documents: project._count?.documents ?? 0
@@ -122,6 +128,8 @@ export function mapDocument(document: BackendDocument): ProjectDocument {
     version: document.currentVersion,
     updatedAt: new Date(document.updatedAt).toLocaleDateString("vi-VN"),
     projectId: document.projectId,
+    externalCompanyId: document.externalCompanyId ?? null,
+    externalDepartmentId: document.externalDepartmentId ?? null,
     fileType,
     size: document.sourceFileName ? "Imported" : "Manual",
     progress: document.status === "APPROVED" || document.status === "SIGNED_OFF" ? 100 : 25,

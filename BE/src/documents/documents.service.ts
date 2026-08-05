@@ -46,6 +46,10 @@ export class DocumentsService {
     await this.permissions.assertProjectRole(user, dto.projectId, ["EDITOR", "MANAGER"]);
 
     const cleanHtml = this.cleanHtml(dto.htmlContent);
+    const project = await this.prisma.project.findUnique({
+      where: { id: dto.projectId },
+      select: { externalCompanyId: true, externalDepartmentId: true }
+    });
 
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const document = await tx.document.create({
@@ -55,7 +59,9 @@ export class DocumentsService {
           type: dto.type,
           htmlContent: cleanHtml,
           sourceType: dto.sourceType ?? "manual",
-          sourceFileName: dto.sourceFileName
+          sourceFileName: dto.sourceFileName,
+          externalCompanyId: project?.externalCompanyId ?? user.externalCompanyId ?? null,
+          externalDepartmentId: project?.externalDepartmentId ?? user.externalDepartmentId ?? null
         }
       });
 

@@ -14,6 +14,7 @@ import { LoginDto } from "./dto/login.dto";
 import { RegisterDto } from "./dto/register.dto";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { TokenDto } from "./dto/token.dto";
+import { ExternalAuthService } from "./external-auth.service";
 import { JwtPayload, RequestMeta } from "./auth.types";
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
@@ -26,7 +27,8 @@ const LOCK_MINUTES = 15;
 export class AuthService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly config: ConfigService
+    private readonly config: ConfigService,
+    private readonly externalAuth: ExternalAuthService
   ) {}
 
   async onModuleInit() {
@@ -58,6 +60,10 @@ export class AuthService implements OnModuleInit {
 
   async login(dto: LoginDto, meta: RequestMeta) {
     const email = this.normalizeEmail(dto.email);
+    if (this.externalAuth.isEnabled()) {
+      return this.loginWithExternalProvider(email, dto.password, meta);
+    }
+
     const user = await this.prisma.user.findFirst({ where: { email, deletedAt: null } });
 
     if (!user) {
@@ -220,6 +226,8 @@ export class AuthService implements OnModuleInit {
   }
 
   private async seedAdmin() {
+    if (this.externalAuth.isEnabled()) return;
+
     const email = this.normalizeEmail(this.getRequiredConfig("ADMIN_EMAIL", "admin@docs.vn"));
     const password = this.getRequiredConfig("ADMIN_PASSWORD", "Admin@123456");
     const name = this.config.get<string>("ADMIN_NAME") ?? "System Admin";
@@ -243,6 +251,75 @@ export class AuthService implements OnModuleInit {
         status: "ACTIVE",
         emailConfirmedAt: new Date(),
         deletedAt: null
+      }
+    });
+  }
+
+  private async loginWithExternalProvider(email: string, password: string, meta: RequestMeta) {
+    const externalSession = await this.externalAuth.login(email, password);
+    const user = await this.syncExternalUser(externalSession.user);
+    const refreshToken = await this.createRefreshSession(user, meta);
+
+    await this.audit("auth.external_login_success", user.id, "User", user.id, {
+      externalUserId: externalSession.user.externalUserId,
+      externalRole: externalSession.user.externalRole,
+      externalCompanyId: externalSession.user.externalCompanyId,
+      externalDepartmentId: externalSession.user.externalDepartmentId
+    }, meta);
+
+    return {
+      user: this.toPublicUser(user),
+      accessToken: this.signAccessToken(user),
+      refreshToken
+    };
+  }
+
+  private async syncExternalUser(externalUser: {
+    externalUserId: string;
+    email: string;
+    name: string;
+    role: GlobalRole;
+    externalRole: string;
+    externalCompanyId: string | null;
+    externalDepartmentId: string | null;
+  }) {
+    const email = this.normalizeEmail(externalUser.email);
+    const existingUser = await this.prisma.user.findFirst({
+      where: {
+        deletedAt: null,
+        OR: [
+          { externalUserId: externalUser.externalUserId },
+          { email }
+        ]
+      }
+    });
+
+    const data = {
+      email,
+      name: externalUser.name,
+      globalRole: externalUser.role,
+      externalUserId: externalUser.externalUserId,
+      externalRole: externalUser.externalRole,
+      externalCompanyId: externalUser.externalCompanyId,
+      externalDepartmentId: externalUser.externalDepartmentId,
+      status: "ACTIVE" as const,
+      failedLoginAttempts: 0,
+      lockedUntil: null,
+      emailConfirmedAt: new Date(),
+      deletedAt: null
+    };
+
+    if (existingUser) {
+      return this.prisma.user.update({
+        where: { id: existingUser.id },
+        data
+      });
+    }
+
+    return this.prisma.user.create({
+      data: {
+        ...data,
+        passwordHash: await this.hashPassword(randomBytes(32).toString("base64url"))
       }
     });
   }
@@ -294,6 +371,9 @@ export class AuthService implements OnModuleInit {
         sub: user.id,
         email: user.email,
         role: user.globalRole,
+        externalRole: user.externalRole,
+        externalCompanyId: user.externalCompanyId,
+        externalDepartmentId: user.externalDepartmentId,
         exp: Math.floor(Date.now() / 1000) + ACCESS_TOKEN_TTL_SECONDS
       })
     ).toString("base64url");
@@ -372,6 +452,9 @@ export class AuthService implements OnModuleInit {
       email: user.email,
       name: user.name,
       role: user.globalRole,
+      externalRole: user.externalRole,
+      externalCompanyId: user.externalCompanyId,
+      externalDepartmentId: user.externalDepartmentId,
       status: user.status,
       createdAt: user.createdAt
     };

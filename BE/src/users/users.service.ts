@@ -22,7 +22,12 @@ export class UsersService {
     this.assertAdmin(actor);
 
     const users = await this.prisma.user.findMany({
-      where: { deletedAt: null },
+      where: {
+        deletedAt: null,
+        ...(actor.externalRole === "sadmin" || !actor.externalCompanyId
+          ? {}
+          : { externalCompanyId: actor.externalCompanyId })
+      },
       orderBy: { createdAt: "desc" },
       include: {
         projectMemberships: {
@@ -42,6 +47,9 @@ export class UsersService {
       email: user.email,
       name: user.name,
       role: user.globalRole,
+      externalRole: user.externalRole,
+      externalCompanyId: user.externalCompanyId,
+      externalDepartmentId: user.externalDepartmentId,
       status: user.status,
       createdAt: user.createdAt,
       sessions: user._count.refreshSessions,
@@ -303,12 +311,25 @@ export class UsersService {
     return uniqueRoles.reduce((highest, role) => (roleRank[role] > roleRank[highest] ? role : highest), uniqueRoles[0]);
   }
 
-  private toPublicUser(user: { id: string; email: string; name: string; globalRole: GlobalRole; status: string; createdAt: Date }) {
+  private toPublicUser(user: {
+    id: string;
+    email: string;
+    name: string;
+    globalRole: GlobalRole;
+    externalRole?: string | null;
+    externalCompanyId?: string | null;
+    externalDepartmentId?: string | null;
+    status: string;
+    createdAt: Date;
+  }) {
     return {
       id: user.id,
       email: user.email,
       name: user.name,
       role: user.globalRole,
+      externalRole: user.externalRole,
+      externalCompanyId: user.externalCompanyId,
+      externalDepartmentId: user.externalDepartmentId,
       status: user.status,
       createdAt: user.createdAt
     };

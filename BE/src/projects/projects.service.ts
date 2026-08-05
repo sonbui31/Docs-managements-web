@@ -46,7 +46,17 @@ export class ProjectsService {
     await this.permissions.assertCanCreateProject(user);
 
     return this.prisma.$transaction(async (tx) => {
-      const project = await tx.project.create({ data: dto });
+      const project = await tx.project.create({
+        data: {
+          ...dto,
+          code: dto.code.trim().toUpperCase(),
+          name: dto.name.trim(),
+          client: dto.client?.trim(),
+          description: dto.description?.trim(),
+          externalCompanyId: dto.externalCompanyId?.trim() || user.externalCompanyId || null,
+          externalDepartmentId: dto.externalDepartmentId?.trim() || user.externalDepartmentId || null
+        }
+      });
       if (user.role === "MANAGER") {
         await tx.projectMember.create({
           data: {
@@ -79,7 +89,9 @@ export class ProjectsService {
         code: dto.code?.trim().toUpperCase(),
         name: dto.name?.trim(),
         client: dto.client?.trim(),
-        description: dto.description?.trim()
+        description: dto.description?.trim(),
+        externalCompanyId: dto.externalCompanyId?.trim(),
+        externalDepartmentId: dto.externalDepartmentId?.trim()
       }
     });
   }

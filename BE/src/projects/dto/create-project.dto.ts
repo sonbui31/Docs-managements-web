@@ -18,4 +18,14 @@ export class CreateProjectDto {
   @IsString()
   @MaxLength(1000)
   description?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  externalCompanyId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  externalDepartmentId?: string;
 }
