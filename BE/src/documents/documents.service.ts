@@ -144,15 +144,26 @@ export class DocumentsService {
         "th",
         "td",
         "section",
+        "article",
         "figure",
         "figcaption",
+        "span",
         "iframe"
       ]),
       allowedAttributes: {
         ...sanitizeHtml.defaults.allowedAttributes,
-        "*": ["data-block-id", "data-source", "data-page", "class"],
-        img: ["src", "alt", "width", "height", "loading"],
+        "*": ["data-block-id", "data-source", "data-page", "class", "style", "id", "aria-label"],
+        img: ["src", "alt", "width", "height", "loading", "class"],
         iframe: ["src", "title", "loading", "class"]
+      },
+      allowedStyles: {
+        "*": {
+          left: [/^\d+(\.\d+)?px$/],
+          top: [/^-?\d+(\.\d+)?px$/],
+          width: [/^\d+(\.\d+)?px$/],
+          height: [/^\d+(\.\d+)?px$/],
+          "font-size": [/^\d+(\.\d+)?px$/]
+        }
       },
       allowedSchemesByTag: {
         img: ["http", "https", "data"],

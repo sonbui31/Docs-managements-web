@@ -13,3 +13,4 @@ FE/.env
 BE/node_modules/
 BE/dist/
 BE/.env
+/Integrated API

@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { createCanvas, DOMMatrix, ImageData, Path2D } from "@napi-rs/canvas";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,8 +19,15 @@ import { ImportDocumentDto } from "./dto/import-document.dto";
 
 const execFileAsync = promisify(execFile);
 const importEsm = new Function("specifier", "return import(specifier)") as <T>(specifier: string) => Promise<T>;
+const PDF_RENDER_SCALE = 1.35;
+const PDF_PAGE_RENDER_CONCURRENCY = 2;
 
 type PdfJsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
+type PdfOutlineEntry = {
+  title: string;
+  pageNumber: number;
+  pdfTop: number | null;
+};
 
 @Injectable()
 export class ImportsService {
@@ -151,12 +159,15 @@ export class ImportsService {
     }
 
     if (extension === "docx") {
+      const imageUploadCache = new Map<string, Promise<string>>();
       const result = await mammoth.convertToHtml({ buffer: file.buffer }, {
         convertImage: mammoth.images.imgElement(async (image) => {
           const imageBuffer = await image.read();
-          const src = await this.uploadImportedImage(
+          const mimeType = image.contentType || this.detectImageMimeType(imageBuffer);
+          const src = await this.uploadImportedImageCached(
+            imageUploadCache,
             imageBuffer,
-            image.contentType || this.detectImageMimeType(imageBuffer),
+            mimeType,
             file,
             "word-image",
             dto,
@@ -210,11 +221,14 @@ export class ImportsService {
       useSystemFonts: true
     });
     const pdf = await loadingTask.promise;
-    const figures: string[] = [];
+    const outlineByPage = await this.buildPdfOutlineByPage(pdf);
 
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const figures = await this.mapWithConcurrency(
+      Array.from({ length: pdf.numPages }, (_, index) => index + 1),
+      PDF_PAGE_RENDER_CONCURRENCY,
+      async (pageNumber) => {
       const page = await pdf.getPage(pageNumber);
-      const viewport = page.getViewport({ scale: 1.7 });
+      const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
       const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
       const canvasContext = canvas.getContext("2d");
 
@@ -234,16 +248,167 @@ export class ImportsService {
         user
       );
       const alt = this.escapeHtml(`${file.originalname} - trang ${pageNumber}`);
-      figures.push(
-        `<figure class="pdf-page-image" data-page="${pageNumber}"><img src="${imageSource}" alt="${alt}" loading="lazy" /></figure>`
+      const textLayer = await this.buildPdfTextLayer(pdfjs, page, viewport);
+      const headings = this.buildPdfPageHeadings(
+        pageNumber,
+        outlineByPage.get(pageNumber) ?? [],
+        textLayer.inferredHeading,
+        viewport
       );
-    }
+      return [
+        `<article class="pdf-hybrid-page" data-page="${pageNumber}" data-block-id="PDF-P${pageNumber}" style="width:${Math.round(viewport.width)}px;height:${Math.round(viewport.height)}px">`,
+        headings,
+        `<img class="pdf-page-bg" src="${imageSource}" alt="${alt}" loading="lazy" />`,
+        `<div class="pdf-text-layer" aria-label="PDF text layer">`,
+        textLayer.html,
+        `</div>`,
+        `</article>`
+      ].join("");
+      }
+    );
 
     if (!figures.length) {
       throw new BadRequestException("Không render được trang PDF");
     }
 
-    return `<section class="pdf-document-render" data-source="pdf">${figures.join("\n")}</section>`;
+    return `<section class="pdf-document-render pdf-hybrid-document" data-source="pdf">${figures.join("\n")}</section>`;
+  }
+
+  private async buildPdfTextLayer(
+    pdfjs: PdfJsModule,
+    page: any,
+    viewport: any
+  ) {
+    const textContent = await page.getTextContent();
+    const items = textContent.items as Array<{
+      str?: string;
+      transform?: number[];
+      width?: number;
+      height?: number;
+      hasEOL?: boolean;
+    }>;
+    let inferredHeading = "";
+    let largestFontSize = 0;
+
+    const spans = items
+      .map((item) => {
+        const text = (item.str ?? "").replace(/\s+/g, " ");
+        if (!text.trim() || !item.transform) return "";
+
+        const transform = pdfjs.Util.transform(viewport.transform, item.transform);
+        const fontSize = Math.max(1, Math.hypot(transform[2], transform[3]));
+        const left = transform[4];
+        const top = transform[5] - fontSize;
+        const width = Math.max(1, (item.width ?? text.length * fontSize * 0.45) * PDF_RENDER_SCALE);
+        const height = Math.max(fontSize, item.height ? item.height * PDF_RENDER_SCALE : fontSize);
+        const trimmed = text.trim();
+
+        if (fontSize > largestFontSize && trimmed.length >= 4 && trimmed.length <= 140) {
+          largestFontSize = fontSize;
+          inferredHeading = trimmed;
+        }
+
+        return [
+          `<span class="pdf-text-item" data-block-id="PDF-PAGE-TEXT" style="left:${this.roundCssPx(left)};top:${this.roundCssPx(top)};width:${this.roundCssPx(width)};height:${this.roundCssPx(height)};font-size:${this.roundCssPx(fontSize)}">`,
+          this.escapeHtml(text),
+          `</span>`
+        ].join("");
+      })
+      .join("");
+
+    return { html: spans, inferredHeading };
+  }
+
+  private async buildPdfOutlineByPage(pdf: any) {
+    const outlineByPage = new Map<number, PdfOutlineEntry[]>();
+    const outline = await pdf.getOutline().catch(() => null);
+    if (!outline?.length) return outlineByPage;
+
+    const visit = async (items: Array<{ title?: string; dest?: unknown; items?: unknown[] }>) => {
+      for (const item of items) {
+        const title = item.title?.trim();
+        const destination = title ? await this.resolvePdfOutlineDestination(pdf, item.dest) : null;
+        if (title && destination) {
+          outlineByPage.set(destination.pageNumber, [
+            ...(outlineByPage.get(destination.pageNumber) ?? []),
+            { title, pageNumber: destination.pageNumber, pdfTop: destination.pdfTop }
+          ]);
+        }
+        if (Array.isArray(item.items) && item.items.length) {
+          await visit(item.items as Array<{ title?: string; dest?: unknown; items?: unknown[] }>);
+        }
+      }
+    };
+
+    await visit(outline as Array<{ title?: string; dest?: unknown; items?: unknown[] }>);
+    return outlineByPage;
+  }
+
+  private async resolvePdfOutlineDestination(
+    pdf: any,
+    dest: unknown
+  ) {
+    const destination = typeof dest === "string" ? await pdf.getDestination(dest).catch(() => null) : dest;
+    if (!Array.isArray(destination) || !destination[0]) return null;
+    const pageIndex = await pdf.getPageIndex(destination[0]).catch(() => null);
+    if (typeof pageIndex !== "number") return null;
+
+    const mode = this.pdfDestinationMode(destination[1]);
+    let pdfTop: number | null = null;
+    if (mode === "XYZ" && typeof destination[3] === "number") {
+      pdfTop = destination[3];
+    } else if ((mode === "FitH" || mode === "FitBH") && typeof destination[2] === "number") {
+      pdfTop = destination[2];
+    } else if (mode === "FitR" && typeof destination[5] === "number") {
+      pdfTop = destination[5];
+    }
+
+    return { pageNumber: pageIndex + 1, pdfTop };
+  }
+
+  private pdfDestinationMode(destinationMode: unknown) {
+    if (!destinationMode) return null;
+    if (typeof destinationMode === "string") return destinationMode;
+    if (typeof destinationMode === "object" && "name" in destinationMode) {
+      return String((destinationMode as { name?: unknown }).name ?? "");
+    }
+    return null;
+  }
+
+  private buildPdfPageHeadings(
+    pageNumber: number,
+    outlineEntries: PdfOutlineEntry[],
+    inferredHeading: string,
+    viewport: { height: number; convertToViewportPoint?: (x: number, y: number) => number[] }
+  ) {
+    const entries = outlineEntries.length
+      ? outlineEntries
+      : [{ title: inferredHeading || `Trang ${pageNumber}`, pageNumber, pdfTop: null }];
+
+    return entries
+      .filter(Boolean)
+      .map((entry, index) => {
+        const id = `pdf-page-${pageNumber}-heading-${index}`;
+        const top = this.pdfDestinationTopToViewportTop(entry.pdfTop, viewport);
+        return `<h2 id="${id}" class="pdf-page-heading" data-page="${pageNumber}" style="top:${this.roundCssPx(top)}">${this.escapeHtml(entry.title)}</h2>`;
+      })
+      .join("");
+  }
+
+  private pdfDestinationTopToViewportTop(
+    pdfTop: number | null,
+    viewport: { height: number; convertToViewportPoint?: (x: number, y: number) => number[] }
+  ) {
+    if (typeof pdfTop !== "number" || !Number.isFinite(pdfTop)) return 0;
+    const point = typeof viewport.convertToViewportPoint === "function"
+      ? viewport.convertToViewportPoint(0, pdfTop)
+      : [0, pdfTop];
+    const top = Array.isArray(point) && typeof point[1] === "number" ? point[1] : 0;
+    return Math.max(0, Math.min(viewport.height - 1, top));
+  }
+
+  private roundCssPx(value: number) {
+    return `${Math.round(value * 100) / 100}px`;
   }
 
   private async convertPdfToEmbeddedHtml(file: Express.Multer.File, dto: ImportDocumentDto, user: AuthenticatedUser) {
@@ -288,6 +453,46 @@ export class ImportsService {
     } catch {
       return `data:${contentType};base64,${buffer.toString("base64")}`;
     }
+  }
+
+  private uploadImportedImageCached(
+    cache: Map<string, Promise<string>>,
+    buffer: Buffer,
+    contentType: string,
+    sourceFile: Express.Multer.File,
+    suffix: string,
+    dto: ImportDocumentDto,
+    user: AuthenticatedUser
+  ) {
+    const cacheKey = `${contentType}:${createHash("sha1").update(buffer).digest("hex")}`;
+    const existing = cache.get(cacheKey);
+    if (existing) return existing;
+
+    const uploadPromise = this.uploadImportedImage(buffer, contentType, sourceFile, suffix, dto, user);
+    cache.set(cacheKey, uploadPromise);
+    return uploadPromise;
+  }
+
+  private async mapWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    mapper: (item: T, index: number) => Promise<R>
+  ) {
+    const results = new Array<R>(items.length);
+    let nextIndex = 0;
+    const workerCount = Math.min(concurrency, items.length);
+
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (nextIndex < items.length) {
+          const currentIndex = nextIndex;
+          nextIndex += 1;
+          results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+        }
+      })
+    );
+
+    return results;
   }
 
   private extensionFromMimeType(contentType: string) {
@@ -398,15 +603,26 @@ pdfParse(fs.readFileSync(process.argv[1]))
         "th",
         "td",
         "section",
+        "article",
         "figure",
         "figcaption",
+        "span",
         "iframe"
       ]),
       allowedAttributes: {
         ...sanitizeHtml.defaults.allowedAttributes,
-        "*": ["data-block-id", "data-source", "data-page", "class"],
-        img: ["src", "alt", "width", "height", "loading"],
+        "*": ["data-block-id", "data-source", "data-page", "class", "style", "id", "aria-label"],
+        img: ["src", "alt", "width", "height", "loading", "class"],
         iframe: ["src", "title", "loading", "class"]
+      },
+      allowedStyles: {
+        "*": {
+          left: [/^\d+(\.\d+)?px$/],
+          top: [/^-?\d+(\.\d+)?px$/],
+          width: [/^\d+(\.\d+)?px$/],
+          height: [/^\d+(\.\d+)?px$/],
+          "font-size": [/^\d+(\.\d+)?px$/]
+        }
       },
       allowedSchemesByTag: {
         img: ["http", "https", "data"],

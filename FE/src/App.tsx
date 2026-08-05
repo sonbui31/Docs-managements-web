@@ -308,6 +308,7 @@ function App() {
   const [importMode, setImportMode] = useState<"create" | "update">("create");
   const [importTargetDocumentId, setImportTargetDocumentId] = useState<string>(selectedDocumentId);
   const [isImporting, setIsImporting] = useState<boolean>(false);
+  const [importStatusText, setImportStatusText] = useState<string>("");
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
 
   // Create Project Modal state
@@ -499,8 +500,10 @@ function App() {
       closestReadableElement(range.commonAncestorContainer) ??
       closestReadableElement(range.endContainer);
     const explicitReq = sourceElement?.closest<HTMLElement>("[data-req], [data-block-id]");
+    const pdfPage = sourceElement?.closest<HTMLElement>(".pdf-hybrid-page");
     const blockId =
       explicitReq?.dataset.req ??
+      (pdfPage?.dataset.page ? `PDF-P${pdfPage.dataset.page}` : undefined) ??
       explicitReq?.dataset.blockId ??
       `SEL-${Math.abs(hashText(selectedText)).toString().slice(0, 6)}`;
     const targetRect = getSelectionEndRect(range);
@@ -520,6 +523,12 @@ function App() {
   function getCommentSelectionRange(range: Range, anchorNode: Node, focusNode: Node) {
     const anchorElement = closestReadableElement(anchorNode);
     const focusElement = closestReadableElement(focusNode);
+
+    const anchorPdfPage = anchorElement?.closest(".pdf-hybrid-page");
+    const focusPdfPage = focusElement?.closest(".pdf-hybrid-page");
+    if (anchorPdfPage && focusPdfPage && anchorPdfPage === focusPdfPage) {
+      return range.cloneRange();
+    }
 
     if (!focusElement || !anchorElement || focusElement === anchorElement) {
       return range.cloneRange();
@@ -638,7 +647,7 @@ function App() {
 
   function closestReadableElement(node: Node) {
     const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-    return element?.closest<HTMLElement>("p, li, td, th, blockquote, h1, h2, h3, h4, .req-block, pre");
+    return element?.closest<HTMLElement>("p, li, td, th, blockquote, h1, h2, h3, h4, .req-block, pre, .pdf-text-item, .pdf-hybrid-page");
   }
 
   function hashText(value: string) {
@@ -675,7 +684,7 @@ function App() {
     setSelectionPopover(null);
     setIsSelectionComposerOpen(false);
     setActiveBlockId(comment.blockId);
-    window.setTimeout(() => highlightCommentText(comment.selectedText!), 80);
+    window.setTimeout(() => highlightCommentText(comment.selectedText!, comment.blockId), 80);
   }
 
   function clearActiveCommentHighlight() {
@@ -684,6 +693,10 @@ function App() {
       documentContainerRef.current.querySelectorAll<HTMLElement>(".active-comment-highlight")
     );
     marks.forEach((mark) => {
+      if (mark.tagName.toLowerCase() !== "mark") {
+        mark.classList.remove("active-comment-highlight");
+        return;
+      }
       const parent = mark.parentNode;
       if (!parent) return;
       while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
@@ -695,12 +708,27 @@ function App() {
       .forEach((element) => element.classList.remove("active-comment-block-highlight"));
   }
 
-  function highlightCommentText(selectedText: string) {
+  function highlightCommentText(selectedText: string, blockId?: string) {
     if (!documentContainerRef.current) return;
     clearActiveCommentHighlight();
 
     const target = selectedText.replace(/\s+/g, " ").trim();
     if (!target) return;
+
+    if (blockId?.startsWith("PDF-P")) {
+      const pageNumber = blockId.replace("PDF-P", "");
+      const pdfPage = documentContainerRef.current.querySelector<HTMLElement>(
+        `.pdf-hybrid-page[data-page="${pageNumber}"], .pdf-hybrid-page[data-block-id="${blockId}"]`
+      );
+      if (pdfPage) {
+        if (highlightPdfCommentTarget(pdfPage, target)) return;
+      }
+    }
+
+    const pdfFallbackPage = findPdfCommentPage(target);
+    if (pdfFallbackPage && highlightPdfCommentTarget(pdfFallbackPage, target)) {
+      return;
+    }
 
     const walker = document.createTreeWalker(
       documentContainerRef.current,
@@ -736,7 +764,7 @@ function App() {
       const fallbackElement = findCommentBlockElement(target);
       if (fallbackElement) {
         fallbackElement.classList.add("active-comment-block-highlight");
-        fallbackElement.scrollIntoView({ behavior: "smooth", block: "center" });
+        scrollDocumentReaderTo(fallbackElement, "center");
         return;
       }
       addToast("warning", "Không tìm thấy đoạn gốc", "Đoạn này có thể đã bị chỉnh sửa trong tài liệu.");
@@ -749,7 +777,118 @@ function App() {
     const mark = document.createElement("mark");
     mark.className = "active-comment-highlight";
     range.surroundContents(mark);
-    mark.scrollIntoView({ behavior: "smooth", block: "center" });
+    scrollDocumentReaderTo(mark, "center");
+  }
+
+  function highlightPdfCommentTarget(pdfPage: HTMLElement, target: string) {
+    const match = findPdfTextSequenceTarget(pdfPage, target);
+    if (!match) {
+      pdfPage.classList.add("active-comment-block-highlight");
+      scrollDocumentReaderTo(pdfPage, "center");
+      return false;
+    }
+
+    match.items.forEach((element) => element.classList.add("active-comment-highlight"));
+    scrollDocumentReaderTo(match.targetElement, "center");
+    return true;
+  }
+
+  function findPdfCommentPage(target: string) {
+    if (!documentContainerRef.current) return null;
+    const pages = Array.from(documentContainerRef.current.querySelectorAll<HTMLElement>(".pdf-hybrid-page"));
+    return pages.find((page) => findPdfTextSequenceTarget(page, target)) ?? null;
+  }
+
+  function findPdfTextSequenceTarget(pdfPage: HTMLElement, target: string) {
+    const normalizedTarget = normalizePdfLookupText(target);
+    if (!normalizedTarget) return null;
+
+    const textItems = Array.from(pdfPage.querySelectorAll<HTMLElement>(".pdf-text-item")).filter((item) =>
+      Boolean(normalizePdfLookupText(item.textContent ?? ""))
+    );
+
+    const singleMatch = textItems.find((item) => {
+      const text = normalizePdfLookupText(item.textContent ?? "");
+      return text && (text.includes(normalizedTarget) || normalizedTarget.includes(text));
+    });
+    if (singleMatch) return { items: [singleMatch], targetElement: singleMatch };
+
+    for (let start = 0; start < textItems.length; start += 1) {
+      let combined = "";
+      const matchedItems: HTMLElement[] = [];
+      for (let end = start; end < textItems.length; end += 1) {
+        const text = normalizePdfLookupText(textItems[end].textContent ?? "");
+        if (!text) continue;
+        matchedItems.push(textItems[end]);
+        combined = normalizePdfLookupText(`${combined} ${text}`);
+        if (combined.includes(normalizedTarget) || normalizedTarget.includes(combined)) {
+          return { items: matchedItems, targetElement: matchedItems[0] };
+        }
+        if (combined.length > normalizedTarget.length + 80) break;
+      }
+    }
+
+    return null;
+  }
+
+  function scrollDocumentReaderTo(targetElement: HTMLElement, block: ScrollLogicalPosition = "center") {
+    const container = documentContainerRef.current;
+    const docPage = (targetElement.closest(".doc-page") || container?.closest(".doc-page")) as HTMLElement | null;
+
+    if (docPage) {
+      const elTop = targetElement.getBoundingClientRect().top;
+      const docPageTop = docPage.getBoundingClientRect().top;
+      const offset = block === "start" ? 24 : docPage.clientHeight / 2 - targetElement.clientHeight / 2;
+      const targetScrollTop = docPage.scrollTop + (elTop - docPageTop) - offset;
+      docPage.scrollTo({
+        top: Math.max(0, targetScrollTop),
+        behavior: "smooth"
+      });
+      return;
+    }
+
+    targetElement.scrollIntoView({ behavior: "smooth", block });
+  }
+
+  function renderPersistedCommentAnchors(comments: CommentThread[]) {
+    if (!documentContainerRef.current) return;
+
+    documentContainerRef.current
+      .querySelectorAll<HTMLElement>(".comment-anchor-highlight")
+      .forEach((element) => element.classList.remove("comment-anchor-highlight"));
+
+    comments
+      .filter((comment) => comment.selectedText && !comment.parentId && comment.status === "open")
+      .forEach((comment) => {
+        const selectedText = comment.selectedText?.trim();
+        if (!selectedText) return;
+
+        const pdfPages = getPdfCandidatePages(comment.blockId, selectedText);
+        for (const page of pdfPages) {
+          const match = findPdfTextSequenceTarget(page, selectedText);
+          if (!match) continue;
+          match.items.forEach((element) => element.classList.add("comment-anchor-highlight"));
+          break;
+        }
+      });
+  }
+
+  function getPdfCandidatePages(blockId: string, selectedText: string) {
+    if (!documentContainerRef.current) return [];
+    const allPages = Array.from(documentContainerRef.current.querySelectorAll<HTMLElement>(".pdf-hybrid-page"));
+    if (!allPages.length) return [];
+
+    if (blockId.startsWith("PDF-P")) {
+      const pageNumber = blockId.replace("PDF-P", "");
+      const exactPage = documentContainerRef.current.querySelector<HTMLElement>(
+        `.pdf-hybrid-page[data-page="${pageNumber}"], .pdf-hybrid-page[data-block-id="${blockId}"]`
+      );
+      if (exactPage) return [exactPage, ...allPages.filter((page) => page !== exactPage)];
+    }
+
+    const normalizedTarget = normalizePdfLookupText(selectedText);
+    const textPage = allPages.find((page) => normalizePdfLookupText(page.textContent ?? "").includes(normalizedTarget));
+    return textPage ? [textPage, ...allPages.filter((page) => page !== textPage)] : allPages;
   }
 
   function findCommentBlockElement(target: string) {
@@ -757,7 +896,7 @@ function App() {
     const normalizedTarget = target.replace(/\s+/g, " ").trim().toLowerCase();
     const candidates = Array.from(
       documentContainerRef.current.querySelectorAll<HTMLElement>(
-        "p, li, td, th, blockquote, h1, h2, h3, h4, .req-block"
+        "p, li, td, th, blockquote, h1, h2, h3, h4, .req-block, .pdf-hybrid-page"
       )
     );
 
@@ -849,6 +988,16 @@ function App() {
         replies: repliesByParent.get(comment.id) ?? []
       }));
   }, [commentsList, selectedDocument]);
+
+  useEffect(() => {
+    if (!documentContainerRef.current) return;
+
+    const timer = window.setTimeout(() => {
+      renderPersistedCommentAnchors(displayedComments);
+    }, 120);
+
+    return () => window.clearTimeout(timer);
+  }, [displayedComments, selectedDocument.id, selectedDocument.contentHtml]);
 
   // Toast Helper
   function addToast(type: ToastMessage["type"], title: string, message: string) {
@@ -1120,8 +1269,9 @@ function App() {
 
   // Handle File Import with REAL text reading for pure document viewing & commenting
   async function handleImport(file?: File) {
-    if (!file) return;
+    if (!file || isImporting) return;
     setIsImporting(true);
+    setImportStatusText(getImportStatusText(file));
     const targetProject = projectsList.find((p) => p.id === importTargetProjectId) || selectedProject;
     const targetDocumentId = importMode === "update" ? importTargetDocumentId : undefined;
 
@@ -1156,7 +1306,16 @@ function App() {
       addToast("error", "Import thất bại", "BE chưa nhận được file hoặc định dạng chưa được hỗ trợ.");
     } finally {
       setIsImporting(false);
+      setImportStatusText("");
     }
+  }
+
+  function getImportStatusText(file: File) {
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    if (extension === "pdf") return "Đang render PDF hybrid, tạo text layer và upload ảnh trang lên Cloudinary...";
+    if (extension === "doc" || extension === "docx") return "Đang chuyển Word sang HTML và upload ảnh nhúng lên Cloudinary...";
+    if (extension === "md") return "Đang chuyển Markdown sang HTML và lưu vào Neon...";
+    return "Đang upload và chuyển đổi tài liệu...";
   }
 
   // Edit Comment Handler
@@ -1409,7 +1568,7 @@ function App() {
     const container = documentContainerRef.current;
     const headings = container.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5");
 
-    let targetHeading: HTMLElement | null = headings[item.index] || document.getElementById(item.id);
+    let targetHeading: HTMLElement | null = document.getElementById(item.id) || headings[item.index] || null;
 
     if (!targetHeading && item.text) {
       headings.forEach((h) => {
@@ -1421,10 +1580,16 @@ function App() {
 
     if (targetHeading) {
       targetHeading.setAttribute("id", item.id);
-      const docPage = (targetHeading.closest(".doc-page") || container.closest(".doc-page")) as HTMLElement | null;
+      const isPdfHeading = targetHeading.classList.contains("pdf-page-heading");
+      const pdfTextTarget = isPdfHeading ? findPdfTocTextTarget(targetHeading, item.text) : null;
+      const targetElement = pdfTextTarget ?? targetHeading;
+      const pulseElement = isPdfHeading
+        ? targetHeading.closest<HTMLElement>(".pdf-hybrid-page") ?? targetHeading
+        : targetHeading;
+      const docPage = (targetElement.closest(".doc-page") || container.closest(".doc-page")) as HTMLElement | null;
 
       if (docPage) {
-        const elTop = targetHeading.getBoundingClientRect().top;
+        const elTop = targetElement.getBoundingClientRect().top;
         const docPageTop = docPage.getBoundingClientRect().top;
         const targetScrollTop = docPage.scrollTop + (elTop - docPageTop) - 24;
 
@@ -1433,18 +1598,53 @@ function App() {
           behavior: "smooth"
         });
       } else {
-        targetHeading.scrollIntoView({ behavior: "smooth", block: "start" });
+        targetElement.scrollIntoView({ behavior: "smooth", block: "start" });
       }
 
-      targetHeading.classList.remove("heading-focus-pulse");
-      void targetHeading.offsetWidth;
-      targetHeading.classList.add("heading-focus-pulse");
+      pulseElement.classList.remove("heading-focus-pulse");
+      void pulseElement.offsetWidth;
+      pulseElement.classList.add("heading-focus-pulse");
 
       setTimeout(() => {
-        targetHeading?.classList.remove("heading-focus-pulse");
+        pulseElement?.classList.remove("heading-focus-pulse");
       }, 2500);
     }
   };
+
+  function findPdfTocTextTarget(targetHeading: HTMLElement, tocText: string) {
+    const pdfPage = targetHeading.closest<HTMLElement>(".pdf-hybrid-page");
+    if (!pdfPage) return null;
+
+    const normalizedTocText = normalizePdfLookupText(tocText);
+    if (!normalizedTocText) return null;
+
+    const textItems = Array.from(pdfPage.querySelectorAll<HTMLElement>(".pdf-text-item"));
+    const singleMatch = textItems.find((item) => {
+      const text = normalizePdfLookupText(item.textContent ?? "");
+      return text && (text.includes(normalizedTocText) || normalizedTocText.includes(text));
+    });
+    if (singleMatch) return singleMatch;
+
+    for (let start = 0; start < textItems.length; start += 1) {
+      let combined = "";
+      for (let end = start; end < Math.min(textItems.length, start + 10); end += 1) {
+        combined = normalizePdfLookupText(`${combined} ${textItems[end].textContent ?? ""}`);
+        if (combined.includes(normalizedTocText)) {
+          return textItems[start];
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function normalizePdfLookupText(value: string) {
+    return value
+      .replace(/\s+/g, " ")
+      .replace(/[.\-–—:]+$/g, "")
+      .trim()
+      .toLowerCase();
+  }
 
   function normalizeMermaidCode(value: string) {
     const textarea = document.createElement("textarea");
@@ -1721,18 +1921,6 @@ function App() {
 
 
 
-            {/* Toggle Metrics Strip Button */}
-            <button
-              className={showMetrics ? "icon-btn active" : "icon-btn"}
-              type="button"
-              title="Ẩn / Hiện thanh thông số dự án"
-              onClick={() => setShowMetrics(!showMetrics)}
-            >
-              <BarChart2 size={15} />
-              <span>Chỉ số</span>
-              {showMetrics ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-            </button>
-
             <button
               className="icon-btn"
               type="button"
@@ -1748,100 +1936,6 @@ function App() {
           </div>
           )}
         </header>
-
-        {/* Collapsible Dashboard Control Strip */}
-        {showMetrics && activeTabNav !== "admin" && (
-          <section className="control-strip-wrapper">
-            <div className="control-strip-header">
-              <div className="metric-scope-switcher">
-                <button
-                  className={metricScope === "project" ? "scope-tab-btn active" : "scope-tab-btn"}
-                  type="button"
-                  onClick={() => setMetricScope("project")}
-                >
-                  <Layers size={13} /> Theo Dự Án ({selectedProject.code})
-                </button>
-                <button
-                  className={metricScope === "document" ? "scope-tab-btn active" : "scope-tab-btn"}
-                  type="button"
-                  onClick={() => setMetricScope("document")}
-                >
-                  <File size={13} /> Theo Tài Liệu Đang Chọn ({selectedDocument.type})
-                </button>
-              </div>
-              <span className="scope-badge">
-                {metricScope === "project" ? `Dự án: ${selectedProject.name}` : `Tài liệu: ${selectedDocument.title}`}
-              </span>
-            </div>
-
-            <div className="control-strip" aria-label="Project metrics">
-              {/* Metric Card 1 */}
-              <div className="metric-card emerald">
-                <div className="metric-header">
-                  <small>{metricScope === "project" ? "Tiến độ Dự Án" : "Tiến độ Tài Liệu"}</small>
-                  <CheckCircle2 size={16} color="var(--accent-emerald)" />
-                </div>
-                <div className="metric-value">
-                  {metricScope === "project" ? `${selectedProject.progress}%` : `${selectedDocument.progress ?? 75}%`}
-                </div>
-                <div className="progress-bar-bg">
-                  <div
-                    className="progress-bar-fill"
-                    style={{
-                      width: metricScope === "project" ? `${selectedProject.progress}%` : `${selectedDocument.progress ?? 75}%`
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Metric Card 2 */}
-              <div className="metric-card">
-                <div className="metric-header">
-                  <small>{metricScope === "project" ? "Tài Liệu Dự Án" : "Số Yêu Cầu (REQ)"}</small>
-                  <FileCheck2 size={16} color="var(--accent-cyan)" />
-                </div>
-                <div className="metric-value">
-                  {metricScope === "project" ? projectDocuments.length : (selectedDocument.reqCount ?? 12)}
-                </div>
-                <small style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>
-                  {metricScope === "project" ? "Thuộc phạm vi hiển thị" : `Phiên bản ${selectedDocument.version}`}
-                </small>
-              </div>
-
-              {/* Metric Card 3 */}
-              <div className="metric-card amber">
-                <div className="metric-header">
-                  <small>{metricScope === "project" ? "Thảo Luận Dự Án" : "Thảo Luận Tài Liệu"}</small>
-                  <MessageSquareText size={16} color="var(--accent-amber)" />
-                </div>
-                <div className="metric-value">
-                  {metricScope === "project" ? getProjectOpenCommentsCount(selectedProject.id) : docOpenCommentsCount}
-                </div>
-                <small style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>
-                  {metricScope === "project" ? "Tổng trao đổi trong dự án" : "Ghi chú cần giải đáp"}
-                </small>
-              </div>
-
-              {/* Import Action Card */}
-              <div className="import-card">
-                <div className="import-card-text">
-                  <strong>Import tệp vào dự án ({selectedProject.code})</strong>
-                  <small>Chuyển đổi Word, Markdown, PDF sang chuẩn xem cho team</small>
-                </div>
-                <button
-                  className="btn-import"
-                  type="button"
-                  onClick={() => {
-                    setImportTargetProjectId(selectedProjectId);
-                    setIsImportModalOpen(true);
-                  }}
-                >
-                  <Sparkles size={15} /> Import ngay
-                </button>
-              </div>
-            </div>
-          </section>
-        )}
 
 
 
@@ -2705,13 +2799,14 @@ function App() {
 
       {/* Modal 6: Import File with Target Project Selector */}
       {isImportModalOpen && (
-        <div className="modal-backdrop" onClick={() => setIsImportModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop" onClick={() => !isImporting && setIsImportModalOpen(false)}>
+          <div className="modal-content import-modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Import tệp vào Dự Án</h3>
               <button
                 className="icon-btn"
                 type="button"
+                disabled={isImporting}
                 onClick={() => setIsImportModalOpen(false)}
               >
                 <X size={18} />
@@ -2726,6 +2821,7 @@ function App() {
                 <select
                   className="form-select"
                   value={importTargetProjectId}
+                  disabled={isImporting}
                   onChange={(e) => setImportTargetProjectId(e.target.value)}
                 >
                   {projectsList.map((proj) => (
@@ -2742,6 +2838,7 @@ function App() {
                   <button
                     type="button"
                     className={importMode === "create" ? "import-mode-card selected" : "import-mode-card"}
+                    disabled={isImporting}
                     onClick={() => setImportMode("create")}
                   >
                     <strong>Tạo tài liệu mới</strong>
@@ -2750,7 +2847,7 @@ function App() {
                   <button
                     type="button"
                     className={importMode === "update" ? "import-mode-card selected" : "import-mode-card"}
-                    disabled={!importTargetDocuments.length}
+                    disabled={isImporting || !importTargetDocuments.length}
                     onClick={() => setImportMode("update")}
                   >
                     <strong>Cập nhật tài liệu đang có</strong>
@@ -2767,6 +2864,7 @@ function App() {
                   <select
                     className="form-select"
                     value={importTargetDocumentId}
+                    disabled={isImporting}
                     onChange={(e) => setImportTargetDocumentId(e.target.value)}
                   >
                     {importTargetDocuments.map((doc) => (
@@ -2780,15 +2878,17 @@ function App() {
 
               {/* Drag & Drop File Zone */}
               <label
-                className={isDragOver ? "dropzone drag-over" : "dropzone"}
+                className={`${isDragOver ? "dropzone drag-over" : "dropzone"} ${isImporting ? "is-loading" : ""}`}
                 onDragOver={(e) => {
                   e.preventDefault();
+                  if (isImporting) return;
                   setIsDragOver(true);
                 }}
                 onDragLeave={() => setIsDragOver(false)}
                 onDrop={(e) => {
                   e.preventDefault();
                   setIsDragOver(false);
+                  if (isImporting) return;
                   const file = e.dataTransfer.files[0];
                   if (file) void handleImport(file);
                 }}
@@ -2796,21 +2896,35 @@ function App() {
                 <input
                   type="file"
                   accept=".md,.doc,.docx,.pdf"
+                  disabled={isImporting}
                   style={{ display: "none" }}
                   onChange={(e) => void handleImport(e.target.files?.[0])}
                 />
                 <div className="dropzone-icon">
-                  <UploadCloud size={24} />
+                  {isImporting ? <span className="import-spinner" /> : <UploadCloud size={24} />}
                 </div>
                 <div>
                   <strong style={{ fontSize: "0.95rem" }}>
-                    {isImporting ? "Đang xử lý tệp & hiển thị tài liệu..." : "Kéo & thả tệp vào đây hoặc Click để chọn"}
+                    {isImporting ? "Đang import tài liệu..." : "Kéo & thả tệp vào đây hoặc Click để chọn"}
                   </strong>
                   <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 4 }}>
-                    Hỗ trợ định dạng `.md`, `.doc`, `.docx`, `.pdf`
+                    {isImporting ? importStatusText : "Hỗ trợ định dạng `.md`, `.doc`, `.docx`, `.pdf`"}
                   </p>
                 </div>
               </label>
+
+              {isImporting && (
+                <div className="import-progress-panel" role="status" aria-live="polite">
+                  <div className="import-progress-header">
+                    <span className="import-spinner" />
+                    <strong>Đang xử lý, vui lòng giữ nguyên cửa sổ</strong>
+                  </div>
+                  <div className="import-progress-bar">
+                    <span />
+                  </div>
+                  <p>{importStatusText || "Đang upload, chuyển đổi HTML và lưu vào Neon..."}</p>
+                </div>
+              )}
 
               <div style={{ background: "var(--bg-surface)", padding: 12, borderRadius: 8, fontSize: "0.78rem", color: "var(--text-secondary)" }}>
                 <strong>Quy trình:</strong> Tệp được chọn sẽ được tự động chuyển đổi sang giao diện đọc chuẩn để team xem và thảo luận comment trực tiếp.
