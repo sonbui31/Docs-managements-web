@@ -22,7 +22,7 @@ export class UsersService {
   ) {}
 
   async findAll(actor: AuthenticatedUser) {
-    this.assertAdmin(actor);
+    this.assertAdminOrManager(actor);
     if (this.externalAuth.isEnabled() && actor.externalAccessToken) {
       return this.findExternalCompanyUsers(actor);
     }
@@ -48,7 +48,11 @@ export class UsersService {
       }
     });
 
-    return users.map((user) => ({
+    return users.map((user) => this.toManagedUser(user));
+  }
+
+  private toManagedUser(user: any) {
+    return {
       id: user.id,
       email: user.email,
       name: user.name,
@@ -59,13 +63,13 @@ export class UsersService {
       status: user.status,
       createdAt: user.createdAt,
       sessions: user._count.refreshSessions,
-      projects: user.projectMemberships.map((membership) => ({
+      projects: user.projectMemberships.map((membership: any) => ({
         projectId: membership.projectId,
         role: membership.role,
         code: membership.project.code,
         name: membership.project.name
       })),
-      documents: user.documentPermissions.map((permission) => ({
+      documents: user.documentPermissions.map((permission: any) => ({
         documentId: permission.documentId,
         projectId: permission.projectId,
         role: permission.role,
@@ -73,16 +77,62 @@ export class UsersService {
         type: permission.document.type,
         projectCode: permission.document.project.code
       }))
-    }));
+    };
   }
 
   private async findExternalCompanyUsers(actor: AuthenticatedUser) {
     const employees = await this.externalAuth.fetchEmployeeUserList(actor.externalAccessToken!, {
-      companyId: actor.externalCompanyId,
-      departmentId: actor.role === "ADMIN" || actor.externalRole === "sadmin" ? null : actor.externalDepartmentId
+      companyId: actor.externalCompanyId
+    });
+    const syncedIds = await Promise.all(employees.map((employee) => this.syncExternalEmployee(employee, actor)));
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: syncedIds } },
+      orderBy: { createdAt: "desc" },
+      include: {
+        projectMemberships: {
+          include: { project: { select: { id: true, code: true, name: true } } },
+          orderBy: { createdAt: "desc" }
+        },
+        documentPermissions: {
+          include: { document: { select: { id: true, title: true, type: true, project: { select: { code: true } } } } },
+          orderBy: { createdAt: "desc" }
+        },
+        _count: { select: { refreshSessions: true } }
+      }
     });
 
-    return employees.map((employee) => this.mapExternalEmployee(employee));
+    const userOrder = new Map(syncedIds.map((id, index) => [id, index]));
+    return users
+      .sort((left, right) => (userOrder.get(left.id) ?? 0) - (userOrder.get(right.id) ?? 0))
+      .map((user) => this.toManagedUser(user));
+  }
+
+  private async syncExternalEmployee(employee: unknown, actor: AuthenticatedUser) {
+    const data = this.mapExternalEmployee(employee, actor);
+    const existingUser = await this.prisma.user.findFirst({
+      where: {
+        deletedAt: null,
+        OR: [{ externalUserId: data.externalUserId }, { email: data.email }]
+      }
+    });
+
+    if (existingUser) {
+      const updated = await this.prisma.user.update({
+        where: { id: existingUser.id },
+        data
+      });
+      return updated.id;
+    }
+
+    const created = await this.prisma.user.create({
+      data: {
+        ...data,
+        passwordHash: await bcrypt.hash(randomUUID(), 12),
+        status: "ACTIVE",
+        emailConfirmedAt: new Date()
+      }
+    });
+    return created.id;
   }
 
   async create(dto: CreateUserDto, actor: AuthenticatedUser) {
@@ -146,12 +196,7 @@ export class UsersService {
   async assignProject(userId: string, dto: AssignProjectDto, actor: AuthenticatedUser) {
     const role = this.effectiveRole(dto);
     if (actor.role !== "ADMIN") {
-      const managerMembership = await this.prisma.projectMember.findUnique({
-        where: { projectId_userId: { projectId: dto.projectId, userId: actor.id } }
-      });
-      if (!managerMembership || managerMembership.role !== "MANAGER") {
-        throw new ForbiddenException("Bạn không có quyền gán thành viên vào dự án này");
-      }
+      await this.permissions.assertProjectRole(actor, dto.projectId, ["MANAGER"]);
     }
 
     const user = await this.prisma.user.findFirst({ where: { id: userId, deletedAt: null } });
@@ -326,30 +371,25 @@ export class UsersService {
     return uniqueRoles.reduce((highest, role) => (roleRank[role] > roleRank[highest] ? role : highest), uniqueRoles[0]);
   }
 
-  private mapExternalEmployee(employee: unknown) {
+  private mapExternalEmployee(employee: unknown, actor: AuthenticatedUser) {
     const source = this.isRecord(employee) ? employee : {};
     const externalRole = this.readString(source, ["role"]) ?? "employee";
     const role = this.mapExternalRole(externalRole);
-    const id =
+    const externalUserId =
       this.readString(source, ["userId", "id", "_id", "employeeId"]) ??
       this.readString(source, ["email"]) ??
       randomUUID();
+    const email = this.readString(source, ["email"]) ?? `${externalUserId}@external.local`;
 
     return {
-      id,
-      externalUserId: this.readString(source, ["userId", "id", "_id"]) ?? id,
-      externalEmployeeId: this.readString(source, ["employeeId"]),
-      email: this.readString(source, ["email"]) ?? "",
+      email,
       name: this.readString(source, ["fullName", "name", "username"]) ?? this.readString(source, ["email"]) ?? "VWork User",
-      role,
+      globalRole: role,
+      externalUserId,
       externalRole,
-      externalCompanyId: this.readString(source, ["companyId"]) ?? null,
+      externalCompanyId: this.readString(source, ["companyId"]) ?? actor.externalCompanyId ?? null,
       externalDepartmentId: this.readString(source, ["departmentId"]) ?? null,
-      status: "ACTIVE",
-      createdAt: new Date(0),
-      sessions: 0,
-      projects: [],
-      documents: []
+      deletedAt: null
     };
   }
 

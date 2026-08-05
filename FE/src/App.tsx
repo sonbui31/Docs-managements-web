@@ -1768,7 +1768,7 @@ function App() {
               <span className="nav-badge">{approvedDocsTotalCount}</span>
             </button>
 
-            {currentUser.role === "ADMIN" && (
+            {(currentUser.role === "ADMIN" || currentUser.role === "MANAGER") && (
               <button
                 className={activeTabNav === "admin" ? "nav-item active" : "nav-item"}
                 type="button"
@@ -1940,7 +1940,7 @@ function App() {
 
 
         {activeTabNav === "admin" ? (
-          <AdminPanel projects={projectsList} documents={documentsList} onToast={addToast} />
+          <AdminPanel projects={projectsList} documents={documentsList} currentUser={currentUser} onToast={addToast} />
         ) : (
         <section className={gridLayoutClass}>
           {/* Panel 1: Document Library (Collapsible) */}

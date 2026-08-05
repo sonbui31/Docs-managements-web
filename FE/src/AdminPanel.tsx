@@ -41,11 +41,12 @@ import {
   removeUserFromProject,
   updateUser
 } from "./authApi";
-import type { Project, ProjectDocument, ProjectRole, UserRole, UserStatus } from "./types";
+import type { Project, ProjectDocument, ProjectRole, User, UserRole, UserStatus } from "./types";
 
 type Props = {
   projects: Project[];
   documents: ProjectDocument[];
+  currentUser: User;
   onToast: (type: "success" | "info" | "warning" | "error", title: string, message: string) => void;
 };
 
@@ -219,9 +220,10 @@ export function SearchableMultiSelect({
   );
 }
 
-export function AdminPanel({ projects, documents, onToast }: Props) {
+export function AdminPanel({ projects, documents, currentUser, onToast }: Props) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(false);
+  const canManageAccounts = currentUser.role === "ADMIN";
 
   // Directory Filters & Search
   const [searchQuery, setSearchQuery] = useState("");
@@ -547,14 +549,16 @@ export function AdminPanel({ projects, documents, onToast }: Props) {
             <span>Gán quyền Tài liệu</span>
           </button>
 
-          <button
-            type="button"
-            className="btn-admin-primary"
-            onClick={() => setShowCreateModal(true)}
-          >
-            <UserPlus size={16} />
-            <span>+ Tạo Tài khoản</span>
-          </button>
+          {canManageAccounts && (
+            <button
+              type="button"
+              className="btn-admin-primary"
+              onClick={() => setShowCreateModal(true)}
+            >
+              <UserPlus size={16} />
+              <span>+ Tạo Tài khoản</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -758,7 +762,7 @@ export function AdminPanel({ projects, documents, onToast }: Props) {
                         <div className="select-role-wrapper">
                           <select
                             value={user.role}
-                            disabled={isSystemAdmin}
+                            disabled={!canManageAccounts || isSystemAdmin}
                             className={`role-select role-${user.role.toLowerCase()}`}
                             onChange={(e) => void handleUpdateUser(user.id, { role: e.target.value as UserRole })}
                           >
@@ -776,7 +780,7 @@ export function AdminPanel({ projects, documents, onToast }: Props) {
                         <div className="select-status-wrapper">
                           <select
                             value={currentStatus}
-                            disabled={isSystemAdmin}
+                            disabled={!canManageAccounts || isSystemAdmin}
                             className={`status-select status-${currentStatus.toLowerCase()}`}
                             onChange={(e) => void handleUpdateUser(user.id, { status: e.target.value as UserStatus })}
                           >
@@ -859,15 +863,17 @@ export function AdminPanel({ projects, documents, onToast }: Props) {
                             <FileText size={15} />
                           </button>
 
-                          <button
-                            type="button"
-                            className="btn-icon-action danger"
-                            disabled={isSystemAdmin}
-                            title={isSystemAdmin ? "Không thể xóa Root Admin" : "Khóa / Vô hiệu hóa tài khoản"}
-                            onClick={() => setDeletingUser(user)}
-                          >
-                            <Trash2 size={15} />
-                          </button>
+                          {canManageAccounts && (
+                            <button
+                              type="button"
+                              className="btn-icon-action danger"
+                              disabled={isSystemAdmin}
+                              title={isSystemAdmin ? "Không thể xóa Root Admin" : "Khóa / Vô hiệu hóa tài khoản"}
+                              onClick={() => setDeletingUser(user)}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

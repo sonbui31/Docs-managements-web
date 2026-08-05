@@ -83,13 +83,9 @@ export class ExternalAuthService {
     };
   }
 
-  async fetchEmployeeUserList(
-    accessToken: string,
-    params: { companyId?: string | null; departmentId?: string | null }
-  ) {
+  async fetchEmployeeUserList(accessToken: string, params: { companyId?: string | null }) {
     const search = new URLSearchParams();
     if (params.companyId) search.set("companyId", params.companyId);
-    if (params.departmentId) search.set("departmentIds", params.departmentId);
     const response = await this.request<unknown>(`/employee/user-list${search.size ? `?${search}` : ""}`, {
       method: "GET",
       headers: { Authorization: `Bearer ${accessToken}` }
