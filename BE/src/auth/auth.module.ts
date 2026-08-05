@@ -8,6 +8,6 @@ import { RolesGuard } from "./roles.guard";
 @Module({
   controllers: [AuthController],
   providers: [AuthService, ExternalAuthService, JwtAuthGuard, RolesGuard],
-  exports: [AuthService, JwtAuthGuard, RolesGuard]
+  exports: [AuthService, ExternalAuthService, JwtAuthGuard, RolesGuard]
 })
 export class AuthModule {}

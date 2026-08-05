@@ -19,6 +19,11 @@ type ExternalLoginResult = {
   user: ExternalAuthUser;
 };
 
+type ExternalTokenResult = {
+  accessToken: string;
+  refreshToken?: string;
+};
+
 @Injectable()
 export class ExternalAuthService {
   constructor(private readonly config: ConfigService) {}
@@ -58,6 +63,40 @@ export class ExternalAuthService {
       headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
       body: JSON.stringify({ refreshToken })
     }).catch(() => null);
+  }
+
+  async refresh(refreshToken: string): Promise<ExternalTokenResult> {
+    const response = await this.request<unknown>("/auth/refresh-token", {
+      method: "POST",
+      body: JSON.stringify({ refreshToken })
+    });
+
+    const accessToken = this.extractToken(response, ["accessToken", "access_token", "token"]);
+    const nextRefreshToken = this.extractToken(response, ["refreshToken", "refresh_token"]);
+    if (!accessToken) {
+      throw new BadGatewayException("Integrated Auth refresh response is missing accessToken");
+    }
+
+    return {
+      accessToken,
+      refreshToken: nextRefreshToken ?? refreshToken
+    };
+  }
+
+  async fetchEmployeeUserList(
+    accessToken: string,
+    params: { companyId?: string | null; departmentId?: string | null }
+  ) {
+    const search = new URLSearchParams();
+    if (params.companyId) search.set("companyId", params.companyId);
+    if (params.departmentId) search.set("departmentIds", params.departmentId);
+    const response = await this.request<unknown>(`/employee/user-list${search.size ? `?${search}` : ""}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+
+    const data = this.unwrapData(response);
+    return Array.isArray(data) ? data : [];
   }
 
   private async request<T>(path: string, init: RequestInit, requireAuthHeader = true): Promise<T> {

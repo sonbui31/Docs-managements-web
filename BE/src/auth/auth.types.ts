@@ -7,6 +7,7 @@ export type JwtPayload = {
   externalRole?: string | null;
   externalCompanyId?: string | null;
   externalDepartmentId?: string | null;
+  externalAccessToken?: string | null;
   exp: number;
 };
 
@@ -18,6 +19,7 @@ export type AuthenticatedUser = {
   externalRole?: string | null;
   externalCompanyId?: string | null;
   externalDepartmentId?: string | null;
+  externalAccessToken?: string | null;
   status: UserStatus;
 };
 

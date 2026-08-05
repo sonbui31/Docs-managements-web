@@ -127,6 +127,8 @@ model RefreshSession {
   userId         String
   user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   tokenHash      String    @unique
+  externalAccessToken  String?
+  externalRefreshToken String?
   userAgent      String?
   ipAddress      String?
   expiresAt      DateTime

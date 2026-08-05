@@ -23,6 +23,7 @@ export class JwtAuthGuard implements CanActivate {
       externalRole: payload.externalRole,
       externalCompanyId: payload.externalCompanyId,
       externalDepartmentId: payload.externalDepartmentId,
+      externalAccessToken: payload.externalAccessToken,
       status: "ACTIVE"
     };
     return true;

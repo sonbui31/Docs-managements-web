@@ -110,15 +110,29 @@ export class AuthService implements OnModuleInit {
 
     this.assertCanLogin(session.user);
 
+    let externalAccessToken = session.externalAccessToken;
+    let externalRefreshToken = session.externalRefreshToken;
+    if (this.externalAuth.isEnabled() && externalRefreshToken) {
+      const externalTokens = await this.externalAuth.refresh(externalRefreshToken).catch(() => null);
+      if (externalTokens?.accessToken) externalAccessToken = externalTokens.accessToken;
+      if (externalTokens?.refreshToken) externalRefreshToken = externalTokens.refreshToken;
+    }
+
     await this.prisma.refreshSession.update({
       where: { id: session.id },
-      data: { lastUsedAt: new Date(), userAgent: meta.userAgent, ipAddress: meta.ipAddress }
+      data: {
+        lastUsedAt: new Date(),
+        userAgent: meta.userAgent,
+        ipAddress: meta.ipAddress,
+        externalAccessToken,
+        externalRefreshToken
+      }
     });
 
     await this.audit("auth.refresh", session.userId, "RefreshSession", session.id, null, meta);
     return {
       user: this.toPublicUser(session.user),
-      accessToken: this.signAccessToken(session.user)
+      accessToken: this.signAccessToken(session.user, externalAccessToken)
     };
   }
 
@@ -258,7 +272,10 @@ export class AuthService implements OnModuleInit {
   private async loginWithExternalProvider(email: string, password: string, meta: RequestMeta) {
     const externalSession = await this.externalAuth.login(email, password);
     const user = await this.syncExternalUser(externalSession.user);
-    const refreshToken = await this.createRefreshSession(user, meta);
+    const refreshToken = await this.createRefreshSession(user, meta, {
+      externalAccessToken: externalSession.accessToken,
+      externalRefreshToken: externalSession.refreshToken
+    });
 
     await this.audit("auth.external_login_success", user.id, "User", user.id, {
       externalUserId: externalSession.user.externalUserId,
@@ -269,7 +286,7 @@ export class AuthService implements OnModuleInit {
 
     return {
       user: this.toPublicUser(user),
-      accessToken: this.signAccessToken(user),
+      accessToken: this.signAccessToken(user, externalSession.accessToken),
       refreshToken
     };
   }
@@ -350,12 +367,18 @@ export class AuthService implements OnModuleInit {
     }
   }
 
-  private async createRefreshSession(user: User, meta: RequestMeta) {
+  private async createRefreshSession(
+    user: User,
+    meta: RequestMeta,
+    externalTokens?: { externalAccessToken?: string; externalRefreshToken?: string }
+  ) {
     const refreshToken = randomBytes(48).toString("base64url");
     await this.prisma.refreshSession.create({
       data: {
         userId: user.id,
         tokenHash: this.hashToken(refreshToken),
+        externalAccessToken: externalTokens?.externalAccessToken,
+        externalRefreshToken: externalTokens?.externalRefreshToken,
         userAgent: meta.userAgent,
         ipAddress: meta.ipAddress,
         expiresAt: this.daysFromNow(REFRESH_TOKEN_TTL_DAYS)
@@ -364,7 +387,7 @@ export class AuthService implements OnModuleInit {
     return refreshToken;
   }
 
-  private signAccessToken(user: User) {
+  private signAccessToken(user: User, externalAccessToken?: string | null) {
     const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
     const payload = Buffer.from(
       JSON.stringify({
@@ -374,6 +397,7 @@ export class AuthService implements OnModuleInit {
         externalRole: user.externalRole,
         externalCompanyId: user.externalCompanyId,
         externalDepartmentId: user.externalDepartmentId,
+        externalAccessToken,
         exp: Math.floor(Date.now() / 1000) + ACCESS_TOKEN_TTL_SECONDS
       })
     ).toString("base64url");

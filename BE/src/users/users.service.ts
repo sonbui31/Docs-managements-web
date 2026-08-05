@@ -1,8 +1,10 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { GlobalRole, ProjectRole } from "@prisma/client";
 import * as bcrypt from "bcrypt";
+import { randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuthenticatedUser } from "../auth/auth.types";
+import { ExternalAuthService } from "../auth/external-auth.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { AssignDocumentDto } from "./dto/assign-document.dto";
 import { AssignDocumentsBatchDto } from "./dto/assign-documents-batch.dto";
@@ -15,11 +17,15 @@ import { UpdateUserDto } from "./dto/update-user.dto";
 export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly permissions: PermissionsService
+    private readonly permissions: PermissionsService,
+    private readonly externalAuth: ExternalAuthService
   ) {}
 
   async findAll(actor: AuthenticatedUser) {
     this.assertAdmin(actor);
+    if (this.externalAuth.isEnabled() && actor.externalAccessToken) {
+      return this.findExternalCompanyUsers(actor);
+    }
 
     const users = await this.prisma.user.findMany({
       where: {
@@ -68,6 +74,15 @@ export class UsersService {
         projectCode: permission.document.project.code
       }))
     }));
+  }
+
+  private async findExternalCompanyUsers(actor: AuthenticatedUser) {
+    const employees = await this.externalAuth.fetchEmployeeUserList(actor.externalAccessToken!, {
+      companyId: actor.externalCompanyId,
+      departmentId: actor.role === "ADMIN" || actor.externalRole === "sadmin" ? null : actor.externalDepartmentId
+    });
+
+    return employees.map((employee) => this.mapExternalEmployee(employee));
   }
 
   async create(dto: CreateUserDto, actor: AuthenticatedUser) {
@@ -309,6 +324,53 @@ export class UsersService {
     if (!uniqueRoles.length) throw new BadRequestException("Vui lòng chọn ít nhất một quyền hạn");
 
     return uniqueRoles.reduce((highest, role) => (roleRank[role] > roleRank[highest] ? role : highest), uniqueRoles[0]);
+  }
+
+  private mapExternalEmployee(employee: unknown) {
+    const source = this.isRecord(employee) ? employee : {};
+    const externalRole = this.readString(source, ["role"]) ?? "employee";
+    const role = this.mapExternalRole(externalRole);
+    const id =
+      this.readString(source, ["userId", "id", "_id", "employeeId"]) ??
+      this.readString(source, ["email"]) ??
+      randomUUID();
+
+    return {
+      id,
+      externalUserId: this.readString(source, ["userId", "id", "_id"]) ?? id,
+      externalEmployeeId: this.readString(source, ["employeeId"]),
+      email: this.readString(source, ["email"]) ?? "",
+      name: this.readString(source, ["fullName", "name", "username"]) ?? this.readString(source, ["email"]) ?? "VWork User",
+      role,
+      externalRole,
+      externalCompanyId: this.readString(source, ["companyId"]) ?? null,
+      externalDepartmentId: this.readString(source, ["departmentId"]) ?? null,
+      status: "ACTIVE",
+      createdAt: new Date(0),
+      sessions: 0,
+      projects: [],
+      documents: []
+    };
+  }
+
+  private mapExternalRole(role: string): GlobalRole {
+    const normalized = role.toLowerCase();
+    if (normalized === "sadmin" || normalized === "admin") return "ADMIN";
+    if (normalized === "manager") return "MANAGER";
+    return "EMPLOYEE";
+  }
+
+  private readString(source: Record<string, unknown>, paths: string[]) {
+    for (const path of paths) {
+      const value = source[path];
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "number") return String(value);
+    }
+    return null;
+  }
+
+  private isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
   }
 
   private toPublicUser(user: {
