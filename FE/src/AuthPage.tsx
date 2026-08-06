@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import {
+  AlertCircle,
   FileText,
   Lock,
   Mail,
@@ -18,7 +19,8 @@ import {
   Check,
   Building2,
   FileCheck,
-  MessageSquare
+  MessageSquare,
+  X
 } from "lucide-react";
 import { forgotPassword, login, register, resetPassword } from "./authApi";
 import type { User } from "./types";
@@ -28,12 +30,48 @@ interface AuthPageProps {
   onSuccess: (user: User) => void;
 }
 
+const RECENT_ACCOUNTS_KEY = "docspace_recent_accounts";
+
+export type RecentAccount = {
+  email: string;
+  name?: string;
+  role?: string;
+};
+
+const DEFAULT_RECENT_ACCOUNTS: RecentAccount[] = [
+  { email: "admin@docs.vn", name: "System Admin", role: "Admin" },
+  { email: "son@yopmail.com", name: "Son Bui", role: "Manager" }
+];
+
+export function getRecentAccounts(): RecentAccount[] {
+  try {
+    const raw = localStorage.getItem(RECENT_ACCOUNTS_KEY);
+    if (!raw) return DEFAULT_RECENT_ACCOUNTS;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed.slice(0, 2) : DEFAULT_RECENT_ACCOUNTS;
+  } catch {
+    return DEFAULT_RECENT_ACCOUNTS;
+  }
+}
+
+export function saveRecentAccount(account: RecentAccount) {
+  try {
+    const current = getRecentAccounts();
+    const filtered = current.filter((item) => item.email.toLowerCase() !== account.email.toLowerCase());
+    const updated = [account, ...filtered].slice(0, 2);
+    localStorage.setItem(RECENT_ACCOUNTS_KEY, JSON.stringify(updated));
+  } catch (err) {
+    console.error(err);
+  }
+}
+
 export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuccess }) => {
   const [mode, setMode] = useState<"login" | "register" | "forgot" | "reset">(initialMode);
   
   // Login Form state
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [recentAccounts, setRecentAccounts] = useState<RecentAccount[]>(() => getRecentAccounts());
 
   // Register Form state
   const [regName, setRegName] = useState("");
@@ -51,6 +89,28 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Helper to format backend / network error messages nicely
+  const formatAuthErrorMessage = (error: any): string => {
+    const rawMessage = typeof error === "string" ? error : error?.message || error?.toString() || "";
+    
+    if (rawMessage.includes("Failed to fetch") || rawMessage.includes("NetworkError") || rawMessage.includes("ECONNREFUSED")) {
+      return "Không thể kết nối đến Backend Server (NestJS Port 3000). Vui lòng kiểm tra lại dịch vụ!";
+    }
+    if (rawMessage.includes("401") || rawMessage.includes("Invalid credentials") || rawMessage.includes("Unauthorized")) {
+      return "Tài khoản hoặc Mật khẩu không chính xác. Vui lòng kiểm tra lại!";
+    }
+    if (rawMessage.includes("404") || rawMessage.includes("User not found")) {
+      return "Tài khoản email này chưa được đăng ký trên hệ thống!";
+    }
+    if (rawMessage.includes("400") || rawMessage.includes("Bad Request")) {
+      return "Thông tin nhập vào không hợp lệ. Vui lòng kiểm tra định dạng email và mật khẩu!";
+    }
+    if (rawMessage.includes("403") || rawMessage.includes("Forbidden") || rawMessage.includes("locked")) {
+      return "Tài khoản của bạn tạm thời bị khóa hoặc không có quyền truy cập!";
+    }
+    return rawMessage || "Đăng nhập thất bại. Vui lòng thử lại!";
+  };
+
   // Compute password strength score (0 to 100)
   const getPasswordStrength = (pass: string) => {
     if (!pass) return 0;
@@ -64,20 +124,49 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
   const passStrength = getPasswordStrength(regPassword);
 
+  const handleRemoveRecentAccount = (emailToRemove: string) => {
+    const updated = recentAccounts.filter((acc) => acc.email.toLowerCase() !== emailToRemove.toLowerCase());
+    setRecentAccounts(updated);
+    try {
+      localStorage.setItem(RECENT_ACCOUNTS_KEY, JSON.stringify(updated));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!loginEmail || !loginPassword) {
-      setErrorMsg("Vui lòng nhập đầy đủ Email và Mật khẩu!");
+    const cleanEmail = loginEmail.trim();
+    const cleanPass = loginPassword.trim();
+
+    if (!cleanEmail && !cleanPass) {
+      setErrorMsg("Vui lòng nhập Địa chỉ Email và Mật khẩu!");
+      return;
+    }
+    if (!cleanEmail) {
+      setErrorMsg("Vui lòng nhập Địa chỉ Email của bạn!");
+      return;
+    }
+    if (!cleanPass) {
+      setErrorMsg("Vui lòng nhập Mật khẩu đăng nhập!");
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      setErrorMsg("Định dạng Email không đúng! (Ví dụ chuẩn: admin@docs.vn)");
       return;
     }
 
     setErrorMsg(null);
     setLoading(true);
     try {
-      const user = await login(loginEmail, loginPassword);
+      const user = await login(cleanEmail, cleanPass);
+      saveRecentAccount({ email: user.email, name: user.name, role: user.role });
+      setRecentAccounts(getRecentAccounts());
       onSuccess(user);
     } catch (err: any) {
-      setErrorMsg(err.message || "Đăng nhập thất bại");
+      setErrorMsg(formatAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -85,18 +174,28 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regName || !regEmail || !regPassword) {
-      setErrorMsg("Vui lòng điền đầy đủ các thông tin bắt buộc!");
+    const cleanName = regName.trim();
+    const cleanEmail = regEmail.trim();
+    const cleanPass = regPassword.trim();
+
+    if (!cleanName || !cleanEmail || !cleanPass) {
+      setErrorMsg("Vui lòng điền đầy đủ tất cả các thông tin bắt buộc!");
       return;
     }
 
-    if (regPassword.length < 8) {
-      setErrorMsg("Mật khẩu phải có ít nhất 8 ký tự!");
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      setErrorMsg("Định dạng Email đăng ký không hợp lệ!");
       return;
     }
 
-    if (regPassword !== regConfirmPassword) {
-      setErrorMsg("Mật khẩu xác nhận không trùng khớp!");
+    if (cleanPass.length < 8) {
+      setErrorMsg("Mật khẩu phải có độ dài tối thiểu 8 ký tự!");
+      return;
+    }
+
+    if (cleanPass !== regConfirmPassword.trim()) {
+      setErrorMsg("Mật khẩu xác nhận không trùng khớp với mật khẩu đã nhập!");
       return;
     }
 
@@ -104,14 +203,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
     setLoading(true);
     try {
       await register({
-        name: regName,
-        email: regEmail,
-        password: regPassword
+        name: cleanName,
+        email: cleanEmail,
+        password: cleanPass
       });
-      const user = await login(regEmail, regPassword);
+      const user = await login(cleanEmail, cleanPass);
       onSuccess(user);
     } catch (err: any) {
-      setErrorMsg(err.message || "Đăng ký thất bại");
+      setErrorMsg(formatAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -119,14 +218,25 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
   const handleForgotSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanEmail = forgotEmail.trim();
+    if (!cleanEmail) {
+      setErrorMsg("Vui lòng nhập địa chỉ Email của bạn!");
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      setErrorMsg("Định dạng Email không hợp lệ!");
+      return;
+    }
+
     setErrorMsg(null);
     setLoading(true);
     try {
-      const result = await forgotPassword(forgotEmail);
+      const result = await forgotPassword(cleanEmail);
       setDevResetToken(result.resetToken ?? null);
       setMode("reset");
     } catch (err: any) {
-      setErrorMsg(err.message || "Không gửi được yêu cầu reset mật khẩu");
+      setErrorMsg(formatAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -134,10 +244,23 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
   const handleResetSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!resetToken.trim()) {
+      setErrorMsg("Vui lòng nhập Mã Token khôi phục!");
+      return;
+    }
+    if (!resetPasswordValue.trim()) {
+      setErrorMsg("Vui lòng nhập Mật khẩu mới!");
+      return;
+    }
+    if (resetPasswordValue.trim().length < 8) {
+      setErrorMsg("Mật khẩu mới phải có ít nhất 8 ký tự!");
+      return;
+    }
+
     setErrorMsg(null);
     setLoading(true);
     try {
-      await resetPassword(resetToken, resetPasswordValue);
+      await resetPassword(resetToken.trim(), resetPasswordValue.trim());
       setLoginEmail(forgotEmail);
       setLoginPassword("");
       setResetToken("");
@@ -145,7 +268,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
       setDevResetToken(null);
       setMode("login");
     } catch (err: any) {
-      setErrorMsg(err.message || "Không reset được mật khẩu");
+      setErrorMsg(formatAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -169,14 +292,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
               <div className="logo-aura-ring ring-1"></div>
               <div className="logo-aura-ring ring-2"></div>
               <div className="logo-floating-box">
-                <img src="/logo.png" alt="BA DocControl Animated Logo" className="animated-hero-logo" />
+                <img src="/logo.png" alt="DocSpace Animated Logo" className="animated-hero-logo" />
                 <div className="sparkle-particle p1"><Sparkles size={16} /></div>
                 <div className="sparkle-particle p2"><Zap size={14} /></div>
               </div>
             </div>
 
             <div className="hero-brand-details">
-              <h1 className="hero-brand-name">BA DocControl</h1>
+              <h1 className="hero-brand-name">DocSpace</h1>
               <p className="hero-brand-subtitle">Nền tảng Quản lý Tài liệu Nghiệp vụ BA</p>
               <div className="hero-status-badge">
                 <span className="pulse-dot"></span> System Operational
@@ -213,8 +336,20 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
             </div>
 
             {errorMsg && (
-              <div className="auth-alert error">
-                <span>{errorMsg}</span>
+              <div className="auth-alert error animate-shake" role="alert">
+                <AlertCircle size={20} className="alert-icon" />
+                <div className="alert-body">
+                  <strong>Đã xảy ra lỗi:</strong>
+                  <span>{errorMsg}</span>
+                </div>
+                <button
+                  type="button"
+                  className="alert-close-btn"
+                  onClick={() => setErrorMsg(null)}
+                  title="Đóng thông báo"
+                >
+                  <X size={15} />
+                </button>
               </div>
             )}
 
@@ -225,6 +360,47 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
                   <h3>Chào mừng trở lại!</h3>
                   <p>Đăng nhập bằng tài khoản hệ thống của bạn.</p>
                 </div>
+
+                {recentAccounts.length > 0 && (
+                  <div className="recent-accounts-box">
+                    <div className="recent-accounts-header">
+                      <Sparkles size={13} className="recent-sparkle-icon" />
+                      <span>Gợi ý tài khoản đăng nhập gần đây:</span>
+                    </div>
+                    <div className="recent-accounts-list">
+                      {recentAccounts.map((acc) => (
+                        <div
+                          key={acc.email}
+                          className={`recent-account-chip ${loginEmail.toLowerCase() === acc.email.toLowerCase() ? "active" : ""}`}
+                        >
+                          <button
+                            type="button"
+                            className="chip-select-btn"
+                            onClick={() => {
+                              setLoginEmail(acc.email);
+                              setErrorMsg(null);
+                            }}
+                            title={`Click để điền ${acc.email}`}
+                          >
+                            <UserIcon size={12} className="chip-icon" />
+                            <span className="chip-email-text">{acc.email}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="chip-remove-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveRecentAccount(acc.email);
+                            }}
+                            title="Xóa tài khoản này khỏi gợi ý"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="form-group">
                   <label>Địa chỉ Email</label>

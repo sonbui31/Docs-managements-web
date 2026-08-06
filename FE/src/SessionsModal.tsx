@@ -32,8 +32,8 @@ export function SessionsModal({ onClose, onLogoutAll }: Props) {
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-content" onClick={(event) => event.stopPropagation()} style={{ maxWidth: 620 }}>
+    <div className="modal-backdrop">
+      <div className="modal-content" style={{ maxWidth: 620 }}>
         <div className="modal-header">
           <h3>Phiên đăng nhập</h3>
           <button className="icon-btn" type="button" onClick={onClose}>

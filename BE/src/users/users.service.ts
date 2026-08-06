@@ -1,5 +1,5 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { GlobalRole, ProjectRole } from "@prisma/client";
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { GlobalRole, Prisma, ProjectRole } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import { randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -15,6 +15,8 @@ import { UpdateUserDto } from "./dto/update-user.dto";
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionsService,
@@ -24,28 +26,29 @@ export class UsersService {
   async findAll(actor: AuthenticatedUser) {
     this.assertAdminOrManager(actor);
     if (this.externalAuth.isEnabled() && actor.externalAccessToken) {
-      return this.findExternalCompanyUsers(actor);
+      try {
+        return await this.findExternalCompanyUsers(actor);
+      } catch (error) {
+        this.logger.warn(
+          `External employee sync failed for ${actor.email}; falling back to stored users. ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
     }
 
+    return this.findStoredManagedUsers(actor);
+  }
+
+  private async findStoredManagedUsers(actor: AuthenticatedUser, ids?: string[]) {
     const users = await this.prisma.user.findMany({
       where: {
         deletedAt: null,
-        ...(actor.externalRole === "sadmin" || !actor.externalCompanyId
-          ? {}
-          : { externalCompanyId: actor.externalCompanyId })
+        ...(ids?.length ? { id: { in: ids } } : {}),
+        ...this.accessibleUserScope(actor)
       },
       orderBy: { createdAt: "desc" },
-      include: {
-        projectMemberships: {
-          include: { project: { select: { id: true, code: true, name: true } } },
-          orderBy: { createdAt: "desc" }
-        },
-        documentPermissions: {
-          include: { document: { select: { id: true, title: true, type: true, project: { select: { code: true } } } } },
-          orderBy: { createdAt: "desc" }
-        },
-        _count: { select: { refreshSessions: true } }
-      }
+      include: this.managedUserInclude()
     });
 
     return users.map((user) => this.toManagedUser(user));
@@ -82,29 +85,11 @@ export class UsersService {
 
   private async findExternalCompanyUsers(actor: AuthenticatedUser) {
     const employees = await this.externalAuth.fetchEmployeeUserList(actor.externalAccessToken!, {
-      companyId: actor.externalCompanyId
+      companyId: actor.externalCompanyId,
+      departmentId: actor.role === "MANAGER" ? actor.externalDepartmentId : undefined
     });
-    const syncedIds = await Promise.all(employees.map((employee) => this.syncExternalEmployee(employee, actor)));
-    const users = await this.prisma.user.findMany({
-      where: { id: { in: syncedIds } },
-      orderBy: { createdAt: "desc" },
-      include: {
-        projectMemberships: {
-          include: { project: { select: { id: true, code: true, name: true } } },
-          orderBy: { createdAt: "desc" }
-        },
-        documentPermissions: {
-          include: { document: { select: { id: true, title: true, type: true, project: { select: { code: true } } } } },
-          orderBy: { createdAt: "desc" }
-        },
-        _count: { select: { refreshSessions: true } }
-      }
-    });
-
-    const userOrder = new Map(syncedIds.map((id, index) => [id, index]));
-    return users
-      .sort((left, right) => (userOrder.get(left.id) ?? 0) - (userOrder.get(right.id) ?? 0))
-      .map((user) => this.toManagedUser(user));
+    await Promise.all(employees.map((employee) => this.syncExternalEmployee(employee, actor)));
+    return this.findStoredManagedUsers(actor);
   }
 
   private async syncExternalEmployee(employee: unknown, actor: AuthenticatedUser) {
@@ -387,30 +372,76 @@ export class UsersService {
       globalRole: role,
       externalUserId,
       externalRole,
-      externalCompanyId: this.readString(source, ["companyId"]) ?? actor.externalCompanyId ?? null,
-      externalDepartmentId: this.readString(source, ["departmentId"]) ?? null,
+      externalCompanyId: this.readString(source, [
+        "companyId",
+        "company.id",
+        "company._id",
+        "user.companyId",
+        "employee.companyId",
+        "employee.company.id"
+      ]) ?? actor.externalCompanyId ?? null,
+      externalDepartmentId: this.readString(source, [
+        "departmentId",
+        "department.id",
+        "department._id",
+        "user.departmentId",
+        "employee.departmentId",
+        "employee.department.id"
+      ]) ?? null,
       deletedAt: null
     };
   }
 
   private mapExternalRole(role: string): GlobalRole {
     const normalized = role.toLowerCase();
-    if (normalized === "sadmin" || normalized === "admin") return "ADMIN";
-    if (normalized === "manager") return "MANAGER";
+    if (normalized === "sadmin" || normalized === "admin" || normalized.includes("admin")) return "ADMIN";
+    if (normalized === "manager" || normalized.includes("manager") || normalized.includes("quan_ly")) return "MANAGER";
     return "EMPLOYEE";
   }
 
   private readString(source: Record<string, unknown>, paths: string[]) {
     for (const path of paths) {
-      const value = source[path];
+      const value = this.readPath(source, path);
       if (typeof value === "string" && value.trim()) return value.trim();
       if (typeof value === "number") return String(value);
     }
     return null;
   }
 
+  private readPath(source: Record<string, unknown>, path: string): unknown {
+    return path.split(".").reduce<unknown>((current, key) => {
+      if (!this.isRecord(current)) return undefined;
+      return current[key];
+    }, source);
+  }
+
   private isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
+  }
+
+  private accessibleUserScope(actor: AuthenticatedUser): Prisma.UserWhereInput {
+    if (actor.externalRole === "sadmin" || !actor.externalCompanyId) return {};
+    if (actor.role === "MANAGER" && actor.externalDepartmentId) {
+      return {
+        externalCompanyId: actor.externalCompanyId,
+        externalDepartmentId: actor.externalDepartmentId
+      };
+    }
+    return { externalCompanyId: actor.externalCompanyId };
+  }
+
+  private managedUserInclude() {
+    return {
+      projectMemberships: {
+        include: { project: { select: { id: true, code: true, name: true } } },
+        orderBy: { createdAt: "desc" as const }
+      },
+      documentPermissions: {
+        include: { document: { select: { id: true, title: true, type: true, project: { select: { code: true } } } } },
+        orderBy: { createdAt: "desc" as const }
+      },
+      _count: { select: { refreshSessions: true } }
+    };
   }
 
   private toPublicUser(user: {

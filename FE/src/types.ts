@@ -1,4 +1,4 @@
-export type DocumentStatus = "Draft" | "In Review" | "Approved";
+export type DocumentStatus = "Draft" | "Approved";
 
 export type Project = {
   id: string;

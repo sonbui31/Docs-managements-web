@@ -59,9 +59,10 @@ import {
 } from "./api";
 import { AdminPanel } from "./AdminPanel";
 import { AuthPage } from "./AuthPage";
-import { fetchCurrentUser, getStoredUser, logout } from "./authApi";
+import { clearAuthSession, fetchCurrentUser, getAccessToken, getStoredUser, logout } from "./authApi";
 import { initialComments, documents as initialDocuments, projects as initialProjects } from "./data";
 import { SessionsModal } from "./SessionsModal";
+import { ShareAccessModal } from "./ShareAccessModal";
 import type { CommentThread, DocumentStatus, Project, ProjectDocument, ToastMessage, User } from "./types";
 
 
@@ -173,7 +174,7 @@ const DEFAULT_DOC_CONTENT = `
         <td>Bảng Ma Trận Động</td>
         <td>Hiển thị sắc nét các dòng, cột và dữ liệu bảng kiểm thử.</td>
         <td><span class="badge high">Cao</span></td>
-        <td><span class="status-pill review"><span class="status-dot"></span>In Review</span></td>
+        <td><span class="status-pill draft"><span class="status-dot"></span>Draft</span></td>
       </tr>
       <tr>
         <td><code>REQ-004</code></td>
@@ -226,6 +227,87 @@ const EMPTY_DOCUMENT: ProjectDocument = {
   openCommentsCount: 0,
   contentHtml: `<h3>Chưa có tài liệu trong dự án</h3><p>Hãy tạo tài liệu mới hoặc import file Word, Markdown, PDF để xem nội dung HTML tại đây.</p>`
 };
+
+const PROJECT_CUSTOMER_OPTIONS = [
+  "Internal Team",
+  "Ngân hàng",
+  "Tài chính tiêu dùng",
+  "Bảo hiểm",
+  "Chứng khoán",
+  "Bán lẻ",
+  "Thương mại điện tử",
+  "Giáo dục",
+  "Y tế",
+  "Bất động sản",
+  "Logistics",
+  "Sản xuất",
+  "Viễn thông",
+  "Du lịch - Khách sạn",
+  "F&B",
+  "ERP / Back-office",
+  "CRM / Sales",
+  "HRM / Nhân sự",
+  "Kế toán / Tài chính doanh nghiệp",
+  "Quản lý chuỗi cung ứng",
+  "SaaS / Công nghệ",
+  "Nhà nước / Hành chính công"
+];
+
+const BUSINESS_UNIT_OPTIONS = [
+  "Vận hành nội bộ",
+  "Khối Kinh doanh",
+  "Khối Chăm sóc khách hàng",
+  "Khối Marketing",
+  "Khối Sản phẩm",
+  "Khối Công nghệ",
+  "Khối Dữ liệu",
+  "Khối Tài chính - Kế toán",
+  "Khối Nhân sự",
+  "Khối Pháp chế - Tuân thủ",
+  "Khối Rủi ro",
+  "Khối Vận hành",
+  "Khối Chuỗi cung ứng",
+  "Khối Đào tạo",
+  "Khối Trung tâm",
+  "Khối Dịch vụ sau bán"
+];
+
+const CLIENT_SCOPE_SEPARATOR = " • ";
+
+function buildProjectClientLabel(customer: string, businessUnit: string) {
+  const safeCustomer = customer.trim() || "Internal Team";
+  const safeBusinessUnit = businessUnit.trim() || "Vận hành nội bộ";
+  return `${safeCustomer}${CLIENT_SCOPE_SEPARATOR}${safeBusinessUnit}`;
+}
+
+function parseProjectClientLabel(value: string) {
+  const [customer, businessUnit] = value.split(CLIENT_SCOPE_SEPARATOR).map((part) => part.trim());
+  return {
+    customer: customer || value || "Internal Team",
+    businessUnit: businessUnit || "Vận hành nội bộ"
+  };
+}
+
+function generateProjectCode(name: string, existingCodes: string[]) {
+  const words = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toUpperCase()
+    .match(/[A-Z0-9]+/g) ?? [];
+  const base = (words.length > 1 ? words.map((word) => word[0]).join("") : words[0] ?? "PRJ")
+    .slice(0, 8)
+    .padEnd(3, "X");
+  const existing = new Set(existingCodes.map((code) => code.toUpperCase()));
+  let candidate = base;
+  let suffix = 1;
+  while (existing.has(candidate)) {
+    candidate = `${base}-${String(suffix).padStart(2, "0")}`;
+    suffix += 1;
+  }
+  return candidate;
+}
 
 interface TocItem {
   id: string;
@@ -313,19 +395,22 @@ function App() {
   const [isImporting, setIsImporting] = useState<boolean>(false);
   const [importStatusText, setImportStatusText] = useState<string>("");
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
 
   // Create Project Modal state
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState<boolean>(false);
   const [newProjCode, setNewProjCode] = useState<string>("");
   const [newProjName, setNewProjName] = useState<string>("");
-  const [newProjClient, setNewProjClient] = useState<string>("");
+  const [newProjCustomer, setNewProjCustomer] = useState<string>("Internal Team");
+  const [newProjBusinessUnit, setNewProjBusinessUnit] = useState<string>("Vận hành nội bộ");
 
   // Edit Project Modal state
   const [isEditProjectModalOpen, setIsEditProjectModalOpen] = useState<boolean>(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [editProjCode, setEditProjCode] = useState<string>("");
   const [editProjName, setEditProjName] = useState<string>("");
-  const [editProjClient, setEditProjClient] = useState<string>("");
+  const [editProjCustomer, setEditProjCustomer] = useState<string>("Internal Team");
+  const [editProjBusinessUnit, setEditProjBusinessUnit] = useState<string>("Vận hành nội bộ");
 
   // Create Document Modal state
   const [isCreateDocModalOpen, setIsCreateDocModalOpen] = useState<boolean>(false);
@@ -414,10 +499,15 @@ function App() {
   }, [currentUser?.id]);
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!getAccessToken()) return;
     void fetchCurrentUser()
-      .then(setCurrentUser)
-      .catch(() => setCurrentUser(null));
+      .then((user) => {
+        setCurrentUser(user);
+        void loadWorkspaceFromBackend();
+      })
+      .catch(() => {
+        setIsBackendConnected(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -473,10 +563,16 @@ function App() {
       setSelectedProjectId(finalProjectId);
       setSelectedDocumentId(firstDocument?.id ?? "empty-document");
       setIsBackendConnected(true);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Cannot load backend workspace:", error);
       setIsBackendConnected(false);
-      addToast("warning", "Đang dùng dữ liệu mẫu", "FE chưa gọi được BE. Kiểm tra Nest server ở port 3000.");
+      if (error?.message?.includes("401") || error?.message?.includes("Unauthorized")) {
+        clearAuthSession();
+        setCurrentUser(null);
+        addToast("info", "Phiên đăng nhập hết hạn", "Vui lòng đăng nhập lại để kết nối với BE.");
+      } else {
+        addToast("warning", "Đang dùng dữ liệu mẫu", "FE chưa gọi được BE. Kiểm tra Nest server ở port 3000.");
+      }
     } finally {
       setIsLoadingBackend(false);
     }
@@ -961,7 +1057,7 @@ function App() {
       return documentsList.filter((doc) => doc.status === "Approved");
     }
     if (activeTabNav === "review") {
-      return documentsList.filter((doc) => doc.status === "In Review" || doc.status === "Draft");
+      return documentsList.filter((doc) => doc.status === "Draft");
     }
     return documentsList.filter((doc) => doc.projectId === selectedProjectId);
   }, [documentsList, selectedProjectId, activeTabNav]);
@@ -1048,15 +1144,18 @@ function App() {
 
   // Create New Project Handler
   async function handleCreateProject() {
-    if (!newProjName.trim() || !newProjCode.trim()) {
-      addToast("warning", "Thiếu thông tin", "Vui lòng nhập Mã và Tên dự án.");
+    if (!newProjName.trim()) {
+      addToast("warning", "Thiếu thông tin", "Vui lòng nhập Tên dự án.");
       return;
     }
+    const projectCode = newProjCode.trim()
+      ? newProjCode.trim().toUpperCase()
+      : generateProjectCode(newProjName, projectsList.map((project) => project.code));
     try {
       const newProj = await createProject({
-        code: newProjCode.trim().toUpperCase(),
+        code: projectCode,
         name: newProjName.trim(),
-        client: newProjClient.trim() || "Internal Team"
+        client: buildProjectClientLabel(newProjCustomer, newProjBusinessUnit)
       });
       setProjectsList((prev) => [...prev, newProj]);
       setSelectedProjectId(newProj.id);
@@ -1064,7 +1163,8 @@ function App() {
       setActiveTabNav("projects");
       setNewProjCode("");
       setNewProjName("");
-      setNewProjClient("");
+      setNewProjCustomer("Internal Team");
+      setNewProjBusinessUnit("Vận hành nội bộ");
       setIsCreateProjectModalOpen(false);
       addToast("success", "Đã tạo dự án mới", `Dự án "${newProj.name}" (${newProj.code}) đã được lưu vào Neon.`);
     } catch (error) {
@@ -1076,26 +1176,34 @@ function App() {
   // Open Edit Project Modal
   function openEditProjectModal(proj: Project, e: React.MouseEvent) {
     e.stopPropagation();
+    const scope = parseProjectClientLabel(proj.client);
     setEditingProject(proj);
     setEditProjCode(proj.code);
     setEditProjName(proj.name);
-    setEditProjClient(proj.client);
+    setEditProjCustomer(scope.customer);
+    setEditProjBusinessUnit(scope.businessUnit);
     setIsEditProjectModalOpen(true);
   }
 
   // Save Edit Project Handler
   async function handleSaveEditProject() {
     if (!editingProject) return;
-    if (!editProjName.trim() || !editProjCode.trim()) {
-      addToast("warning", "Thiếu thông tin", "Vui lòng nhập Mã và Tên dự án.");
+    if (!editProjName.trim()) {
+      addToast("warning", "Thiếu thông tin", "Vui lòng nhập Tên dự án.");
       return;
     }
+    const projectCode = editProjCode.trim()
+      ? editProjCode.trim().toUpperCase()
+      : generateProjectCode(
+          editProjName,
+          projectsList.filter((project) => project.id !== editingProject.id).map((project) => project.code)
+        );
 
     try {
       const updatedProject = await updateProject(editingProject.id, {
-        code: editProjCode.trim().toUpperCase(),
+        code: projectCode,
         name: editProjName.trim(),
-        client: editProjClient.trim()
+        client: buildProjectClientLabel(editProjCustomer, editProjBusinessUnit)
       });
       setProjectsList((prev) => prev.map((p) => (p.id === updatedProject.id ? { ...p, ...updatedProject } : p)));
       setIsEditProjectModalOpen(false);
@@ -1773,9 +1881,9 @@ function App() {
       {/* Sidebar Navigation */}
       <aside className="sidebar">
         <div className="brand">
-          <img src="/logo.png" alt="BA DocControl" className="sidebar-logo-img" />
+          <img src="/logo.png" alt="DocSpace" className="sidebar-logo-img" />
           <div className="brand-info">
-            <strong>BA DocControl</strong>
+            <strong>DocSpace</strong>
             <small>Quản Lý Tài Liệu BA</small>
           </div>
         </div>
@@ -2054,9 +2162,9 @@ function App() {
 
               {leftPanelMode === "docs" ? (
                 <>
-                  {/* Status Filter Tabs (Draft | In Review | Approved) */}
+                  {/* Status Filter Tabs (Draft | Approved) */}
                   <div className="library-filter-tabs">
-                    {(["All", "Draft", "In Review", "Approved"] as const).map((tab) => (
+                    {(["All", "Draft", "Approved"] as const).map((tab) => (
                       <button
                         key={tab}
                         className={statusFilter === tab ? "tab-btn active" : "tab-btn"}
@@ -2185,10 +2293,7 @@ function App() {
                 <button
                   className="btn-secondary"
                   type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(window.location.href);
-                    addToast("success", "Đã sao chép liên kết", "Team members có thể mở nhanh tài liệu này.");
-                  }}
+                  onClick={() => setIsShareModalOpen(true)}
                 >
                   <Share2 size={14} /> Chia sẻ
                 </button>
@@ -2536,53 +2641,80 @@ function App() {
 
       {/* Modal 1: Create New Project */}
       {isCreateProjectModalOpen && (
-        <div className="modal-backdrop" onClick={() => setIsCreateProjectModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop">
+          <div className="modal-content">
             <div className="modal-header">
-              <h3>Tạo Dự Án Quản Lý Mới</h3>
+              <div className="modal-title-with-icon">
+                <div className="modal-header-badge">
+                  <FolderPlus size={20} />
+                </div>
+                <div>
+                  <h3>Tạo Dự Án Quản Lý Mới</h3>
+                  <p className="modal-subtitle">Nhập tên dự án, mã dự án và khối nghiệp vụ tương ứng</p>
+                </div>
+              </div>
               <button className="icon-btn" type="button" onClick={() => setIsCreateProjectModalOpen(false)}>
                 <X size={18} />
               </button>
             </div>
             <div className="modal-body">
-              <div className="form-group">
-                <label>Mã Dự Án (Project Code)</label>
-                <input
-                  className="form-input"
-                  placeholder="Ví dụ: CRM-25, MOB-09..."
-                  value={newProjCode}
-                  onChange={(e) => setNewProjCode(e.target.value)}
-                />
-              </div>
-
-              <div className="form-group">
+              <div className="form-group project-name-priority">
                 <label>Tên Dự Án (Project Name)</label>
                 <input
                   className="form-input"
-                  placeholder="Ví dụ: E-Commerce Mobile App..."
+                  placeholder="Ví dụ: Nền tảng tuyển sinh trung tâm..."
                   value={newProjName}
                   onChange={(e) => setNewProjName(e.target.value)}
                 />
               </div>
 
               <div className="form-group">
-                <label>Khách Hàng / Khối Nghiệp Vụ (Client/Department)</label>
+                <label>Mã Dự Án (Project Code)</label>
                 <input
                   className="form-input"
-                  placeholder="Ví dụ: Retail Banking, Operations..."
-                  value={newProjClient}
-                  onChange={(e) => setNewProjClient(e.target.value)}
+                  placeholder="Để trống hệ thống sẽ tự sinh mã"
+                  value={newProjCode}
+                  onChange={(e) => setNewProjCode(e.target.value)}
                 />
+                <small className="field-hint">Có thể nhập mã riêng, hoặc bỏ trống để tự tạo từ tên dự án.</small>
               </div>
 
-              <div className="modal-footer">
-                <button className="btn-secondary" type="button" onClick={() => setIsCreateProjectModalOpen(false)}>
-                  Hủy
-                </button>
-                <button className="btn-primary" type="button" onClick={handleCreateProject}>
-                  <FolderPlus size={16} /> Tạo Dự Án
-                </button>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Khách Hàng / Thị Trường</label>
+                  <select
+                    className="form-select"
+                    value={newProjCustomer}
+                    onChange={(e) => setNewProjCustomer(e.target.value)}
+                  >
+                    {PROJECT_CUSTOMER_OPTIONS.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Khối Nghiệp Vụ</label>
+                  <select
+                    className="form-select"
+                    value={newProjBusinessUnit}
+                    onChange={(e) => setNewProjBusinessUnit(e.target.value)}
+                  >
+                    {BUSINESS_UNIT_OPTIONS.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn-secondary" type="button" onClick={() => setIsCreateProjectModalOpen(false)}>
+                Hủy
+              </button>
+              <button className="btn-primary" type="button" onClick={handleCreateProject}>
+                <FolderPlus size={16} /> Tạo Dự Án
+              </button>
             </div>
           </div>
         </div>
@@ -2590,25 +2722,24 @@ function App() {
 
       {/* Modal 2: Edit Existing Project */}
       {isEditProjectModalOpen && editingProject && (
-        <div className="modal-backdrop" onClick={() => setIsEditProjectModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop">
+          <div className="modal-content">
             <div className="modal-header">
-              <h3>Chỉnh Sửa Thông Tin Dự Án</h3>
+              <div className="modal-title-with-icon">
+                <div className="modal-header-badge cyan">
+                  <Pencil size={20} />
+                </div>
+                <div>
+                  <h3>Chỉnh Sửa Thông Tin Dự Án</h3>
+                  <p className="modal-subtitle">Cập nhật thông tin mã dự án, khách hàng và khối nghiệp vụ</p>
+                </div>
+              </div>
               <button className="icon-btn" type="button" onClick={() => setIsEditProjectModalOpen(false)}>
                 <X size={18} />
               </button>
             </div>
             <div className="modal-body">
-              <div className="form-group">
-                <label>Mã Dự Án (Project Code)</label>
-                <input
-                  className="form-input"
-                  value={editProjCode}
-                  onChange={(e) => setEditProjCode(e.target.value)}
-                />
-              </div>
-
-              <div className="form-group">
+              <div className="form-group project-name-priority">
                 <label>Tên Dự Án (Project Name)</label>
                 <input
                   className="form-input"
@@ -2618,22 +2749,52 @@ function App() {
               </div>
 
               <div className="form-group">
-                <label>Khách Hàng / Khối Nghiệp Vụ (Client)</label>
+                <label>Mã Dự Án (Project Code)</label>
                 <input
                   className="form-input"
-                  value={editProjClient}
-                  onChange={(e) => setEditProjClient(e.target.value)}
+                  placeholder="Để trống hệ thống sẽ tự sinh mã"
+                  value={editProjCode}
+                  onChange={(e) => setEditProjCode(e.target.value)}
                 />
+                <small className="field-hint">Có thể nhập mã riêng, hoặc bỏ trống để tự tạo từ tên dự án.</small>
               </div>
 
-              <div className="modal-footer">
-                <button className="btn-secondary" type="button" onClick={() => setIsEditProjectModalOpen(false)}>
-                  Hủy
-                </button>
-                <button className="btn-primary" type="button" onClick={handleSaveEditProject}>
-                  <Pencil size={16} /> Lưu Thay Đổi
-                </button>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Khách Hàng / Thị Trường</label>
+                  <select
+                    className="form-select"
+                    value={editProjCustomer}
+                    onChange={(e) => setEditProjCustomer(e.target.value)}
+                  >
+                    {[...new Set([editProjCustomer, ...PROJECT_CUSTOMER_OPTIONS])].map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Khối Nghiệp Vụ</label>
+                  <select
+                    className="form-select"
+                    value={editProjBusinessUnit}
+                    onChange={(e) => setEditProjBusinessUnit(e.target.value)}
+                  >
+                    {[...new Set([editProjBusinessUnit, ...BUSINESS_UNIT_OPTIONS])].map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn-secondary" type="button" onClick={() => setIsEditProjectModalOpen(false)}>
+                Hủy
+              </button>
+              <button className="btn-primary" type="button" onClick={handleSaveEditProject}>
+                <Pencil size={16} /> Lưu Thay Đổi
+              </button>
             </div>
           </div>
         </div>
@@ -2641,10 +2802,18 @@ function App() {
 
       {/* Modal 3: Create New Document */}
       {isCreateDocModalOpen && (
-        <div className="modal-backdrop" onClick={() => setIsCreateDocModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop">
+          <div className="modal-content">
             <div className="modal-header">
-              <h3>Tạo Tài Liệu Mới Cho Dự Án</h3>
+              <div className="modal-title-with-icon">
+                <div className="modal-header-badge amber">
+                  <FilePlus size={20} />
+                </div>
+                <div>
+                  <h3>Tạo Tài Liệu Mới Cho Dự Án</h3>
+                  <p className="modal-subtitle">Khởi tạo tài liệu nghiệp vụ mới vào dự án được chọn</p>
+                </div>
+              </div>
               <button className="icon-btn" type="button" onClick={() => setIsCreateDocModalOpen(false)}>
                 <X size={18} />
               </button>
@@ -2699,15 +2868,15 @@ function App() {
                   />
                 </div>
               </div>
+            </div>
 
-              <div className="modal-footer">
-                <button className="btn-secondary" type="button" onClick={() => setIsCreateDocModalOpen(false)}>
-                  Hủy
-                </button>
-                <button className="btn-primary" type="button" onClick={handleCreateDocument}>
-                  <FilePlus size={16} /> Tạo Tài Liệu
-                </button>
-              </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" type="button" onClick={() => setIsCreateDocModalOpen(false)}>
+                Hủy
+              </button>
+              <button className="btn-primary" type="button" onClick={handleCreateDocument}>
+                <FilePlus size={16} /> Tạo Tài Liệu
+              </button>
             </div>
           </div>
         </div>
@@ -2715,80 +2884,108 @@ function App() {
 
       {/* Modal 4: Edit Existing Document Metadata */}
       {isEditDocModalOpen && editingDoc && (
-        <div className="modal-backdrop" onClick={() => setIsEditDocModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop">
+          <div className="modal-content">
             <div className="modal-header">
-              <h3>Chỉnh Sửa Thuộc Tính Tài Liệu</h3>
+              <div className="modal-title-with-icon">
+                <div className="modal-header-badge">
+                  <FileText size={20} />
+                </div>
+                <div>
+                  <h3>Chỉnh Sửa Thuộc Tính Tài Liệu</h3>
+                  <p className="modal-subtitle">Cập nhật thông tin chi tiết và trạng thái của tài liệu</p>
+                </div>
+              </div>
               <button className="icon-btn" type="button" onClick={() => setIsEditDocModalOpen(false)}>
                 <X size={18} />
               </button>
             </div>
             <div className="modal-body">
-              <div className="form-group">
+              <div className="form-group project-name-priority">
                 <label>Tên / Tiêu Đề Tài Liệu</label>
                 <input
                   className="form-input"
+                  placeholder="Ví dụ: Mở rộng tính năng web..."
                   value={editDocTitle}
                   onChange={(e) => setEditDocTitle(e.target.value)}
                 />
               </div>
 
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Loại Tài Liệu</label>
-                  <select
-                    className="form-select"
-                    value={editDocType}
-                    onChange={(e) => setEditDocType(e.target.value)}
-                  >
-                    <option value="BRD">BRD (Business Req)</option>
-                    <option value="SRS">SRS (System Spec)</option>
-                    <option value="CR">CR (Change Request)</option>
-                  </select>
+              <div className="form-group-section">
+                <div className="form-section-header">
+                  <Layers size={15} /> THÔNG TIN THUỘC TÍNH & PHÂN LOẠI
                 </div>
 
-                <div className="form-group">
-                  <label>Trạng Thái Tài Liệu</label>
-                  <select
-                    className="form-select"
-                    value={editDocStatus}
-                    onChange={(e) => setEditDocStatus(e.target.value as DocumentStatus)}
-                  >
-                    <option value="Draft">Draft (Bản nháp)</option>
-                    <option value="In Review">In Review (Đang đánh giá)</option>
-                    <option value="Approved">Approved (Đã duyệt)</option>
-                  </select>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Loại Tài Liệu</label>
+                    <div className="input-with-icon-wrapper">
+                      <FileText size={16} className="field-icon" />
+                      <select
+                        className="form-select"
+                        value={editDocType}
+                        onChange={(e) => setEditDocType(e.target.value)}
+                      >
+                        <option value="BRD">BRD (Business Req)</option>
+                        <option value="SRS">SRS (System Spec)</option>
+                        <option value="CR">CR (Change Request)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Trạng Thái Tài Liệu</label>
+                    <div className="input-with-icon-wrapper">
+                      <CheckCircle2 size={16} className="field-icon" />
+                      <select
+                        className="form-select"
+                        value={editDocStatus}
+                        onChange={(e) => setEditDocStatus(e.target.value as DocumentStatus)}
+                      >
+                        <option value="Draft">Draft (Bản nháp)</option>
+                        <option value="Approved">Approved (Đã duyệt)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Người Phụ Trách (Owner)</label>
+                    <div className="input-with-icon-wrapper">
+                      <Users size={16} className="field-icon" />
+                      <input
+                        className="form-input"
+                        placeholder="Ví dụ: BA Team, John Doe..."
+                        value={editDocOwner}
+                        onChange={(e) => setEditDocOwner(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Phiên Bản (Version)</label>
+                    <div className="input-with-icon-wrapper">
+                      <Clock size={16} className="field-icon" />
+                      <input
+                        className="form-input"
+                        placeholder="Ví dụ: v0.1, v1.0..."
+                        value={editDocVersion}
+                        onChange={(e) => setEditDocVersion(e.target.value)}
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
+            </div>
 
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Người Phụ Trách (Owner)</label>
-                  <input
-                    className="form-input"
-                    value={editDocOwner}
-                    onChange={(e) => setEditDocOwner(e.target.value)}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>Phiên Bản (Version)</label>
-                  <input
-                    className="form-input"
-                    value={editDocVersion}
-                    onChange={(e) => setEditDocVersion(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="modal-footer">
-                <button className="btn-secondary" type="button" onClick={() => setIsEditDocModalOpen(false)}>
-                  Hủy
-                </button>
-                <button className="btn-primary" type="button" onClick={handleSaveEditDocument}>
-                  <Pencil size={16} /> Lưu Thay Đổi
-                </button>
-              </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" type="button" onClick={() => setIsEditDocModalOpen(false)}>
+                Hủy
+              </button>
+              <button className="btn-primary" type="button" onClick={handleSaveEditDocument}>
+                <Pencil size={16} /> Lưu Thay Đổi
+              </button>
             </div>
           </div>
         </div>
@@ -2796,11 +2993,8 @@ function App() {
 
       {/* Modal 5: Confirmation Delete Popup Modal */}
       {confirmDeleteModal.isOpen && (
-        <div
-          className="modal-backdrop"
-          onClick={() => setConfirmDeleteModal({ isOpen: false, type: null, id: null, title: "", message: "" })}
-        >
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
+        <div className="modal-backdrop">
+          <div className="modal-content" style={{ maxWidth: 440 }}>
             <div className="modal-header" style={{ background: "rgba(225, 29, 72, 0.05)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div className="confirm-modal-icon">
@@ -2845,8 +3039,8 @@ function App() {
 
       {/* Modal 6: Import File with Target Project Selector */}
       {isImportModalOpen && (
-        <div className="modal-backdrop" onClick={() => !isImporting && setIsImportModalOpen(false)}>
-          <div className="modal-content import-modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop">
+          <div className="modal-content import-modal-content">
             <div className="modal-header">
               <h3>Import tệp vào Dự Án</h3>
               <button
@@ -2990,6 +3184,17 @@ function App() {
           }}
         />
       )}
+
+      <ShareAccessModal
+        isOpen={isShareModalOpen}
+        initialScope="document"
+        documentId={selectedDocument.id}
+        documentTitle={selectedDocument.title}
+        projectId={selectedProject.id}
+        projectTitle={selectedProject.name}
+        onClose={() => setIsShareModalOpen(false)}
+        onToast={addToast}
+      />
 
       {/* Floating Toast Notifications */}
       <div className="toast-container">

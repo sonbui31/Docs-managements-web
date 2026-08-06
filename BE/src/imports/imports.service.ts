@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { createCanvas, DOMMatrix, ImageData, Path2D } from "@napi-rs/canvas";
+import { createCanvas, DOMMatrix, ImageData, loadImage, Path2D } from "@napi-rs/canvas";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -164,6 +164,7 @@ export class ImportsService {
         convertImage: mammoth.images.imgElement(async (image) => {
           const imageBuffer = await image.read();
           const mimeType = image.contentType || this.detectImageMimeType(imageBuffer);
+          const dimensions = await this.getImageDimensions(imageBuffer);
           const src = await this.uploadImportedImageCached(
             imageUploadCache,
             imageBuffer,
@@ -173,7 +174,17 @@ export class ImportsService {
             dto,
             user
           );
-          return { src };
+          return {
+            src,
+            class: "imported-doc-image",
+            loading: "lazy",
+            ...(dimensions
+              ? {
+                  width: String(dimensions.width),
+                  height: String(dimensions.height)
+                }
+              : {})
+          };
         })
       });
       return this.cleanHtml(result.value);
@@ -519,6 +530,18 @@ export class ImportsService {
       return "image/webp";
     }
     return "application/octet-stream";
+  }
+
+  private async getImageDimensions(buffer: Buffer) {
+    try {
+      const image = await loadImage(buffer);
+      const width = Math.round(image.naturalWidth || image.width);
+      const height = Math.round(image.naturalHeight || image.height);
+      if (!width || !height) return null;
+      return { width, height };
+    } catch {
+      return null;
+    }
   }
 
   private async loadPdfJs() {

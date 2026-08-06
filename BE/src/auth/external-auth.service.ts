@@ -83,9 +83,10 @@ export class ExternalAuthService {
     };
   }
 
-  async fetchEmployeeUserList(accessToken: string, params: { companyId?: string | null }) {
+  async fetchEmployeeUserList(accessToken: string, params: { companyId?: string | null; departmentId?: string | null }) {
     const search = new URLSearchParams();
     if (params.companyId) search.set("companyId", params.companyId);
+    if (params.departmentId) search.set("departmentId", params.departmentId);
     const response = await this.request<unknown>(`/employee/user-list${search.size ? `?${search}` : ""}`, {
       method: "GET",
       headers: { Authorization: `Bearer ${accessToken}` }
@@ -154,8 +155,9 @@ export class ExternalAuthService {
   }
 
   private mapExternalRole(role: string): GlobalRole {
-    if (role === "sadmin" || role === "admin") return "ADMIN";
-    if (role === "manager") return "MANAGER";
+    const normalized = role.toLowerCase();
+    if (normalized === "sadmin" || normalized === "admin" || normalized.includes("admin")) return "ADMIN";
+    if (normalized === "manager" || normalized.includes("manager") || normalized.includes("quan_ly")) return "MANAGER";
     return "EMPLOYEE";
   }
 

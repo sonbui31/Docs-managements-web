@@ -291,13 +291,11 @@ export async function downloadExport(documentId: string, type: "pdf" | "docx") {
 
 function mapDocumentStatus(status: BackendDocument["status"]): DocumentStatus {
   if (status === "APPROVED" || status === "SIGNED_OFF") return "Approved";
-  if (status === "IN_REVIEW" || status === "CHANGES_REQUESTED") return "In Review";
   return "Draft";
 }
 
 function toBackendDocumentStatus(status: DocumentStatus): BackendDocument["status"] {
   if (status === "Approved") return "APPROVED";
-  if (status === "In Review") return "IN_REVIEW";
   return "DRAFT";
 }
 

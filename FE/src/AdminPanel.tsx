@@ -515,7 +515,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
           </div>
           <div>
             <h2>Quản lý Người dùng & Phân quyền</h2>
-            <p>Quản trị tài khoản, cấp quyền theo dự án và thiết lập truy cập tài liệu chi tiết</p>
+            <p>Quản trị tài khoản người dùng. Quyền dự án/tài liệu được chia sẻ trực tiếp từ nút Chia sẻ.</p>
           </div>
         </div>
 
@@ -529,24 +529,6 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
           >
             <RefreshCw size={16} className={loading ? "spin-icon" : ""} />
             <span>{loading ? "Đang tải..." : "Làm mới"}</span>
-          </button>
-
-          <button
-            type="button"
-            className="btn-admin-secondary"
-            onClick={() => setShowAssignProjectModal(true)}
-          >
-            <FolderKanban size={16} />
-            <span>Gán quyền Dự án</span>
-          </button>
-
-          <button
-            type="button"
-            className="btn-admin-secondary"
-            onClick={() => setShowAssignDocModal(true)}
-          >
-            <FileText size={16} />
-            <span>Gán quyền Tài liệu</span>
           </button>
 
           {canManageAccounts && (
@@ -631,26 +613,6 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
             <Users size={16} />
             <span>Danh sách Người dùng</span>
             <span className="tab-count">{filteredUsers.length}</span>
-          </button>
-
-          <button
-            type="button"
-            className={`admin-tab-btn ${activeTab === "projects" ? "active" : ""}`}
-            onClick={() => setActiveTab("projects")}
-          >
-            <FolderKanban size={16} />
-            <span>Ma trận Quyền Dự án</span>
-            <span className="tab-count">{projects.length}</span>
-          </button>
-
-          <button
-            type="button"
-            className={`admin-tab-btn ${activeTab === "documents" ? "active" : ""}`}
-            onClick={() => setActiveTab("documents")}
-          >
-            <FileCode size={16} />
-            <span>Ma trận Quyền Tài liệu</span>
-            <span className="tab-count">{documents.length}</span>
           </button>
         </div>
 
@@ -801,18 +763,10 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
                             <div
                               key={proj.projectId}
                               className="chip-tag project-chip"
-                              title={`Dự án: ${proj.name} (Role: ${proj.role}) - Click nút x để bỏ gán`}
+                              title={`Dự án: ${proj.name} (Role: ${proj.role})`}
                             >
                               <span className="chip-code">{proj.code}</span>
                               <span className="chip-role">{proj.role}</span>
-                              <button
-                                type="button"
-                                className="chip-remove-btn"
-                                onClick={() => void handleRemoveProject(user.id, proj.projectId)}
-                                title="Hủy quyền dự án này"
-                              >
-                                <X size={12} />
-                              </button>
                             </div>
                           ))}
 
@@ -821,18 +775,10 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
                             <div
                               key={doc.documentId}
                               className="chip-tag document-chip"
-                              title={`Tài liệu: ${doc.title} (Role: ${doc.role}) - Click nút x để bỏ gán`}
+                              title={`Tài liệu: ${doc.title} (Role: ${doc.role})`}
                             >
                               <span className="chip-code">{doc.projectCode}/{doc.type}</span>
                               <span className="chip-role">{doc.role}</span>
-                              <button
-                                type="button"
-                                className="chip-remove-btn"
-                                onClick={() => void handleRemoveDocument(user.id, doc.documentId)}
-                                title="Hủy quyền tài liệu này"
-                              >
-                                <X size={12} />
-                              </button>
                             </div>
                           ))}
 
@@ -845,24 +791,6 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
                       {/* Actions */}
                       <td className="col-actions text-right">
                         <div className="action-buttons-group">
-                          <button
-                            type="button"
-                            className="btn-icon-action"
-                            title="Gán quyền Dự án cho user này"
-                            onClick={() => openQuickAssignProject(user.id)}
-                          >
-                            <FolderKanban size={15} />
-                          </button>
-
-                          <button
-                            type="button"
-                            className="btn-icon-action"
-                            title="Gán quyền Tài liệu cho user này"
-                            onClick={() => openQuickAssignDocument(user.id)}
-                          >
-                            <FileText size={15} />
-                          </button>
-
                           {canManageAccounts && (
                             <button
                               type="button"
@@ -1060,8 +988,8 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
 
       {/* 1. CREATE USER MODAL */}
       {showCreateModal && (
-        <div className="admin-modal-overlay" onClick={() => setShowCreateModal(false)}>
-          <div className="admin-modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="admin-modal-overlay">
+          <div className="admin-modal-card">
             <div className="modal-header">
               <div className="modal-header-info">
                 <div className="modal-header-icon">
@@ -1185,8 +1113,8 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
 
       {/* 2. ASSIGN PROJECT MODAL */}
       {showAssignProjectModal && (
-        <div className="admin-modal-overlay" onClick={() => setShowAssignProjectModal(false)}>
-          <div className="admin-modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="admin-modal-overlay">
+          <div className="admin-modal-card">
             <div className="modal-header">
               <div className="modal-header-info">
                 <div className="modal-header-icon cyan">
@@ -1264,8 +1192,8 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
 
       {/* 3. ASSIGN DOCUMENT MODAL */}
       {showAssignDocModal && (
-        <div className="admin-modal-overlay" onClick={() => setShowAssignDocModal(false)}>
-          <div className="admin-modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="admin-modal-overlay">
+          <div className="admin-modal-card">
             <div className="modal-header">
               <div className="modal-header-info">
                 <div className="modal-header-icon amber">
@@ -1343,8 +1271,8 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
 
       {/* 4. CONFIRM DELETE / DISABLE MODAL */}
       {deletingUser && (
-        <div className="admin-modal-overlay" onClick={() => setDeletingUser(null)}>
-          <div className="admin-modal-card mini" onClick={(e) => e.stopPropagation()}>
+        <div className="admin-modal-overlay">
+          <div className="admin-modal-card mini">
             <div className="modal-header">
               <div className="modal-header-info">
                 <div className="modal-header-icon danger">
