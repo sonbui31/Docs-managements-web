@@ -1,5 +1,6 @@
-import { Controller, Get, Header, Param, UseGuards } from "@nestjs/common";
+import { Controller, Get, Param, Res, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
+import { Response } from "express";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -12,14 +13,26 @@ export class ExportsController {
   constructor(private readonly exportsService: ExportsService) {}
 
   @Get("documents/:id/pdf")
-  @Header("Content-Type", "application/pdf")
-  exportPdf(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.exportsService.exportPdf(id, user);
+  async exportPdf(
+    @Param("id") id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res({ passthrough: true }) response: Response
+  ) {
+    const result = await this.exportsService.exportPdf(id, user);
+    response.setHeader("Content-Type", "application/pdf");
+    response.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+    return result.buffer;
   }
 
   @Get("documents/:id/docx")
-  @Header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-  exportDocx(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.exportsService.exportDocx(id, user);
+  async exportDocx(
+    @Param("id") id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res({ passthrough: true }) response: Response
+  ) {
+    const result = await this.exportsService.exportDocx(id, user);
+    response.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    response.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+    return result.buffer;
   }
 }

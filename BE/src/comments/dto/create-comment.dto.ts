@@ -25,4 +25,9 @@ export class CreateCommentDto {
   @IsString()
   @MaxLength(120)
   createdBy?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  createdByEmail?: string;
 }

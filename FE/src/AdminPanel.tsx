@@ -254,6 +254,39 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
   const [assignDocIds, setAssignDocIds] = useState<string[]>(documents[0]?.id ? [documents[0].id] : []);
   const [assignDocRoles, setAssignDocRoles] = useState<ProjectRole[]>(["VIEWER"]);
 
+  useEffect(() => {
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape" && event.key !== "Esc") return;
+      if (deletingUser) {
+        event.preventDefault();
+        setDeletingUser(null);
+        return;
+      }
+      if (showAssignDocModal) {
+        event.preventDefault();
+        setShowAssignDocModal(false);
+        return;
+      }
+      if (showAssignProjectModal) {
+        event.preventDefault();
+        setShowAssignProjectModal(false);
+        return;
+      }
+      if (showCreateModal) {
+        event.preventDefault();
+        setShowCreateModal(false);
+        return;
+      }
+      if (showPassword) {
+        event.preventDefault();
+        setShowPassword(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [deletingUser, showAssignDocModal, showAssignProjectModal, showCreateModal, showPassword]);
+
   const assignableUsers = useMemo(() => users, [users]);
 
   const userSelectItems: MultiSelectItem[] = useMemo(
@@ -402,6 +435,14 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
 
   function toggleRole(selectedRoles: ProjectRole[], role: ProjectRole, setSelectedRoles: (roles: ProjectRole[]) => void) {
     setSelectedRoles(selectedRoles.includes(role) ? selectedRoles.filter((selectedRole) => selectedRole !== role) : [...selectedRoles, role]);
+  }
+
+  function permissionRoles(permission?: { role: ProjectRole; roles?: ProjectRole[] }) {
+    return permission?.roles?.length ? permission.roles : permission?.role ? [permission.role] : [];
+  }
+
+  function permissionTitle(roles: ProjectRole[]) {
+    return roles.join(", ");
   }
 
   // API Handlers
@@ -763,10 +804,10 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
                             <div
                               key={proj.projectId}
                               className="chip-tag project-chip"
-                              title={`Dự án: ${proj.name} (Role: ${proj.role})`}
+                              title={`Dự án: ${proj.name} (Role: ${permissionTitle(permissionRoles(proj))})`}
                             >
                               <span className="chip-code">{proj.code}</span>
-                              <span className="chip-role">{proj.role}</span>
+                              <span className="chip-role">{permissionTitle(permissionRoles(proj))}</span>
                             </div>
                           ))}
 
@@ -775,10 +816,10 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
                             <div
                               key={doc.documentId}
                               className="chip-tag document-chip"
-                              title={`Tài liệu: ${doc.title} (Role: ${doc.role})`}
+                              title={`Tài liệu: ${doc.title} (Role: ${permissionTitle(permissionRoles(doc))})`}
                             >
                               <span className="chip-code">{doc.projectCode}/{doc.type}</span>
-                              <span className="chip-role">{doc.role}</span>
+                              <span className="chip-role">{permissionTitle(permissionRoles(doc))}</span>
                             </div>
                           ))}
 
@@ -867,6 +908,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
                     <div className="matrix-users-list">
                       {assignedUsers.map((user) => {
                         const projectPermission = user.projects.find((p) => p.projectId === project.id);
+                        const roles = permissionRoles(projectPermission);
                         return (
                           <div key={user.id} className="matrix-user-item">
                             <div className="user-mini-info">
@@ -878,9 +920,11 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
                             </div>
 
                             <div className="matrix-user-controls">
-                              <span className={`role-pill role-${projectPermission?.role.toLowerCase()}`}>
-                                {projectPermission?.role}
-                              </span>
+                              {roles.map((role) => (
+                                <span key={role} className={`role-pill role-${role.toLowerCase()}`}>
+                                  {role}
+                                </span>
+                              ))}
                               <button
                                 type="button"
                                 className="remove-matrix-btn"
@@ -942,6 +986,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
                     <div className="matrix-users-list">
                       {assignedUsers.map((user) => {
                         const docPermission = user.documents.find((d) => d.documentId === doc.id);
+                        const roles = permissionRoles(docPermission);
                         return (
                           <div key={user.id} className="matrix-user-item">
                             <div className="user-mini-info">
@@ -953,9 +998,11 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
                             </div>
 
                             <div className="matrix-user-controls">
-                              <span className={`role-pill role-${docPermission?.role.toLowerCase()}`}>
-                                {docPermission?.role}
-                              </span>
+                              {roles.map((role) => (
+                                <span key={role} className={`role-pill role-${role.toLowerCase()}`}>
+                                  {role}
+                                </span>
+                              ))}
                               <button
                                 type="button"
                                 className="remove-matrix-btn"

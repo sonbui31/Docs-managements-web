@@ -128,7 +128,7 @@ export class ImportsService {
           sourceType: "imported",
           sourceFileName: file.originalname
         },
-        include: { _count: { select: { comments: true, versions: true } } }
+        include: { _count: { select: { comments: { where: { status: "OPEN" } }, versions: true } } }
       });
 
       await tx.documentVersion.upsert({
@@ -226,7 +226,7 @@ export class ImportsService {
 
   private async convertPdfToVisualHtml(file: Express.Multer.File, dto: ImportDocumentDto, user: AuthenticatedUser) {
     const pdfjs = await this.loadPdfJs();
-    const loadingTask = pdfjs.getDocument({
+    const loadingTask = (pdfjs as any).getDocument({
       data: new Uint8Array(file.buffer),
       disableFontFace: true,
       useSystemFonts: true
@@ -306,7 +306,7 @@ export class ImportsService {
         const text = (item.str ?? "").replace(/\s+/g, " ");
         if (!text.trim() || !item.transform) return "";
 
-        const transform = pdfjs.Util.transform(viewport.transform, item.transform);
+        const transform = (pdfjs as any).Util ? (pdfjs as any).Util.transform(viewport.transform, item.transform) : item.transform;
         const fontSize = Math.max(1, Math.hypot(transform[2], transform[3]));
         const left = transform[4];
         const top = transform[5] - fontSize;

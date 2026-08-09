@@ -3,6 +3,7 @@ import { ApiTags } from "@nestjs/swagger";
 import { Request, Response } from "express";
 import { REFRESH_COOKIE_NAME, readCookie } from "./auth.cookies";
 import { AuthService } from "./auth.service";
+import { AuthenticatedUser } from "./auth.types";
 import { CurrentUser } from "./current-user.decorator";
 import { ForgotPasswordDto } from "./dto/forgot-password.dto";
 import { LoginDto } from "./dto/login.dto";
@@ -10,7 +11,6 @@ import { RegisterDto } from "./dto/register.dto";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { TokenDto } from "./dto/token.dto";
 import { JwtAuthGuard } from "./jwt-auth.guard";
-import { AuthenticatedUser } from "./auth.types";
 
 @ApiTags("auth")
 @Controller({ path: "auth", version: "1" })
@@ -47,27 +47,9 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @Post("logout-all")
-  async logoutAll(
-    @CurrentUser() user: AuthenticatedUser,
-    @Req() request: Request,
-    @Res({ passthrough: true }) response: Response
-  ) {
-    await this.authService.logoutAll(user.id, this.meta(request));
-    this.clearRefreshCookie(response);
-    return { ok: true };
-  }
-
-  @UseGuards(JwtAuthGuard)
   @Get("me")
   me(@CurrentUser() user: AuthenticatedUser) {
     return this.authService.me(user.id);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Get("sessions")
-  sessions(@CurrentUser() user: AuthenticatedUser) {
-    return this.authService.listSessions(user.id);
   }
 
   @Post("confirm-email")

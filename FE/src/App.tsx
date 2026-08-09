@@ -53,6 +53,7 @@ import {
   fetchDocumentsByProject,
   fetchProjects,
   importDocument,
+  resolveComment,
   updateComment,
   updateDocument,
   updateProject
@@ -61,7 +62,6 @@ import { AdminPanel } from "./AdminPanel";
 import { AuthPage } from "./AuthPage";
 import { clearAuthSession, fetchCurrentUser, getAccessToken, getStoredUser, logout } from "./authApi";
 import { initialComments, documents as initialDocuments, projects as initialProjects } from "./data";
-import { SessionsModal } from "./SessionsModal";
 import { ShareAccessModal } from "./ShareAccessModal";
 import type { CommentThread, DocumentStatus, Project, ProjectDocument, ToastMessage, User } from "./types";
 
@@ -336,6 +336,28 @@ function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string>(projectsList[0]?.id ?? "");
   const [selectedDocumentId, setSelectedDocumentId] = useState<string>(documentsList[0]?.id ?? "");
   const [activeTabNav, setActiveTabNav] = useState<"projects" | "review" | "vault" | "admin">("projects");
+  
+  // Left Panel Tab Mode ("docs" vs "toc")
+  const [leftPanelMode, setLeftPanelMode] = useState<"docs" | "toc">("docs");
+  // Interactive Table of Contents (Outline) State
+  const [tocItems, setTocItems] = useState<TocItem[]>([]);
+  const [activeTocId, setActiveTocId] = useState<string>("");
+  const [isTocPopoverOpen, setIsTocPopoverOpen] = useState<boolean>(false);
+
+  // Grouped Actions Dropdown State
+  const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState<boolean>(false);
+  const actionsDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (actionsDropdownRef.current && !actionsDropdownRef.current.contains(event.target as Node)) {
+        setIsActionsDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const [statusFilter, setStatusFilter] = useState<"All" | DocumentStatus>("All");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
@@ -349,13 +371,6 @@ function App() {
   const [showCommentsPanel, setShowCommentsPanel] = useState<boolean>(true);
   const [fontSize, setFontSize] = useState<"sm" | "md" | "lg">("md");
   const [isZenMode, setIsZenMode] = useState<boolean>(false);
-
-  // Left Panel Tab Mode ("docs" vs "toc")
-  const [leftPanelMode, setLeftPanelMode] = useState<"docs" | "toc">("docs");
-  // Interactive Table of Contents (Outline) State
-  const [tocItems, setTocItems] = useState<TocItem[]>([]);
-  const [activeTocId, setActiveTocId] = useState<string>("");
-  const [isTocPopoverOpen, setIsTocPopoverOpen] = useState<boolean>(false);
 
   // Interactive Block selection
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
@@ -396,6 +411,9 @@ function App() {
   const [importStatusText, setImportStatusText] = useState<string>("");
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
+  const [exportType, setExportType] = useState<"pdf" | "docx">("pdf");
+  const [isExporting, setIsExporting] = useState<boolean>(false);
 
   // Create Project Modal state
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState<boolean>(false);
@@ -444,7 +462,6 @@ function App() {
   });
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const [isSessionsModalOpen, setIsSessionsModalOpen] = useState(false);
 
   function setSyncedDocumentCommentCount(documentId: string, count: number) {
     const safeCount = Math.max(0, count);
@@ -807,6 +824,7 @@ function App() {
   }
 
   function handleCommentCardClick(comment: CommentThread) {
+    if (comment.status === "resolved") return;
     if (!comment.selectedText) return;
     setSelectedCommentTarget(null);
     setSelectionPopover(null);
@@ -1490,6 +1508,30 @@ function App() {
     }
   }
 
+  async function handleResolveComment(comment: CommentThread) {
+    if (comment.status === "resolved") return;
+    const resolvedOpenCount = commentsList.filter(
+      (item) => (item.id === comment.id || item.parentId === comment.id) && item.status === "open"
+    ).length;
+
+    try {
+      const resolvedComment = await resolveComment(comment.id);
+      setCommentsList((prev) =>
+        prev.map((item) =>
+          item.id === comment.id || item.parentId === comment.id
+            ? { ...item, status: "resolved", ...(item.id === comment.id ? resolvedComment : {}) }
+            : item
+        )
+      );
+      adjustDocumentCommentCount(comment.documentId, -resolvedOpenCount);
+      clearActiveCommentHighlight();
+      addToast("success", "Đã đánh dấu hoàn thành", "Comment này đã được chuyển sang trạng thái hoàn thành.");
+    } catch (error) {
+      console.error("Resolve comment error:", error);
+      addToast("error", "Không đánh dấu được", "BE chưa cập nhật được trạng thái comment.");
+    }
+  }
+
   // Add new comment
   async function handleAddComment() {
     if (!newCommentText.trim()) return;
@@ -1508,7 +1550,8 @@ function App() {
         blockId: targetBlock,
         selectedText: selectedCommentTarget.selectedText,
         content: newCommentText.trim(),
-        createdBy: "BA User"
+        createdBy: currentUser?.name || currentUser?.email || "User",
+        createdByEmail: currentUser?.email
       });
       setCommentsList((prev) => [newComment, ...prev]);
       adjustDocumentCommentCount(newComment.documentId, 1);
@@ -1531,7 +1574,8 @@ function App() {
         blockId: comment.blockId,
         selectedText: comment.selectedText,
         content: replyText.trim(),
-        createdBy: "BA User"
+        createdBy: currentUser?.name || currentUser?.email || "User",
+        createdByEmail: currentUser?.email
       });
       setCommentsList((prev) => [newReply, ...prev]);
       adjustDocumentCommentCount(newReply.documentId, 1);
@@ -1544,20 +1588,125 @@ function App() {
     }
   }
 
-  // Keyboard shortcut listener (⌘K for search, ESC to exit Zen mode)
+  async function handleExportDocument() {
+    if (selectedDocument.id === "empty-document") {
+      addToast("warning", "Chưa chọn tài liệu", "Hãy chọn một tài liệu trước khi xuất file.");
+      return;
+    }
+    setIsExporting(true);
+    try {
+      await downloadExport(selectedDocument.id, exportType);
+      setIsExportModalOpen(false);
+      addToast("success", "Đã tạo file xuất", `Tài liệu đã được tải xuống dưới dạng ${exportType === "pdf" ? "PDF" : "Word"}.`);
+    } catch (error) {
+      console.error("Export document error:", error);
+      addToast("error", "Không xuất được tài liệu", "Vui lòng kiểm tra quyền truy cập hoặc thử lại sau.");
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
+  // Keyboard shortcut listener (⌘K for search, ESC closes the top-most popup)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         document.getElementById("main-search")?.focus();
       }
-      if (e.key === "Escape" || e.key === "Esc") {
+      if (e.key !== "Escape" && e.key !== "Esc") return;
+
+      if (isSelectionComposerOpen || selectionPopover || selectedCommentTarget) {
+        e.preventDefault();
+        clearSelectedCommentTarget();
+        return;
+      }
+      if (editingCommentId || replyingCommentId) {
+        e.preventDefault();
+        setEditingCommentId(null);
+        setEditingCommentText("");
+        setReplyingCommentId(null);
+        setReplyText("");
+        return;
+      }
+      if (confirmDeleteModal.isOpen) {
+        e.preventDefault();
+        setConfirmDeleteModal({ isOpen: false, type: null, id: null, title: "", message: "" });
+        return;
+      }
+      if (isShareModalOpen) {
+        e.preventDefault();
+        setIsShareModalOpen(false);
+        return;
+      }
+      if (isExportModalOpen && !isExporting) {
+        e.preventDefault();
+        setIsExportModalOpen(false);
+        return;
+      }
+      if (isImportModalOpen && !isImporting) {
+        e.preventDefault();
+        setIsImportModalOpen(false);
+        setIsDragOver(false);
+        return;
+      }
+      if (isEditDocModalOpen) {
+        e.preventDefault();
+        setIsEditDocModalOpen(false);
+        return;
+      }
+      if (isCreateDocModalOpen) {
+        e.preventDefault();
+        setIsCreateDocModalOpen(false);
+        return;
+      }
+      if (isEditProjectModalOpen) {
+        e.preventDefault();
+        setIsEditProjectModalOpen(false);
+        return;
+      }
+      if (isCreateProjectModalOpen) {
+        e.preventDefault();
+        setIsCreateProjectModalOpen(false);
+        return;
+      }
+      if (isActionsDropdownOpen) {
+        e.preventDefault();
+        setIsActionsDropdownOpen(false);
+        return;
+      }
+      if (isTocPopoverOpen) {
+        e.preventDefault();
+        setIsTocPopoverOpen(false);
+        return;
+      }
+      if (isZenMode) {
+        e.preventDefault();
         setIsZenMode(false);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [
+    confirmDeleteModal.isOpen,
+    editingCommentId,
+    isActionsDropdownOpen,
+    isCreateDocModalOpen,
+    isCreateProjectModalOpen,
+    isDragOver,
+    isEditDocModalOpen,
+    isEditProjectModalOpen,
+    isExportModalOpen,
+    isExporting,
+    isImportModalOpen,
+    isImporting,
+    isSelectionComposerOpen,
+    isShareModalOpen,
+    isTocPopoverOpen,
+    isZenMode,
+    replyingCommentId,
+    selectedCommentTarget,
+    selectionPopover
+  ]);
 
   const documentContainerRef = useRef<HTMLDivElement>(null);
   const inlineCommentTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1688,6 +1837,11 @@ function App() {
     let isSubscribed = true;
 
     const parseHeadings = () => {
+      if (!selectedDocument.id || selectedDocument.id === "empty-document") {
+        if (isSubscribed) setTocItems([]);
+        return;
+      }
+
       if (!documentContainerRef.current) return;
       const container = documentContainerRef.current;
       const headings = container.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5");
@@ -2007,34 +2161,28 @@ function App() {
             <img
               src={currentUser.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80"}
               alt={currentUser.name}
-              style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover", border: "1.5px solid var(--accent-primary)" }}
+              style={{ width: 30, height: 30, borderRadius: "50%", objectFit: "cover", border: "1.5px solid var(--accent-primary)", flexShrink: 0 }}
             />
-            <div className="user-info">
-              <strong>{currentUser.name}</strong>
+            <div className="user-info" title={`${currentUser.name} (${currentUser.role === "ADMIN" ? "Admin" : currentUser.role === "MANAGER" ? "Manager" : "Nhân viên"})`}>
+              <strong title={currentUser.name}>{currentUser.name}</strong>
               <small style={{ color: "var(--accent-primary)", fontWeight: 500 }}>
                 {currentUser.role === "ADMIN" ? "Admin" : currentUser.role === "MANAGER" ? "Manager" : "Nhân viên"}
               </small>
             </div>
-            <button
-              type="button"
-              className="logout-icon-btn"
-              title="Phiên đăng nhập"
-              onClick={() => setIsSessionsModalOpen(true)}
-            >
-              <UserCheck size={16} />
-            </button>
-            <button
-              type="button"
-              className="logout-icon-btn"
-              title="Đăng xuất khỏi tài khoản"
-              onClick={() => {
-                void logout();
-                setCurrentUser(null);
-                addToast("info", "Đã đăng xuất", "Hẹn gặp lại bạn!");
-              }}
-            >
-              <LogOut size={16} />
-            </button>
+            <div className="user-actions-btns">
+              <button
+                type="button"
+                className="logout-icon-btn"
+                title="Đăng xuất khỏi tài khoản"
+                onClick={() => {
+                  void logout();
+                  setCurrentUser(null);
+                  addToast("info", "Đã đăng xuất", "Hẹn gặp lại bạn!");
+                }}
+              >
+                <LogOut size={15} />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -2156,7 +2304,7 @@ function App() {
                   type="button"
                   onClick={() => setLeftPanelMode("toc")}
                 >
-                  <ListTree size={12} /> Mục lục ({tocItems.length})
+                  <ListTree size={12} /> Mục lục ({selectedDocument.id === "empty-document" ? 0 : tocItems.length})
                 </button>
               </div>
 
@@ -2185,11 +2333,13 @@ function App() {
                     ) : (
                       filteredDocuments.map((doc) => {
                         const docCommentsCount = documentCommentCounts[doc.id] ?? doc.openCommentsCount ?? 0;
+                        const fullTitle = normalizeVietnameseText(doc.title);
                         return (
                           <button
                             key={doc.id}
                             className={doc.id === selectedDocumentId ? "document-row selected" : "document-row"}
                             type="button"
+                            title={fullTitle}
                             onClick={() => setSelectedDocumentId(doc.id)}
                           >
                             <div className="doc-icon">
@@ -2202,7 +2352,7 @@ function App() {
                               )}
                             </div>
                             <div className="doc-info">
-                              <strong>{normalizeVietnameseText(doc.title)}</strong>
+                              <strong title={fullTitle}>{fullTitle}</strong>
                               <small>{doc.type} • {doc.owner}</small>
                             </div>
                             <div className="doc-status-col">
@@ -2236,10 +2386,11 @@ function App() {
                         <button
                           key={item.id}
                           type="button"
+                          title={item.text}
                           className={`toc-item level-${item.level} ${activeTocId === item.id ? "active" : ""}`}
                           onClick={() => scrollToHeading(item)}
                         >
-                          <span className="toc-item-text">{item.text}</span>
+                          <span className="toc-item-text" title={item.text}>{item.text}</span>
                         </button>
                       ))}
                     </div>
@@ -2273,53 +2424,71 @@ function App() {
               </div>
 
               <div className="doc-toolbar-actions">
-                {/* Document Metadata Edit & Delete Buttons */}
+                {/* Prominent Primary Share Button */}
                 <button
-                  className="btn-secondary"
-                  type="button"
-                  title="Sửa thông tin thuộc tính tài liệu (Tên, Loại, Owner, Trạng thái)"
-                  onClick={() => openEditDocumentModal(selectedDocument)}
-                >
-                  <Pencil size={14} /> Sửa tài liệu
-                </button>
-                <button
-                  className="btn-secondary danger"
-                  type="button"
-                  title="Xóa tài liệu này"
-                  onClick={() => requestDeleteDocument(selectedDocument.id)}
-                >
-                  <Trash2 size={14} /> Xóa
-                </button>
-                <button
-                  className="btn-secondary"
+                  className="btn-primary share-highlight-btn"
                   type="button"
                   onClick={() => setIsShareModalOpen(true)}
+                  title="Chia sẻ quyền truy cập tài liệu"
                 >
-                  <Share2 size={14} /> Chia sẻ
+                  <Share2 size={15} /> Chia sẻ
                 </button>
-                <button
-                  className="btn-secondary"
-                  type="button"
-                  onClick={() => {
-                    if (selectedDocument.id === "empty-document") return;
-                    void downloadExport(selectedDocument.id, "pdf");
-                  }}
-                >
-                  <Download size={14} /> Xuất PDF
-                </button>
-                <button
-                  className="btn-secondary"
-                  type="button"
-                  onClick={() => {
-                    if (selectedDocument.id === "empty-document") return;
-                    void downloadExport(selectedDocument.id, "docx");
-                  }}
-                >
-                  <Download size={14} /> Xuất Word
-                </button>
+
+                {/* Grouped Surrounding Actions Dropdown */}
+                <div className="doc-actions-dropdown-wrapper" ref={actionsDropdownRef}>
+                  <button
+                    className={`btn-secondary doc-more-actions-btn ${isActionsDropdownOpen ? "active" : ""}`}
+                    type="button"
+                    onClick={() => setIsActionsDropdownOpen((open) => !open)}
+                    title="Các thao tác khác"
+                  >
+                    <span>Thao tác</span>
+                    <ChevronDown size={14} className={`dropdown-chevron ${isActionsDropdownOpen ? "open" : ""}`} />
+                  </button>
+
+                  {isActionsDropdownOpen && (
+                    <div className="doc-actions-menu">
+                      <button
+                        type="button"
+                        className="menu-item"
+                        onClick={() => {
+                          setIsActionsDropdownOpen(false);
+                          openEditDocumentModal(selectedDocument);
+                        }}
+                      >
+                        <Pencil size={14} /> Sửa thông tin tài liệu
+                      </button>
+
+                      <button
+                        type="button"
+                        className="menu-item"
+                        onClick={() => {
+                          setIsActionsDropdownOpen(false);
+                          if (selectedDocument.id === "empty-document") return;
+                          setExportType("pdf");
+                          setIsExportModalOpen(true);
+                        }}
+                      >
+                        <Download size={14} /> Xuất tài liệu
+                      </button>
+
+                      <div className="doc-actions-divider" />
+
+                      <button
+                        type="button"
+                        className="menu-item danger"
+                        onClick={() => {
+                          setIsActionsDropdownOpen(false);
+                          requestDeleteDocument(selectedDocument.id);
+                        }}
+                      >
+                        <Trash2 size={14} /> Xóa tài liệu này
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-
             {/* Reading Toolbar Controls */}
             <div className="reader-controls-bar">
               <div className="reader-controls-group">
@@ -2489,18 +2658,36 @@ function App() {
                 {displayedComments.map((comment) => (
                   <div
                     key={comment.id}
-                    className={comment.selectedText ? "comment-card clickable" : "comment-card"}
+                    className={[
+                      "comment-card",
+                      comment.selectedText ? "clickable" : "",
+                      comment.status === "resolved" ? "resolved" : ""
+                    ].filter(Boolean).join(" ")}
                     onClick={() => handleCommentCardClick(comment)}
                   >
                     <div className="comment-card-header">
+                      <div className="comment-top-meta">
+                        <div className="comment-status-wrapper">
+                          {comment.status === "resolved" ? (
+                            <span className="comment-status-badge resolved">
+                              <CheckCircle2 size={11} /> Hoàn thành
+                            </span>
+                          ) : (
+                            <span className="comment-status-badge open">
+                              <MessageSquareText size={11} /> Đang trao đổi
+                            </span>
+                          )}
+                        </div>
+                        <span className="req-tag">{comment.blockId}</span>
+                      </div>
+
                       <div className="comment-author-info">
                         <div className="author-avatar">{comment.author[0]}</div>
                         <div className="author-name">
                           <strong>{comment.author}</strong>
-                          <small>{comment.authorRole || "Reviewer"}</small>
+                          <small>{comment.authorEmail || comment.authorRole || "Reviewer"}</small>
                         </div>
                       </div>
-                      <span className="req-tag">{comment.blockId}</span>
                     </div>
 
                     {comment.selectedText && (
@@ -2547,31 +2734,48 @@ function App() {
                         <div className="comment-footer">
                           <small style={{ color: "var(--text-muted)" }}>{comment.createdAt}</small>
                           <div className="comment-actions-group">
-                            <button
-                              className="btn-comment-action"
-                              type="button"
-                              title="Trả lời nhận xét này"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setEditingCommentId(null);
-                                setReplyingCommentId(comment.id);
-                                setReplyText("");
-                              }}
-                            >
-                              <MessageSquarePlus size={11} /> Trả lời
-                            </button>
-                            <button
-                              className="btn-comment-action"
-                              type="button"
-                              title="Chỉnh sửa nội dung nhận xét"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setEditingCommentId(comment.id);
-                                setEditingCommentText(comment.text);
-                              }}
-                            >
-                              <Pencil size={11} /> Sửa
-                            </button>
+                            {comment.status === "open" && (
+                              <button
+                                className="btn-comment-action success"
+                                type="button"
+                                title="Đánh dấu comment đã hoàn thành"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void handleResolveComment(comment);
+                                }}
+                              >
+                                <CheckCircle2 size={11} /> Hoàn thành
+                              </button>
+                            )}
+                            {comment.status === "open" && (
+                              <button
+                                className="btn-comment-action"
+                                type="button"
+                                title="Trả lời nhận xét này"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setEditingCommentId(null);
+                                  setReplyingCommentId(comment.id);
+                                  setReplyText("");
+                                }}
+                              >
+                                <MessageSquarePlus size={11} /> Trả lời
+                              </button>
+                            )}
+                            {comment.status === "open" && (
+                              <button
+                                className="btn-comment-action"
+                                type="button"
+                                title="Chỉnh sửa nội dung nhận xét"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setEditingCommentId(comment.id);
+                                  setEditingCommentText(comment.text);
+                                }}
+                              >
+                                <Pencil size={11} /> Sửa
+                              </button>
+                            )}
                             <button
                               className="btn-comment-action danger"
                               type="button"
@@ -2591,12 +2795,77 @@ function App() {
                     {comment.replies && comment.replies.length > 0 && (
                       <div className="reply-list" onClick={(event) => event.stopPropagation()}>
                         {comment.replies.map((reply) => (
-                          <div key={reply.id} className="reply-card">
+                          <div key={reply.id} className={reply.status === "resolved" ? "reply-card resolved" : "reply-card"}>
                             <div className="reply-meta">
-                              <strong>{reply.author}</strong>
-                              <span>{reply.createdAt}</span>
+                              <div className="reply-author">
+                                <strong>{reply.author}</strong>
+                                <small>{reply.authorEmail || reply.authorRole || "Reviewer"}</small>
+                              </div>
+                              <div className="reply-meta-actions">
+                                {reply.status === "resolved" && (
+                                  <span className="comment-status-badge compact">
+                                    <CheckCircle2 size={10} /> Hoàn thành
+                                  </span>
+                                )}
+                                <span>{reply.createdAt}</span>
+                              </div>
                             </div>
-                            <p>{reply.text}</p>
+                            {editingCommentId === reply.id ? (
+                              <div className="comment-edit-box">
+                                <textarea
+                                  rows={2}
+                                  value={editingCommentText}
+                                  onChange={(event) => setEditingCommentText(event.target.value)}
+                                />
+                                <div className="comment-edit-actions">
+                                  <button
+                                    className="btn-comment-action"
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingCommentId(null);
+                                      setEditingCommentText("");
+                                    }}
+                                  >
+                                    Hủy
+                                  </button>
+                                  <button
+                                    className="btn-comment-action primary"
+                                    type="button"
+                                    onClick={() => void handleSaveEditComment(reply.id)}
+                                  >
+                                    Lưu
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <p>{reply.text}</p>
+                                <div className="reply-card-actions">
+                                  {reply.status === "open" && (
+                                    <button
+                                      className="btn-comment-action"
+                                      type="button"
+                                      title="Chỉnh sửa phản hồi"
+                                      onClick={() => {
+                                        setReplyingCommentId(null);
+                                        setEditingCommentId(reply.id);
+                                        setEditingCommentText(reply.text);
+                                      }}
+                                    >
+                                      <Pencil size={11} /> Sửa
+                                    </button>
+                                  )}
+                                  <button
+                                    className="btn-comment-action danger"
+                                    type="button"
+                                    title="Xóa phản hồi"
+                                    onClick={() => requestDeleteComment(reply.id)}
+                                  >
+                                    <Trash2 size={11} /> Xóa
+                                  </button>
+                                </div>
+                              </>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -2638,6 +2907,96 @@ function App() {
         </section>
         )}
       </section>
+
+      {isExportModalOpen && (
+        <div className="modal-backdrop">
+          <div className="modal-content export-modal-content">
+            <div className="modal-header">
+              <div className="modal-title-with-icon">
+                <div className="modal-header-badge">
+                  <Download size={20} />
+                </div>
+                <div>
+                  <h3>Xuất tài liệu</h3>
+                  <p className="modal-subtitle">{selectedDocument.title}</p>
+                </div>
+              </div>
+              <button
+                className="icon-btn"
+                type="button"
+                onClick={() => setIsExportModalOpen(false)}
+                disabled={isExporting}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div className="export-format-grid">
+                <button
+                  type="button"
+                  className={exportType === "pdf" ? "export-format-card active" : "export-format-card"}
+                  onClick={() => setExportType("pdf")}
+                  disabled={isExporting}
+                >
+                  <FileText size={22} />
+                  <span>
+                    <strong>PDF</strong>
+                    <small>Phù hợp để gửi, ký duyệt hoặc lưu trữ bản cố định.</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={exportType === "docx" ? "export-format-card active" : "export-format-card"}
+                  onClick={() => setExportType("docx")}
+                  disabled={isExporting}
+                >
+                  <FileCheck2 size={22} />
+                  <span>
+                    <strong>Word DOCX</strong>
+                    <small>Phù hợp khi cần tiếp tục chỉnh sửa nội dung.</small>
+                  </span>
+                </button>
+              </div>
+
+              <div className="export-summary">
+                <div>
+                  <strong>Tài liệu</strong>
+                  <span>{selectedDocument.title}</span>
+                </div>
+                <div>
+                  <strong>Phiên bản</strong>
+                  <span>{selectedDocument.version}</span>
+                </div>
+                <div>
+                  <strong>Loại</strong>
+                  <span>{selectedDocument.type}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              <button
+                className="btn-secondary"
+                type="button"
+                onClick={() => setIsExportModalOpen(false)}
+                disabled={isExporting}
+              >
+                Hủy
+              </button>
+              <button
+                className="btn-primary"
+                type="button"
+                onClick={() => void handleExportDocument()}
+                disabled={isExporting}
+              >
+                <Download size={14} />
+                {isExporting ? "Đang tạo file..." : `Xuất ${exportType === "pdf" ? "PDF" : "Word"}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal 1: Create New Project */}
       {isCreateProjectModalOpen && (
@@ -3172,17 +3531,6 @@ function App() {
             </div>
           </div>
         </div>
-      )}
-
-      {isSessionsModalOpen && (
-        <SessionsModal
-          onClose={() => setIsSessionsModalOpen(false)}
-          onLogoutAll={() => {
-            setIsSessionsModalOpen(false);
-            setCurrentUser(null);
-            addToast("info", "Đã đăng xuất mọi thiết bị", "Tất cả phiên đăng nhập đã bị thu hồi.");
-          }}
-        />
       )}
 
       <ShareAccessModal

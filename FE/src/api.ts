@@ -45,6 +45,7 @@ type BackendComment = {
   content: string;
   status: "OPEN" | "RESOLVED";
   createdBy?: string | null;
+  createdByEmail?: string | null;
   createdAt: string;
 };
 
@@ -145,7 +146,8 @@ export function mapComment(comment: BackendComment): CommentThread {
     documentId: comment.documentId,
     parentId: comment.parentId ?? undefined,
     blockId: comment.blockId,
-    author: comment.createdBy || "BA User",
+    author: comment.createdBy || "Thành viên",
+    authorEmail: comment.createdByEmail ?? undefined,
     authorRole: "Reviewer",
     text: comment.content,
     selectedText: comment.selectedText ?? undefined,
@@ -255,6 +257,7 @@ export async function createComment(payload: {
   selectedText?: string;
   content: string;
   createdBy?: string;
+  createdByEmail?: string;
 }) {
   const comment = await apiFetch<BackendComment>("/comments", {
     method: "POST",
@@ -277,16 +280,56 @@ export async function updateComment(commentId: string, payload: Partial<{ conten
   return mapComment(comment);
 }
 
+export async function resolveComment(commentId: string) {
+  const comment = await apiFetch<BackendComment>(`/comments/${commentId}/resolve`, {
+    method: "PATCH"
+  });
+  return mapComment(comment);
+}
+
 export async function downloadExport(documentId: string, type: "pdf" | "docx") {
-  const blob = await apiFetchBlob(`/exports/documents/${documentId}/${type}`);
+  const { blob, filename } = await apiFetchDownload(`/exports/documents/${documentId}/${type}`);
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `document-${documentId}.${type}`;
+  anchor.download = filename || `document-${documentId}.${type}`;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+async function apiFetchDownload(path: string, retry = true): Promise<{ blob: Blob; filename?: string }> {
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    }
+  });
+
+  if (response.status === 401 && retry) {
+    const refreshed = await refreshSession().catch(() => null);
+    if (refreshed) return apiFetchDownload(path, false);
+  }
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `API error ${response.status}`);
+  }
+
+  return {
+    blob: await response.blob(),
+    filename: filenameFromDisposition(response.headers.get("Content-Disposition"))
+  };
+}
+
+function filenameFromDisposition(disposition: string | null) {
+  if (!disposition) return undefined;
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1]);
+  const asciiMatch = disposition.match(/filename="?([^"]+)"?/i);
+  return asciiMatch?.[1];
 }
 
 function mapDocumentStatus(status: BackendDocument["status"]): DocumentStatus {

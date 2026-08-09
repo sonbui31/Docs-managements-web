@@ -146,6 +146,7 @@ model ProjectMember {
   userId      String
   user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   role        ProjectRole @default(VIEWER)
+  roles       ProjectRole[] @default([VIEWER])
   assignedBy  String?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
@@ -163,6 +164,7 @@ model DocumentPermission {
   userId      String
   user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   role        ProjectRole @default(VIEWER)
+  roles       ProjectRole[] @default([VIEWER])
   assignedBy  String?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
@@ -223,6 +225,7 @@ model Comment {
   content     String
   status      CommentStatus @default(OPEN)
   createdBy   String?
+  createdByEmail String?
   resolvedBy  String?
   createdAt   DateTime      @default(now())
   resolvedAt  DateTime?

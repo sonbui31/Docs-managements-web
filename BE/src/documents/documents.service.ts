@@ -20,7 +20,7 @@ export class DocumentsService {
     return this.prisma.document.findMany({
       where: { projectId },
       orderBy: { updatedAt: "desc" },
-      include: { _count: { select: { comments: true, versions: true } } }
+      include: { _count: { select: { comments: { where: { status: "OPEN" } }, versions: true } } }
     });
   }
 
@@ -96,7 +96,7 @@ export class DocumentsService {
           currentVersion: dto.currentVersion?.trim(),
           htmlContent: cleanHtml
         },
-        include: { _count: { select: { comments: true, versions: true } } }
+        include: { _count: { select: { comments: { where: { status: "OPEN" } }, versions: true } } }
       });
 
       if (cleanHtml) {

@@ -69,6 +69,7 @@ export class UsersService {
       projects: user.projectMemberships.map((membership: any) => ({
         projectId: membership.projectId,
         role: membership.role,
+        roles: this.permissionRoles(membership),
         code: membership.project.code,
         name: membership.project.name
       })),
@@ -76,6 +77,7 @@ export class UsersService {
         documentId: permission.documentId,
         projectId: permission.projectId,
         role: permission.role,
+        roles: this.permissionRoles(permission),
         title: permission.document.title,
         type: permission.document.type,
         projectCode: permission.document.project.code
@@ -179,7 +181,8 @@ export class UsersService {
   }
 
   async assignProject(userId: string, dto: AssignProjectDto, actor: AuthenticatedUser) {
-    const role = this.effectiveRole(dto);
+    const roles = this.effectiveRoles(dto);
+    const role = this.highestRole(roles);
     if (actor.role !== "ADMIN") {
       await this.permissions.assertProjectRole(actor, dto.projectId, ["MANAGER"]);
     }
@@ -189,13 +192,14 @@ export class UsersService {
 
     return this.prisma.projectMember.upsert({
       where: { projectId_userId: { projectId: dto.projectId, userId } },
-      create: { projectId: dto.projectId, userId, role, assignedBy: actor.id },
-      update: { role, assignedBy: actor.id }
+      create: { projectId: dto.projectId, userId, role, roles, assignedBy: actor.id },
+      update: { role, roles, assignedBy: actor.id }
     });
   }
 
   async assignProjectsBatch(dto: AssignProjectsBatchDto, actor: AuthenticatedUser) {
-    const role = this.effectiveRole(dto);
+    const roles = this.effectiveRoles(dto);
+    const role = this.highestRole(roles);
     const userIds = this.uniqueIds(dto.userIds);
     const projectIds = this.uniqueIds(dto.projectIds);
     if (!userIds.length || !projectIds.length) {
@@ -217,8 +221,8 @@ export class UsersService {
       userIds.map((userId) =>
         this.prisma.projectMember.upsert({
           where: { projectId_userId: { projectId, userId } },
-          create: { projectId, userId, role, assignedBy: actor.id },
-          update: { role, assignedBy: actor.id }
+          create: { projectId, userId, role, roles, assignedBy: actor.id },
+          update: { role, roles, assignedBy: actor.id }
         })
       )
     );
@@ -234,7 +238,8 @@ export class UsersService {
   }
 
   async assignDocument(userId: string, dto: AssignDocumentDto, actor: AuthenticatedUser) {
-    const role = this.effectiveRole(dto);
+    const roles = this.effectiveRoles(dto);
+    const role = this.highestRole(roles);
     const document = await this.prisma.document.findUnique({
       where: { id: dto.documentId },
       select: { id: true, projectId: true }
@@ -255,18 +260,21 @@ export class UsersService {
         projectId: document.projectId,
         userId,
         role,
+        roles,
         assignedBy: actor.id
       },
       update: {
         projectId: document.projectId,
         role,
+        roles,
         assignedBy: actor.id
       }
     });
   }
 
   async assignDocumentsBatch(dto: AssignDocumentsBatchDto, actor: AuthenticatedUser) {
-    const role = this.effectiveRole(dto);
+    const roles = this.effectiveRoles(dto);
+    const role = this.highestRole(roles);
     const userIds = this.uniqueIds(dto.userIds);
     const documentIds = this.uniqueIds(dto.documentIds);
     if (!userIds.length || !documentIds.length) {
@@ -298,11 +306,13 @@ export class UsersService {
             projectId: documentProjectMap.get(documentId)!,
             userId,
             role,
+            roles,
             assignedBy: actor.id
           },
           update: {
             projectId: documentProjectMap.get(documentId)!,
             role,
+            roles,
             assignedBy: actor.id
           }
         })
@@ -342,18 +352,25 @@ export class UsersService {
     return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
   }
 
-  private effectiveRole(dto: { role?: ProjectRole; roles?: ProjectRole[] }) {
+  private effectiveRoles(dto: { role?: ProjectRole; roles?: ProjectRole[] }) {
+    const roles = [...(dto.roles ?? []), ...(dto.role ? [dto.role] : [])];
+    const uniqueRoles = Array.from(new Set(roles));
+    if (!uniqueRoles.length) throw new BadRequestException("Vui lòng chọn ít nhất một quyền hạn");
+    return uniqueRoles;
+  }
+
+  private highestRole(roles: ProjectRole[]) {
     const roleRank: Record<ProjectRole, number> = {
       VIEWER: 1,
       REVIEWER: 2,
       EDITOR: 3,
       MANAGER: 4
     };
-    const roles = [...(dto.roles ?? []), ...(dto.role ? [dto.role] : [])];
-    const uniqueRoles = Array.from(new Set(roles));
-    if (!uniqueRoles.length) throw new BadRequestException("Vui lòng chọn ít nhất một quyền hạn");
+    return roles.reduce((highest, role) => (roleRank[role] > roleRank[highest] ? role : highest), roles[0]);
+  }
 
-    return uniqueRoles.reduce((highest, role) => (roleRank[role] > roleRank[highest] ? role : highest), uniqueRoles[0]);
+  private permissionRoles(permission: { role: ProjectRole; roles?: ProjectRole[] | null }) {
+    return permission.roles?.length ? permission.roles : [permission.role];
   }
 
   private mapExternalEmployee(employee: unknown, actor: AuthenticatedUser) {

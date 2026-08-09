@@ -42,6 +42,7 @@ export type CommentThread = {
   parentId?: string;
   blockId: string;
   author: string;
+  authorEmail?: string;
   authorRole?: string;
   text: string;
   selectedText?: string;

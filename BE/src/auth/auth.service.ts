@@ -1,21 +1,21 @@
 import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  OnModuleInit,
-  UnauthorizedException
+    BadRequestException,
+    ForbiddenException,
+    Injectable,
+    OnModuleInit,
+    UnauthorizedException
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { GlobalRole, TokenType, User, UserStatus } from "@prisma/client";
+import { GlobalRole, TokenType, User } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { JwtPayload, RequestMeta } from "./auth.types";
 import { LoginDto } from "./dto/login.dto";
 import { RegisterDto } from "./dto/register.dto";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { TokenDto } from "./dto/token.dto";
 import { ExternalAuthService } from "./external-auth.service";
-import { JwtPayload, RequestMeta } from "./auth.types";
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_DAYS = 30;
@@ -147,35 +147,12 @@ export class AuthService implements OnModuleInit {
     await this.audit("auth.logout", actorId ?? null, "User", actorId ?? null, null, meta);
   }
 
-  async logoutAll(actorId: string, meta: RequestMeta) {
-    await this.prisma.refreshSession.updateMany({
-      where: { userId: actorId, revokedAt: null },
-      data: { revokedAt: new Date() }
-    });
-    await this.audit("auth.logout_all", actorId, "User", actorId, null, meta);
-  }
-
   async me(userId: string) {
     const user = await this.prisma.user.findFirst({ where: { id: userId, deletedAt: null } });
     if (!user) {
       throw new UnauthorizedException("User not found");
     }
     return this.toPublicUser(user);
-  }
-
-  async listSessions(userId: string) {
-    return this.prisma.refreshSession.findMany({
-      where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        userAgent: true,
-        ipAddress: true,
-        createdAt: true,
-        lastUsedAt: true,
-        expiresAt: true
-      }
-    });
   }
 
   async confirmEmail(dto: TokenDto, meta: RequestMeta) {

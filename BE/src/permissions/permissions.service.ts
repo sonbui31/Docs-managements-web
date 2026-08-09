@@ -64,18 +64,22 @@ export class PermissionsService {
         externalDepartmentId: true,
         members: {
           where: { userId: user.id },
-          select: { role: true },
+          select: { role: true, roles: true },
           take: 1
         }
       }
     });
     if (!project) throw new NotFoundException("Project not found");
 
-    const membershipRole = project.members[0]?.role;
+    const membershipRole = this.highestStoredRole(project.members[0]);
     const scopedRole = this.scopeRoleFor(user, project);
     const effectiveRole = this.highestRole(membershipRole, scopedRole);
 
-    if (!effectiveRole || !this.roleAllowed(effectiveRole, allowedRoles)) {
+    const membershipRoles = project.members[0] ? this.storedRoles(project.members[0]) : [];
+    if (
+      !this.rolesAllowed([...membershipRoles, ...(scopedRole ? [scopedRole] : [])], allowedRoles) &&
+      (!effectiveRole || !this.roleAllowed(effectiveRole, allowedRoles))
+    ) {
       throw new ForbiddenException("Bạn không có quyền trên dự án này");
     }
   }
@@ -108,7 +112,7 @@ export class PermissionsService {
     });
 
     if (documentPermission) {
-      if (!this.roleAllowed(documentPermission.role, allowedRoles)) {
+      if (!this.rolesAllowed(this.storedRoles(documentPermission), allowedRoles)) {
         throw new ForbiddenException("Bạn không có quyền trên tài liệu này");
       }
       return document;
@@ -142,6 +146,10 @@ export class PermissionsService {
     return roleRank[actual] >= minimumRank;
   }
 
+  private rolesAllowed(actualRoles: ProjectRole[], allowedRoles: ProjectRole[]) {
+    return actualRoles.some((role) => this.roleAllowed(role, allowedRoles));
+  }
+
   private isExternalSuperAdmin(user: AuthenticatedUser) {
     return user.externalRole === "sadmin";
   }
@@ -168,5 +176,16 @@ export class PermissionsService {
     if (!left) return right ?? null;
     if (!right) return left;
     return roleRank[left] >= roleRank[right] ? left : right;
+  }
+
+  private highestStoredRole(permission?: { role: ProjectRole; roles?: ProjectRole[] | null }) {
+    const roles = this.storedRoles(permission);
+    if (!roles.length) return null;
+    return roles.reduce((highest, role) => (roleRank[role] > roleRank[highest] ? role : highest), roles[0]);
+  }
+
+  private storedRoles(permission?: { role: ProjectRole; roles?: ProjectRole[] | null }) {
+    if (!permission) return [];
+    return permission.roles?.length ? permission.roles : [permission.role];
   }
 }

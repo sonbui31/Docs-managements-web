@@ -92,25 +92,6 @@ export async function logout() {
   }
 }
 
-export async function logoutAllDevices() {
-  try {
-    await authFetch<{ ok: boolean }>("/auth/logout-all", { method: "POST" });
-  } finally {
-    clearAuthSession();
-  }
-}
-
-export async function fetchSessions() {
-  return authFetch<Array<{
-    id: string;
-    userAgent?: string | null;
-    ipAddress?: string | null;
-    createdAt: string;
-    lastUsedAt?: string | null;
-    expiresAt: string;
-  }>>("/auth/sessions");
-}
-
 export async function forgotPassword(email: string) {
   return authFetch<{ ok: boolean; resetToken?: string }>("/auth/forgot-password", {
     method: "POST",
@@ -132,6 +113,7 @@ export type ManagedUser = User & {
     code: string;
     name: string;
     role: ProjectRole;
+    roles?: ProjectRole[];
   }>;
   documents: Array<{
     documentId: string;
@@ -140,6 +122,7 @@ export type ManagedUser = User & {
     title: string;
     type: string;
     role: ProjectRole;
+    roles?: ProjectRole[];
   }>;
 };
 
