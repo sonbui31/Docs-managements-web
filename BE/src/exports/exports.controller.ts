@@ -16,23 +16,23 @@ export class ExportsController {
   async exportPdf(
     @Param("id") id: string,
     @CurrentUser() user: AuthenticatedUser,
-    @Res({ passthrough: true }) response: Response
+    @Res() response: Response
   ) {
     const result = await this.exportsService.exportPdf(id, user);
     response.setHeader("Content-Type", "application/pdf");
     response.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
-    return result.buffer;
+    return response.send(result.buffer);
   }
 
   @Get("documents/:id/docx")
   async exportDocx(
     @Param("id") id: string,
     @CurrentUser() user: AuthenticatedUser,
-    @Res({ passthrough: true }) response: Response
+    @Res() response: Response
   ) {
     const result = await this.exportsService.exportDocx(id, user);
     response.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
     response.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
-    return result.buffer;
+    return response.send(result.buffer);
   }
 }

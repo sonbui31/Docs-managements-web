@@ -360,6 +360,14 @@ function App() {
 
   const [statusFilter, setStatusFilter] = useState<"All" | DocumentStatus>("All");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [searchShortcutLabel, setSearchShortcutLabel] = useState<string>("Ctrl K");
+
+  useEffect(() => {
+    const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+    const platform = `${nav.userAgentData?.platform ?? navigator.platform ?? ""} ${navigator.userAgent ?? ""}`.toLowerCase();
+    const isApplePlatform = /mac|iphone|ipad|ipod/.test(platform);
+    setSearchShortcutLabel(isApplePlatform ? "⌘K" : "Ctrl K");
+  }, []);
 
   // Metric Scope Switcher State ("project" vs "document")
   const [metricScope, setMetricScope] = useState<"project" | "document">("project");
@@ -1588,6 +1596,16 @@ function App() {
     }
   }
 
+  function submitTextareaOnEnter(
+    event: ReactKeyboardEvent<HTMLTextAreaElement>,
+    submit: () => void | Promise<void>
+  ) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void submit();
+  }
+
   async function handleExportDocument() {
     if (selectedDocument.id === "empty-document") {
       addToast("warning", "Chưa chọn tài liệu", "Hãy chọn một tài liệu trước khi xuất file.");
@@ -1606,7 +1624,7 @@ function App() {
     }
   }
 
-  // Keyboard shortcut listener (⌘K for search, ESC closes the top-most popup)
+  // Keyboard shortcut listener for search and ESC closes the top-most popup.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
@@ -2223,7 +2241,7 @@ function App() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
-              <span className="kbd-shortcut">⌘K</span>
+              <span className="kbd-shortcut">{searchShortcutLabel}</span>
             </label>
 
 
@@ -2619,6 +2637,7 @@ function App() {
                     placeholder="Nhập nhận xét..."
                     value={newCommentText}
                     onChange={(event) => setNewCommentText(event.target.value)}
+                    onKeyDown={(event) => submitTextareaOnEnter(event, handleAddComment)}
                   />
                   <div className="selection-comment-editor-actions">
                     <button type="button" onClick={clearSelectedCommentTarget}>
@@ -2703,6 +2722,7 @@ function App() {
                           value={editingCommentText}
                           onClick={(event) => event.stopPropagation()}
                           onChange={(e) => setEditingCommentText(e.target.value)}
+                          onKeyDown={(event) => submitTextareaOnEnter(event, () => handleSaveEditComment(comment.id))}
                         />
                         <div className="comment-edit-actions">
                           <button
@@ -2816,6 +2836,7 @@ function App() {
                                   rows={2}
                                   value={editingCommentText}
                                   onChange={(event) => setEditingCommentText(event.target.value)}
+                                  onKeyDown={(event) => submitTextareaOnEnter(event, () => handleSaveEditComment(reply.id))}
                                 />
                                 <div className="comment-edit-actions">
                                   <button
@@ -2878,6 +2899,7 @@ function App() {
                           placeholder="Nhập phản hồi..."
                           value={replyText}
                           onChange={(event) => setReplyText(event.target.value)}
+                          onKeyDown={(event) => submitTextareaOnEnter(event, () => handleAddReply(comment))}
                         />
                         <div className="reply-actions">
                           <button

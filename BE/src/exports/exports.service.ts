@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import HTMLtoDOCX from "html-to-docx";
 import { createHash } from "crypto";
+import { existsSync } from "fs";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { Browser, chromium } from "playwright";
@@ -13,9 +13,18 @@ type ExportDocument = Prisma.DocumentGetPayload<{
   include: { project: { select: { code: true; name: true; client: true } } };
 }>;
 
+const HTMLtoDOCX = require("html-to-docx") as (
+  html: string,
+  headerHTML?: string,
+  options?: Record<string, unknown>,
+  footerHTML?: string
+) => Promise<Buffer>;
+const JSZip = require("jszip") as any;
+
 @Injectable()
 export class ExportsService {
   private browserPromise: Promise<Browser> | null = null;
+  private readonly exportStyleVersion = "2026-08-10-fit-images-v5";
   private readonly cacheDir = join(process.cwd(), ".export-cache");
 
   constructor(
@@ -50,11 +59,12 @@ export class ExportsService {
     const cached = await this.readCachedExport(document, "docx", filename);
     if (cached) return cached;
 
-    const buffer = await HTMLtoDOCX(this.renderDocxHtml(document, user), undefined, {
+    const rawBuffer = await HTMLtoDOCX(this.renderDocxHtml(document, user), undefined, {
       title: document.title,
       footer: true,
       pageNumber: true
     });
+    const buffer = await this.fitDocxImageExtents(rawBuffer);
     await this.writeCachedExport(document, "docx", buffer);
     return { buffer, filename };
   }
@@ -134,8 +144,14 @@ export class ExportsService {
     th { background: #f1f5f9; }
     img {
       max-width: 100%;
+      max-height: 210mm;
       height: auto;
+      width: auto;
+      object-fit: contain;
       break-inside: avoid;
+      page-break-inside: avoid;
+      display: block;
+      margin: 10px auto;
     }
     pre, code {
       font-family: Consolas, monospace;
@@ -166,12 +182,24 @@ export class ExportsService {
     .pdf-text-layer { display: none !important; }
     .pdf-hybrid-page {
       position: relative;
+      width: auto !important;
       max-width: 100% !important;
+      max-height: 238mm !important;
       height: auto !important;
-      margin: 0 auto 14px;
+      margin: 0 auto 10mm;
       break-inside: avoid;
+      page-break-inside: avoid;
+      overflow: hidden;
     }
-    .pdf-page-bg { width: 100%; height: auto; display: block; }
+    .pdf-page-bg {
+      width: auto !important;
+      max-width: 100% !important;
+      max-height: 238mm !important;
+      height: auto !important;
+      object-fit: contain;
+      display: block;
+      margin: 0 auto;
+    }
   </style>
 </head>
 <body>
@@ -227,8 +255,22 @@ export class ExportsService {
   }
 
   private async getBrowser() {
-    this.browserPromise ??= chromium.launch({ headless: true });
+    this.browserPromise ??= chromium.launch({
+      headless: true,
+      executablePath: this.getChromiumExecutablePath()
+    });
     return this.browserPromise;
+  }
+
+  private getChromiumExecutablePath() {
+    const candidates = [
+      process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
+      "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+    ].filter(Boolean) as string[];
+
+    return candidates.find((candidate) => existsSync(candidate));
   }
 
   private async readCachedExport(document: ExportDocument, extension: "pdf" | "docx", filename: string) {
@@ -248,16 +290,74 @@ export class ExportsService {
 
   private cacheKey(document: ExportDocument, extension: "pdf" | "docx") {
     return createHash("sha1")
-      .update([document.id, document.currentVersion, document.updatedAt.toISOString(), extension].join(":"))
+      .update([document.id, document.currentVersion, document.updatedAt.toISOString(), extension, this.exportStyleVersion].join(":"))
       .digest("hex");
   }
 
   private prepareDocxContent(content: string) {
-    if (!content.includes("pdf-hybrid-page")) return content;
-    return content
+    const withoutPdfTextLayer = content
       .replace(/<div class="pdf-text-layer"[\s\S]*?<\/div>/g, "")
-      .replace(/\sstyle="[^"]*position:[^"]*"/g, "")
-      .replace(/class="pdf-page-bg"/g, 'class="pdf-page-bg" style="max-width:100%;height:auto;"');
+      .replace(/\sstyle="[^"]*position:[^"]*"/g, "");
+
+    return this.normalizeDocxImages(withoutPdfTextLayer);
+  }
+
+  private normalizeDocxImages(content: string) {
+    return content.replace(/<img\b[^>]*>/gi, (tag) => {
+      const classValue = this.readAttribute(tag, "class") ?? "";
+      const isPageImage = classValue.includes("pdf-page-bg");
+      const isImportedDocImage = classValue.includes("imported-doc-image");
+      const targetWidth = isPageImage || isImportedDocImage ? 460 : 520;
+      const currentWidth = Number(this.readAttribute(tag, "width"));
+      const width = Number.isFinite(currentWidth) && currentWidth > 0
+        ? Math.min(currentWidth, targetWidth)
+        : targetWidth;
+      const nextStyle = [
+        "width:auto",
+        `max-width:${width}px`,
+        "height:auto",
+        "object-fit:contain",
+        "display:block",
+        "margin:8px auto"
+      ].join(";");
+
+      return tag
+        .replace(/\swidth=(["'])[^"']*\1/gi, "")
+        .replace(/\sheight=(["'])[^"']*\1/gi, "")
+        .replace(/\sstyle=(["'])[^"']*\1/gi, "")
+        .replace(/\/?>$/, ` width="${width}" style="${nextStyle}" />`);
+    });
+  }
+
+  private readAttribute(tag: string, name: string) {
+    const match = tag.match(new RegExp(`\\s${name}=(["'])(.*?)\\1`, "i"));
+    return match?.[2] ?? null;
+  }
+
+  private async fitDocxImageExtents(buffer: Buffer) {
+    const zip = await JSZip.loadAsync(buffer);
+    const documentFile = zip.file("word/document.xml");
+    if (!documentFile) return buffer;
+
+    const maxCx = 4_200_000; // ~4.6in, comfortably inside A4 content width.
+    const maxCy = 7_200_000; // ~7.9in, avoids one image dominating a Word page.
+    const xml = await documentFile.async("string");
+    const fittedXml = xml.replace(
+      /<(wp:extent|a:ext) cx="(\d+)" cy="(\d+)"\/>/g,
+      (match: string, tagName: string, cxValue: string, cyValue: string) => {
+      const cx = Number(cxValue);
+      const cy = Number(cyValue);
+      if (!Number.isFinite(cx) || !Number.isFinite(cy) || cx <= 0 || cy <= 0) return match;
+
+      const scale = Math.min(1, maxCx / cx, maxCy / cy);
+      if (scale >= 1) return match;
+
+      return `<${tagName} cx="${Math.round(cx * scale)}" cy="${Math.round(cy * scale)}"/>`;
+      }
+    );
+
+    zip.file("word/document.xml", fittedXml);
+    return zip.generateAsync({ type: "nodebuffer" }) as Promise<Buffer>;
   }
 
   private exportFilename(document: ExportDocument, extension: "pdf" | "docx") {
