@@ -26,15 +26,16 @@ export class CommentsService {
   async create(dto: CreateCommentDto, user: AuthenticatedUser) {
     await this.permissions.assertDocumentRole(user, dto.documentId, ["REVIEWER", "EDITOR", "MANAGER"]);
 
-    const authorName = user.name || dto.createdBy || user.email || "User";
+    const authorName = user.name || user.email || "User";
 
-    return this.prisma.comment.create({
+    const comment = await this.prisma.comment.create({
       data: {
         ...dto,
         createdBy: authorName,
-        createdByEmail: user.email || dto.createdByEmail
+        createdByEmail: user.email
       }
     });
+    return this.withAuthorProfile(comment);
   }
 
   async resolve(id: string, user: AuthenticatedUser) {
@@ -68,7 +69,7 @@ export class CommentsService {
       throw new BadRequestException("No comment fields to update");
     }
 
-    return this.prisma.comment.update({
+    const comment = await this.prisma.comment.update({
       where: { id },
       data: {
         content: dto.content?.trim(),
@@ -76,6 +77,7 @@ export class CommentsService {
         blockId: dto.blockId?.trim()
       }
     });
+    return this.withAuthorProfile(comment);
   }
 
   async remove(id: string, user: AuthenticatedUser) {
@@ -117,5 +119,10 @@ export class CommentsService {
         createdByEmail: profile.email
       };
     });
+  }
+
+  private async withAuthorProfile<T extends { createdBy: string | null; createdByEmail?: string | null }>(comment: T) {
+    const [profiled] = await this.withAuthorProfiles([comment]);
+    return profiled;
   }
 }

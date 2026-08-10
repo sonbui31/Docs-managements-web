@@ -39,8 +39,7 @@ import {
   Users,
   X
 } from "lucide-react";
-import mermaid from "mermaid";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   createComment,
   createDocument,
@@ -58,16 +57,17 @@ import {
   updateDocument,
   updateProject
 } from "./api";
-import { AdminPanel } from "./AdminPanel";
 import { AuthPage } from "./AuthPage";
 import { clearAuthSession, fetchCurrentUser, getAccessToken, getStoredUser, logout } from "./authApi";
 import { initialComments, documents as initialDocuments, projects as initialProjects } from "./data";
-import { ShareAccessModal } from "./ShareAccessModal";
 import type { CommentThread, DocumentStatus, Project, ProjectDocument, ToastMessage, User } from "./types";
 
+const AdminPanel = lazy(() => import("./AdminPanel").then((module) => ({ default: module.AdminPanel })));
+const ShareAccessModal = lazy(() => import("./ShareAccessModal").then((module) => ({ default: module.ShareAccessModal })));
 
-// Initialize Mermaid Diagram Engine with a clean, high-contrast, white-background theme
-mermaid.initialize({
+type MermaidRenderer = typeof import("mermaid").default;
+
+const mermaidConfig = {
   startOnLoad: false,
   theme: "base",
   securityLevel: "loose",
@@ -75,26 +75,50 @@ mermaid.initialize({
   themeVariables: {
     primaryColor: "#ffffff",
     primaryTextColor: "#0f172a",
-    primaryBorderColor: "#4f46e5",
-    lineColor: "#4f46e5",
+    primaryBorderColor: "#111827",
+    lineColor: "#111827",
     secondaryColor: "#f8fafc",
     tertiaryColor: "#f1f5f9",
-    nodeBorder: "#4f46e5",
+    nodeBorder: "#111827",
     clusterBkg: "#ffffff",
-    clusterBorder: "#cbd5e1",
-    defaultLinkColor: "#4f46e5",
+    clusterBorder: "#94a3b8",
+    defaultLinkColor: "#111827",
     titleColor: "#0f172a",
-    edgeLabelBackground: "#ffffff",
+    edgeLabelBackground: "transparent",
     nodeTextColor: "#0f172a",
-    fontSize: "14px"
+    fontSize: "18px"
+  },
+  flowchart: {
+    htmlLabels: true,
+    nodeSpacing: 54,
+    rankSpacing: 64,
+    padding: 28,
+    curve: "linear"
+  },
+  state: {
+    nodeSpacing: 54,
+    rankSpacing: 64,
+    padding: 28
   }
-});
+} as const;
+
+let mermaidRendererPromise: Promise<MermaidRenderer> | null = null;
+
+function loadMermaidRenderer() {
+  if (!mermaidRendererPromise) {
+    mermaidRendererPromise = import("mermaid").then((module) => {
+      module.default.initialize(mermaidConfig);
+      return module.default;
+    });
+  }
+  return mermaidRendererPromise;
+}
 
 export function normalizeVietnameseText(str: string): string {
   if (!str) return "";
 
   // 1. Standard NFC normalization
-  let result = str.normalize("NFC");
+  let result = recoverUtf8Mojibake(str).normalize("NFC");
 
   // 2. Fix TCVN3 / VNI corrupted title patterns & legacy font artifacts
   result = result
@@ -118,6 +142,27 @@ export function normalizeVietnameseText(str: string): string {
     .replace(/[\u0300-\u036F]/g, "");
 
   return result.normalize("NFC");
+}
+
+function recoverUtf8Mojibake(value: string): string {
+  if (!looksLikeUtf8Mojibake(value)) return value;
+
+  try {
+    const bytes = Uint8Array.from(value, (char) => char.charCodeAt(0) & 0xff);
+    const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    return scoreUtf8Mojibake(decoded) < scoreUtf8Mojibake(value) ? decoded : value;
+  } catch {
+    return value;
+  }
+}
+
+function looksLikeUtf8Mojibake(value: string): boolean {
+  return /[ÃÂÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàâ€šƒ„…†‡ˆ‰Š‹ŒŽ]/.test(value)
+    || /[\u0080-\u009F]/.test(value);
+}
+
+function scoreUtf8Mojibake(value: string): number {
+  return value.match(/[ÃÂÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàâ€šƒ„…†‡ˆ‰Š‹ŒŽ]|[\u0080-\u009F]|�/g)?.length ?? 0;
 }
 
 // Standard formatted reading document template
@@ -1557,9 +1602,7 @@ function App() {
         documentId: selectedDocument.id,
         blockId: targetBlock,
         selectedText: selectedCommentTarget.selectedText,
-        content: newCommentText.trim(),
-        createdBy: currentUser?.name || currentUser?.email || "User",
-        createdByEmail: currentUser?.email
+        content: newCommentText.trim()
       });
       setCommentsList((prev) => [newComment, ...prev]);
       adjustDocumentCommentCount(newComment.documentId, 1);
@@ -1581,9 +1624,7 @@ function App() {
         parentId: comment.id,
         blockId: comment.blockId,
         selectedText: comment.selectedText,
-        content: replyText.trim(),
-        createdBy: currentUser?.name || currentUser?.email || "User",
-        createdByEmail: currentUser?.email
+        content: replyText.trim()
       });
       setCommentsList((prev) => [newReply, ...prev]);
       adjustDocumentCommentCount(newReply.documentId, 1);
@@ -1790,7 +1831,11 @@ function App() {
         : pre?.querySelector<HTMLElement>("code");
       const container = pre ?? node;
 
-      if (seen.has(container) || container.getAttribute("data-mermaid-done") === "true") return;
+      if (
+        seen.has(container) ||
+        container.getAttribute("data-mermaid-done") === "true" ||
+        container.getAttribute("data-mermaid-pending") === "true"
+      ) return;
 
       const textSource = codeNode ?? node;
       const cleanCode = normalizeMermaidCode(textSource.textContent || textSource.innerText || "");
@@ -1804,24 +1849,40 @@ function App() {
 
     if (targetList.length === 0) return;
 
-    targetList.forEach(({ container, code }, index) => {
-      const id = `mermaid-svg-${Date.now()}-${index}-${Math.floor(Math.random() * 10000)}`;
-      void mermaid
-        .render(id, code)
-        .then(({ svg }) => {
-          container.innerHTML = svg;
-          container.className = "mermaid-container";
-          container.setAttribute("data-mermaid-done", "true");
-        })
-        .catch((err) => {
-          console.error("Mermaid rendering failed:", err, code);
-          container.className = "mermaid-error";
-          container.innerHTML = `<strong>Không render được sơ đồ Mermaid.</strong><pre>${escapeHtml(code)}</pre>`;
-          container.setAttribute("data-mermaid-done", "true");
-          const errEl = document.getElementById(`d${id}`);
-          if (errEl) errEl.remove();
+    targetList.forEach(({ container }) => container.setAttribute("data-mermaid-pending", "true"));
+
+    void loadMermaidRenderer()
+      .then((mermaid) => {
+        targetList.forEach(({ container, code }, index) => {
+          const id = `mermaid-svg-${Date.now()}-${index}-${Math.floor(Math.random() * 10000)}`;
+          void mermaid
+            .render(id, code)
+            .then(({ svg }) => {
+              container.innerHTML = svg;
+              container.className = "mermaid-container";
+              container.removeAttribute("data-mermaid-pending");
+              container.setAttribute("data-mermaid-done", "true");
+            })
+            .catch((err) => {
+              console.error("Mermaid rendering failed:", err, code);
+              container.className = "mermaid-error";
+              container.innerHTML = `<strong>Không render được sơ đồ Mermaid.</strong><pre>${escapeHtml(code)}</pre>`;
+              container.removeAttribute("data-mermaid-pending");
+              container.setAttribute("data-mermaid-done", "true");
+              const errEl = document.getElementById(`d${id}`);
+              if (errEl) errEl.remove();
+            });
         });
-    });
+      })
+      .catch((err) => {
+        console.error("Cannot load Mermaid renderer:", err);
+        targetList.forEach(({ container, code }) => {
+          container.className = "mermaid-error";
+          container.innerHTML = `<strong>Không tải được engine Mermaid.</strong><pre>${escapeHtml(code)}</pre>`;
+          container.removeAttribute("data-mermaid-pending");
+          container.setAttribute("data-mermaid-done", "true");
+        });
+      });
   }
 
   // Render Mermaid diagrams whenever imported HTML mutates in the reader.
@@ -1849,6 +1910,36 @@ function App() {
       observer.disconnect();
     };
   }, [selectedDocument.id, selectedDocument.contentHtml, fontSize]);
+
+  useEffect(() => {
+    const root = documentContainerRef.current;
+    if (!root) return;
+
+    const classifyImages = () => {
+      root.querySelectorAll<HTMLImageElement>(".html-document img:not(.pdf-page-bg)").forEach((image) => {
+        image.classList.add("document-raster-image");
+        const applyDiagramClass = () => {
+          const { naturalWidth, naturalHeight } = image;
+          if (!naturalWidth || !naturalHeight) return;
+          image.style.setProperty("--image-natural-width", `${naturalWidth}px`);
+          image.style.setProperty("--image-natural-height", `${naturalHeight}px`);
+          image.classList.toggle("document-diagram-image", naturalWidth >= 320 && naturalHeight >= 180);
+          image.classList.toggle("document-diagram-landscape", naturalWidth >= naturalHeight);
+        };
+
+        if (image.complete) {
+          applyDiagramClass();
+        } else {
+          image.addEventListener("load", applyDiagramClass, { once: true });
+        }
+      });
+    };
+
+    classifyImages();
+    const observer = new MutationObserver(classifyImages);
+    observer.observe(root, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [selectedDocument.id, selectedDocument.contentHtml]);
 
   // Extract document headings (h1, h2, h3, h4) to generate Table of Contents (TOC)
   useEffect(() => {
@@ -2267,7 +2358,9 @@ function App() {
 
 
         {activeTabNav === "admin" ? (
-          <AdminPanel projects={projectsList} documents={documentsList} currentUser={currentUser} onToast={addToast} />
+          <Suspense fallback={<div className="content-loading">Đang tải quản trị user...</div>}>
+            <AdminPanel projects={projectsList} documents={documentsList} currentUser={currentUser} onToast={addToast} />
+          </Suspense>
         ) : (
         <section className={gridLayoutClass}>
           {/* Panel 1: Document Library (Collapsible) */}
@@ -3555,16 +3648,20 @@ function App() {
         </div>
       )}
 
-      <ShareAccessModal
-        isOpen={isShareModalOpen}
-        initialScope="document"
-        documentId={selectedDocument.id}
-        documentTitle={selectedDocument.title}
-        projectId={selectedProject.id}
-        projectTitle={selectedProject.name}
-        onClose={() => setIsShareModalOpen(false)}
-        onToast={addToast}
-      />
+      {isShareModalOpen && (
+        <Suspense fallback={null}>
+          <ShareAccessModal
+            isOpen={isShareModalOpen}
+            initialScope="document"
+            documentId={selectedDocument.id}
+            documentTitle={selectedDocument.title}
+            projectId={selectedProject.id}
+            projectTitle={selectedProject.name}
+            onClose={() => setIsShareModalOpen(false)}
+            onToast={addToast}
+          />
+        </Suspense>
+      )}
 
       {/* Floating Toast Notifications */}
       <div className="toast-container">

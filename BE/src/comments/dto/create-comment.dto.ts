@@ -21,13 +21,4 @@ export class CreateCommentDto {
   @MaxLength(2000)
   content: string;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  createdBy?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(160)
-  createdByEmail?: string;
 }

@@ -52,26 +52,30 @@ export class ImportsService {
     }
 
     await this.permissions.assertProjectRole(user, dto.projectId, ["EDITOR", "MANAGER"]);
+    const normalizedFile: Express.Multer.File = {
+      ...file,
+      originalname: this.normalizeUploadedFileName(file.originalname)
+    };
 
     const importJob = await this.prisma.importJob.create({
       data: {
         projectId: dto.projectId,
-        sourceFileName: file.originalname,
-        sourceFileType: file.mimetype
+        sourceFileName: normalizedFile.originalname,
+        sourceFileType: normalizedFile.mimetype
       }
     });
 
     try {
-      const htmlContent = await this.convertToHtml(file, dto, user);
+      const htmlContent = await this.convertToHtml(normalizedFile, dto, user);
       const document = dto.documentId
-        ? await this.updateImportedDocument(dto.documentId, dto, file, htmlContent, user)
+        ? await this.updateImportedDocument(dto.documentId, dto, normalizedFile, htmlContent, user)
         : await this.documentsService.create({
             projectId: dto.projectId,
-            title: dto.title ?? this.titleFromFileName(file.originalname),
-            type: dto.type ?? this.typeFromFileName(file.originalname),
+            title: dto.title ?? this.titleFromFileName(normalizedFile.originalname),
+            type: dto.type ?? this.typeFromFileName(normalizedFile.originalname),
             htmlContent,
             sourceType: "imported",
-            sourceFileName: file.originalname
+            sourceFileName: normalizedFile.originalname
           }, user);
 
       await this.prisma.importJob.update({
@@ -155,7 +159,7 @@ export class ImportsService {
     const extension = file.originalname.split(".").pop()?.toLowerCase();
 
     if (extension === "md") {
-      return this.cleanHtml(this.markdownConverter.makeHtml(file.buffer.toString("utf8")));
+      return this.cleanHtml(this.convertMarkdownToHtml(file.buffer.toString("utf8")));
     }
 
     if (extension === "docx") {
@@ -222,6 +226,33 @@ export class ImportsService {
     }
 
     throw new BadRequestException("Only .md, .doc, .docx and .pdf files are supported");
+  }
+
+  private convertMarkdownToHtml(markdown: string) {
+    const mermaidBlocks: string[] = [];
+    const protectedMarkdown = markdown.replace(
+      /(^|\n)(`{3,}|~{3,})[ \t]*([^\n]*)\n([\s\S]*?)\n\2[ \t]*(?=\n|$)/gi,
+      (match, prefix: string, _fence: string, rawInfo: string, rawCode: string) => {
+        const code = rawCode.trim();
+        const info = rawInfo.trim().toLowerCase();
+        if (!info.includes("mermaid") && !this.isMermaidSource(code)) return match;
+        const index = mermaidBlocks.push(code) - 1;
+        return `${prefix}\n\nBA-DOC-MERMAID-BLOCK-${index}\n\n`;
+      }
+    );
+
+    let html = this.markdownConverter.makeHtml(protectedMarkdown);
+    mermaidBlocks.forEach((code, index) => {
+      html = html.replace(
+        new RegExp(`<p>BA-DOC-MERMAID-BLOCK-${index}<\\/p>|BA-DOC-MERMAID-BLOCK-${index}`, "g"),
+        `<pre><code class="mermaid language-mermaid">${this.escapeHtml(code)}</code></pre>`
+      );
+    });
+    return html;
+  }
+
+  private isMermaidSource(code: string) {
+    return /^(graph|flowchart|sequenceDiagram|gantt|classDiagram|classDiagram-v2|stateDiagram-v2|stateDiagram|erDiagram|journey|pie|gitGraph|mindmap|timeline|quadrantChart|requirementDiagram|C4Context|subgraph)\b/i.test(code.trim());
   }
 
   private async convertPdfToVisualHtml(file: Express.Multer.File, dto: ImportDocumentDto, user: AuthenticatedUser) {
@@ -658,7 +689,7 @@ pdfParse(fs.readFileSync(process.argv[1]))
   private normalizeVietnameseText(str: string): string {
     if (!str) return "";
 
-    let result = str.normalize("NFC");
+    let result = this.recoverUtf8Mojibake(str).normalize("NFC");
 
     result = result
       .replace(/Mò̀\s*Ì\s*rò̀i£ì\s*ng/gi, "Mô hình hệ thống")
@@ -680,6 +711,31 @@ pdfParse(fs.readFileSync(process.argv[1]))
       .replace(/[\u0300-\u036F]/g, "");
 
     return result.normalize("NFC");
+  }
+
+  private normalizeUploadedFileName(fileName: string) {
+    return this.normalizeVietnameseText(fileName);
+  }
+
+  private recoverUtf8Mojibake(value: string) {
+    if (!this.looksLikeUtf8Mojibake(value)) return value;
+
+    try {
+      const decoded = Buffer.from(value, "latin1").toString("utf8");
+      return this.scoreUtf8Mojibake(decoded) < this.scoreUtf8Mojibake(value) ? decoded : value;
+    } catch {
+      return value;
+    }
+  }
+
+  private looksLikeUtf8Mojibake(value: string) {
+    return /[ÃÂÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàâ€šƒ„…†‡ˆ‰Š‹ŒŽ]/.test(value)
+      || /[\u0080-\u009F]/.test(value);
+  }
+
+  private scoreUtf8Mojibake(value: string) {
+    const markers = value.match(/[ÃÂÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàâ€šƒ„…†‡ˆ‰Š‹ŒŽ]|[\u0080-\u009F]|�/g);
+    return markers?.length ?? 0;
   }
 
   private escapeHtml(value: string) {

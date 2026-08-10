@@ -1269,6 +1269,29 @@ button {
   height: auto;
 }
 
+.html-document img.document-raster-image {
+  display: block;
+  width: auto !important;
+  max-width: min(100%, var(--image-natural-width, 760px)) !important;
+  max-height: 76vh;
+  height: auto !important;
+  object-fit: contain;
+  margin: 18px auto;
+  image-rendering: -webkit-optimize-contrast;
+  filter: contrast(1.18) saturate(0.92);
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+.html-document img.document-diagram-image {
+  border-radius: 4px;
+}
+
+.html-document img.document-diagram-landscape {
+  width: auto !important;
+  max-width: min(100%, var(--image-natural-width, 720px)) !important;
+}
+
 .html-document img.imported-doc-image {
   display: block;
   width: auto !important;
@@ -1815,30 +1838,37 @@ button {
   border: 1px solid var(--border-medium) !important;
   border-radius: 14px !important;
   padding: 32px 28px !important;
-  margin: 26px 0 !important;
+  margin: 28px -48px !important;
   display: flex !important;
   justify-content: center !important;
   align-items: center !important;
   overflow-x: auto !important;
   box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05), 0 2px 6px -1px rgba(0, 0, 0, 0.02) !important;
-  width: 100% !important;
+  width: calc(100% + 96px) !important;
+  max-width: none !important;
   text-indent: 0 !important;
 }
 
 .mermaid-container svg,
 .mermaid svg {
   max-width: 100% !important;
+  min-width: min(880px, 100%) !important;
   height: auto !important;
   background-color: #ffffff !important;
   font-family: var(--font-sans) !important;
+  overflow: visible !important;
+  shape-rendering: geometricPrecision !important;
+  text-rendering: geometricPrecision !important;
+  -webkit-font-smoothing: antialiased !important;
+  font-smooth: always !important;
 }
 
 /* Cluster Subgraph White Background & Clean Border */
 .mermaid-container .cluster rect,
 .mermaid svg .cluster rect {
   fill: #ffffff !important;
-  stroke: #cbd5e1 !important;
-  stroke-width: 1.5px !important;
+  stroke: #94a3b8 !important;
+  stroke-width: 2px !important;
   rx: 8px !important;
   ry: 8px !important;
 }
@@ -1847,7 +1877,6 @@ button {
 .mermaid svg .cluster .label {
   fill: #4f46e5 !important;
   font-weight: 700 !important;
-  font-size: 14px !important;
 }
 
 /* Nodes Styling - Crisp Modern Contrast */
@@ -1860,8 +1889,8 @@ button {
 .mermaid svg .node polygon,
 .mermaid svg .node path {
   fill: #f8fafc !important;
-  stroke: #6366f1 !important;
-  stroke-width: 1.8px !important;
+  stroke: #312e81 !important;
+  stroke-width: 2.2px !important;
   rx: 8px !important;
   ry: 8px !important;
 }
@@ -1869,36 +1898,49 @@ button {
 .mermaid-container .node .label,
 .mermaid svg .node .label {
   fill: #0f172a !important;
-  font-weight: 600 !important;
-  font-size: 13px !important;
+  font-weight: 700 !important;
 }
 
 /* Arrow Lines & Connections */
 .mermaid-container .edgePath .path,
-.mermaid svg .edgePath .path {
-  stroke: #4f46e5 !important;
-  stroke-width: 2px !important;
+.mermaid svg .edgePath .path,
+.mermaid-container .transition,
+.mermaid svg .transition,
+.mermaid-container .flowchart-link,
+.mermaid svg .flowchart-link,
+.mermaid-container .edge-thickness-normal,
+.mermaid svg .edge-thickness-normal {
+  stroke: #111827 !important;
+  stroke-width: 2.6px !important;
 }
 
 .mermaid-container .marker,
-.mermaid svg .marker {
-  fill: #4f46e5 !important;
-  stroke: #4f46e5 !important;
+.mermaid svg .marker,
+.mermaid-container marker path,
+.mermaid svg marker path {
+  fill: #111827 !important;
+  stroke: #111827 !important;
+  stroke-width: 1.8px !important;
 }
 
 /* Edge Labels (Text on Arrow Lines) */
 .mermaid-container .edgeLabel rect,
 .mermaid svg .edgeLabel rect {
-  fill: #ffffff !important;
-  opacity: 0.95 !important;
+  fill: transparent !important;
+  opacity: 0 !important;
 }
 
 .mermaid-container .edgeLabel span,
 .mermaid svg .edgeLabel span {
-  color: #475569 !important;
-  font-weight: 500 !important;
-  font-size: 12px !important;
+  color: #111827 !important;
+  font-weight: 600 !important;
   text-indent: 0 !important;
+  text-shadow:
+    -2px -2px 0 #ffffff,
+    2px -2px 0 #ffffff,
+    -2px 2px 0 #ffffff,
+    2px 2px 0 #ffffff,
+    0 0 3px #ffffff !important;
 }
 
 /* Reset all text-indent, margin, and text alignment for Mermaid SVG text labels & foreignObjects */
@@ -1928,7 +1970,8 @@ button {
   padding: 0 !important;
   line-height: 1.3 !important;
   color: #0f172a !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
+  text-shadow: 0 0 1px rgba(255, 255, 255, 0.9) !important;
 }
 
 .mermaid-error {

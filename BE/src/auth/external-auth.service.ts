@@ -125,7 +125,20 @@ export class ExternalAuthService {
     const email = this.readString(data, ["email", "user.email"]) ?? fallbackEmail;
     const externalRole = (this.readString(data, ["role", "user.role", "account.role"]) ?? "employee").toLowerCase();
     const name =
-      this.readString(data, ["fullName", "name", "username", "user.fullName", "user.name", "user.username"]) ??
+      this.readString(data, [
+        "fullName",
+        "name",
+        "user.fullName",
+        "user.name",
+        "employee.fullName",
+        "employee.name",
+        "user.employee.fullName",
+        "user.employee.name",
+        "username",
+        "user.username",
+        "employee.username",
+        "user.employee.username"
+      ]) ??
       email;
 
     return {

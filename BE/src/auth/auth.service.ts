@@ -370,6 +370,7 @@ export class AuthService implements OnModuleInit {
       JSON.stringify({
         sub: user.id,
         email: user.email,
+        name: user.name,
         role: user.globalRole,
         externalRole: user.externalRole,
         externalCompanyId: user.externalCompanyId,

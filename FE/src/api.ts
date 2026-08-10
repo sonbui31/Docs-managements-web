@@ -119,10 +119,11 @@ export function mapProject(project: BackendProject): Project {
 
 export function mapDocument(document: BackendDocument): ProjectDocument {
   const fileType = inferFileType(document.sourceFileName);
+  const title = normalizeVietnameseText(document.title);
 
   return {
     id: document.id,
-    title: document.title,
+    title,
     type: document.type,
     owner: document.sourceType === "imported" ? "Imported File" : "BA Lead",
     status: mapDocumentStatus(document.status),
@@ -138,6 +139,54 @@ export function mapDocument(document: BackendDocument): ProjectDocument {
     openCommentsCount: document._count?.comments ?? 0,
     contentHtml: document.htmlContent
   };
+}
+
+function normalizeVietnameseText(str: string): string {
+  if (!str) return "";
+
+  let result = recoverUtf8Mojibake(str).normalize("NFC");
+
+  result = result
+    .replace(/Mò̀\s*Ì\s*rò̀i£ì\s*ng/gi, "Mô hình hệ thống")
+    .replace(/tỉ̀\s*nh\s*nà̀\s*ng/gi, "tính năng")
+    .replace(/quả̀\s*n\s*lý̀/gi, "quản lý")
+    .replace(/tà̀\s*m/gi, "tâm")
+    .replace(/Ä̀\s*aì\s*o/gi, "đào")
+    .replace(/tài£o/gi, "tạo")
+    .replace(/ò̀/g, "ô")
+    .replace(/à̀/g, "à")
+    .replace(/ỉ̀/g, "ỉ")
+    .replace(/ý̀/g, "ý");
+
+  result = result
+    .replace(
+      /([àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴ])[\u0300-\u036F]+/g,
+      "$1"
+    )
+    .replace(/[\u0300-\u036F]/g, "");
+
+  return result.normalize("NFC");
+}
+
+function recoverUtf8Mojibake(value: string): string {
+  if (!looksLikeUtf8Mojibake(value)) return value;
+
+  try {
+    const bytes = Uint8Array.from(value, (char) => char.charCodeAt(0) & 0xff);
+    const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    return scoreUtf8Mojibake(decoded) < scoreUtf8Mojibake(value) ? decoded : value;
+  } catch {
+    return value;
+  }
+}
+
+function looksLikeUtf8Mojibake(value: string): boolean {
+  return /[ÃÂÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàâ€šƒ„…†‡ˆ‰Š‹ŒŽ]/.test(value)
+    || /[\u0080-\u009F]/.test(value);
+}
+
+function scoreUtf8Mojibake(value: string): number {
+  return value.match(/[ÃÂÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàâ€šƒ„…†‡ˆ‰Š‹ŒŽ]|[\u0080-\u009F]|�/g)?.length ?? 0;
 }
 
 export function mapComment(comment: BackendComment): CommentThread {
@@ -256,8 +305,6 @@ export async function createComment(payload: {
   blockId: string;
   selectedText?: string;
   content: string;
-  createdBy?: string;
-  createdByEmail?: string;
 }) {
   const comment = await apiFetch<BackendComment>("/comments", {
     method: "POST",
