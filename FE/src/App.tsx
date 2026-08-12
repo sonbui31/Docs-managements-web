@@ -462,6 +462,11 @@ function App() {
   const [showCommentsPanel, setShowCommentsPanel] = useState<boolean>(true);
   const [fontSize, setFontSize] = useState<"sm" | "md" | "lg">("md");
   const [isZenMode, setIsZenMode] = useState<boolean>(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+
+  function toggleSidebar() {
+    setIsSidebarCollapsed((value) => !value);
+  }
 
   // Interactive Block selection
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
@@ -2733,24 +2738,48 @@ function App() {
   }
 
   return (
-    <main className={isZenMode ? "app-shell zen-mode" : "app-shell"}>
+    <main className={`${isZenMode ? "app-shell zen-mode" : "app-shell"} ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
 
       {/* Sidebar Navigation */}
       <aside className="sidebar">
         <div className="brand">
-          <img src="/logo.png" alt="DocSpace" className="sidebar-logo-img" />
+          <button
+            className="sidebar-logo-button"
+            type="button"
+            title={isSidebarCollapsed ? "Mở rộng thanh menu" : "DocSpace"}
+            aria-label={isSidebarCollapsed ? "Mở rộng thanh menu" : "DocSpace"}
+            data-tooltip="DocSpace"
+            onClick={() => {
+              if (isSidebarCollapsed) toggleSidebar();
+            }}
+          >
+            <img src="/logo.png" alt="DocSpace" className="sidebar-logo-img" />
+          </button>
           <div className="brand-info">
             <strong>DocSpace</strong>
             <small>Quản Lý Tài Liệu BA</small>
           </div>
+          <button
+            className="sidebar-toggle-btn"
+            type="button"
+            title={isSidebarCollapsed ? "Mở rộng menu" : "Thu gọn menu"}
+            aria-label={isSidebarCollapsed ? "Mở rộng menu" : "Thu gọn menu"}
+            aria-expanded={!isSidebarCollapsed}
+            data-tooltip={isSidebarCollapsed ? "Mở rộng menu" : "Thu gọn menu"}
+            onClick={toggleSidebar}
+          >
+            {isSidebarCollapsed ? <PanelRightOpen size={17} /> : <PanelLeftClose size={17} />}
+          </button>
         </div>
 
-        <div>
+        <div className="sidebar-main-nav">
           <div className="nav-section-title">Danh mục</div>
           <nav className="nav-list" aria-label="Project navigation">
             <button
               className={activeTabNav === "dashboard" ? "nav-item active" : "nav-item"}
               type="button"
+              title="Dashboard"
+              data-tooltip="Dashboard"
               onClick={() => setActiveTabNav("dashboard")}
             >
               <div className="nav-item-content">
@@ -2765,6 +2794,8 @@ function App() {
             <button
               className={activeTabNav === "projects" ? "nav-item active" : "nav-item"}
               type="button"
+              title={`Dự án (${isLoadingBackend ? "..." : projectsList.length})`}
+              data-tooltip={`Dự án (${projectsList.length})`}
               onClick={() => setActiveTabNav("projects")}
             >
               <div className="nav-item-content">
@@ -2776,6 +2807,8 @@ function App() {
             <button
               className={activeTabNav === "review" ? "nav-item active" : "nav-item"}
               type="button"
+              title="Ghi chú & Review"
+              data-tooltip="Ghi chú & Review"
               onClick={() => setActiveTabNav("review")}
             >
               <div className="nav-item-content">
@@ -2789,6 +2822,8 @@ function App() {
               <button
                 className={activeTabNav === "admin" ? "nav-item active" : "nav-item"}
                 type="button"
+                title="Quản trị user"
+                data-tooltip="Quản trị user"
                 onClick={() => setActiveTabNav("admin")}
               >
                 <div className="nav-item-content">
@@ -2800,7 +2835,7 @@ function App() {
           </nav>
         </div>
 
-        <div>
+        <div className="sidebar-projects-section">
           <div className="nav-section-title">
             <span>Danh sách Dự án</span>
             <button
@@ -2863,11 +2898,20 @@ function App() {
 
         <div className="sidebar-footer">
           <div className="user-profile">
-            <img
-              src={currentUser.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80"}
-              alt={currentUser.name}
-              style={{ width: 30, height: 30, borderRadius: "50%", objectFit: "cover", border: "1.5px solid var(--accent-primary)", flexShrink: 0 }}
-            />
+            <button
+              className="sidebar-avatar-logout"
+              type="button"
+              title={isSidebarCollapsed ? "Đăng xuất khỏi tài khoản" : currentUser.name}
+              aria-label={isSidebarCollapsed ? "Đăng xuất khỏi tài khoản" : currentUser.name}
+              onClick={() => {
+                if (isSidebarCollapsed) setIsLogoutConfirmOpen(true);
+              }}
+            >
+              <img
+                src={currentUser.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80"}
+                alt={currentUser.name}
+              />
+            </button>
             <div className="user-info" title={`${currentUser.name} (${currentUser.role === "ADMIN" ? "Admin" : currentUser.role === "MANAGER" ? "Manager" : "Nhân viên"})`}>
               <strong title={currentUser.name}>{currentUser.name}</strong>
               <small style={{ color: "var(--accent-primary)", fontWeight: 500 }}>
