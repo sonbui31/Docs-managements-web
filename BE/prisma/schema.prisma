@@ -11,6 +11,7 @@ enum DocumentStatus {
   DRAFT
   IN_REVIEW
   CHANGES_REQUESTED
+  DEPLOYED
   APPROVED
   SIGNED_OFF
   ARCHIVED
@@ -85,6 +86,8 @@ model Document {
   sourceFileName  String?
   externalCompanyId    String?
   externalDepartmentId String?
+  createdBy       String?
+  createdByEmail  String?
   versions        DocumentVersion[]
   comments        Comment[]
   mediaAssets     MediaAsset[]

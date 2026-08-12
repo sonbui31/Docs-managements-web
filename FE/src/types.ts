@@ -1,4 +1,4 @@
-export type DocumentStatus = "Draft" | "Approved";
+export type DocumentStatus = "Draft" | "Triển khai";
 
 export type Project = {
   id: string;
@@ -25,6 +25,7 @@ export type ProjectDocument = {
   status: DocumentStatus;
   version: string;
   updatedAt: string;
+  createdAt?: string;
   projectId?: string;
   externalCompanyId?: string | null;
   externalDepartmentId?: string | null;
@@ -71,6 +72,7 @@ export type ProjectDashboard = {
     title: string;
     type: string;
     status: string;
+    createdAt?: string;
     updatedAt: string;
     _count?: { comments?: number; versions?: number };
   }>;
@@ -84,7 +86,7 @@ export type RoleDashboard = {
     projects: number;
     documents: number;
     draftDocuments: number;
-    approvedDocuments: number;
+    deployedDocuments: number;
     openComments: number;
     openCommentThreads: number;
     resolvedComments: number;
@@ -93,9 +95,10 @@ export type RoleDashboard = {
     tags: number;
     traces: number;
     updatedToday: number;
+    documentsCreatedThisMonth?: number;
+    documentsUpdatedThisMonth?: number;
     importJobs: number;
     projectsWithOpenComments: number;
-    pendingReviewDocuments: number;
     versions: number;
   };
   projectBreakdown: Array<{
@@ -116,6 +119,7 @@ export type RoleDashboard = {
     type: string;
     status: string;
     currentVersion: string;
+    createdAt?: string;
     updatedAt: string;
     projectId: string;
     projectCode: string;
@@ -188,6 +192,10 @@ export type ActivityLog = {
   entityType?: string | null;
   entityId?: string | null;
   metadata?: Record<string, unknown> | null;
+  actor?: {
+    name?: string | null;
+    email?: string | null;
+  } | null;
   createdAt: string;
 };
 

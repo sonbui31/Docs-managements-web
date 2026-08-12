@@ -145,7 +145,9 @@ export class ImportsService {
           currentVersion: nextVersion,
           htmlContent,
           sourceType: "imported",
-          sourceFileName: file.originalname
+          sourceFileName: file.originalname,
+          createdBy: user.name || user.email,
+          createdByEmail: user.email
         },
         include: { _count: { select: { comments: { where: { status: "OPEN" } }, versions: true } } }
       });

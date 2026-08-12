@@ -36,13 +36,16 @@ type BackendDocument = {
   projectId: string;
   title: string;
   type: string;
-  status: "DRAFT" | "IN_REVIEW" | "CHANGES_REQUESTED" | "APPROVED" | "SIGNED_OFF" | "ARCHIVED";
+  status: "DRAFT" | "IN_REVIEW" | "CHANGES_REQUESTED" | "DEPLOYED" | "APPROVED" | "SIGNED_OFF" | "ARCHIVED";
   currentVersion: string;
   htmlContent: string;
   sourceFileName?: string | null;
   sourceType?: string;
   externalCompanyId?: string | null;
   externalDepartmentId?: string | null;
+  createdBy?: string | null;
+  createdByEmail?: string | null;
+  createdAt: string;
   updatedAt: string;
   _count?: {
     comments?: number;
@@ -134,21 +137,23 @@ export function mapProject(project: BackendProject): Project {
 export function mapDocument(document: BackendDocument): ProjectDocument {
   const fileType = inferFileType(document.sourceFileName);
   const title = normalizeVietnameseText(document.title);
+  const importOwner = document.createdBy?.trim() || document.createdByEmail?.trim();
 
   return {
     id: document.id,
     title,
     type: document.type,
-    owner: document.sourceType === "imported" ? "Imported File" : "BA Lead",
+    owner: importOwner || (document.sourceType === "imported" ? "Người import tài liệu" : "Người tạo tài liệu"),
     status: mapDocumentStatus(document.status),
     version: document.currentVersion,
+    createdAt: document.createdAt,
     updatedAt: new Date(document.updatedAt).toLocaleDateString("vi-VN"),
     projectId: document.projectId,
     externalCompanyId: document.externalCompanyId ?? null,
     externalDepartmentId: document.externalDepartmentId ?? null,
     fileType,
     size: document.sourceFileName ? "Imported" : "Manual",
-    progress: document.status === "APPROVED" || document.status === "SIGNED_OFF" ? 100 : 25,
+    progress: document.status === "DRAFT" ? 25 : 100,
     reqCount: countRequirements(document.htmlContent),
     openCommentsCount: document._count?.comments ?? 0,
     contentHtml: document.htmlContent
@@ -478,13 +483,11 @@ function filenameFromDisposition(disposition: string | null) {
 }
 
 function mapDocumentStatus(status: BackendDocument["status"]): DocumentStatus {
-  if (status === "APPROVED" || status === "SIGNED_OFF") return "Approved";
-  return "Draft";
+  return status === "DRAFT" || status === "IN_REVIEW" || status === "CHANGES_REQUESTED" ? "Draft" : "Triển khai";
 }
 
 function toBackendDocumentStatus(status: DocumentStatus): BackendDocument["status"] {
-  if (status === "Approved") return "APPROVED";
-  return "DRAFT";
+  return status === "Triển khai" ? "DEPLOYED" : "DRAFT";
 }
 
 function inferFileType(fileName?: string | null): ProjectDocument["fileType"] {

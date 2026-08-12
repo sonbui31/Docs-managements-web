@@ -34,6 +34,7 @@ export class CollaborationService {
             type: true,
             status: true,
             currentVersion: true,
+            createdAt: true,
             updatedAt: true,
             _count: { select: { comments: { where: { status: "OPEN", parentId: null } }, versions: true } }
           }
@@ -81,6 +82,7 @@ export class CollaborationService {
             { entityType: "Document", entityId: { in: documentIds } }
           ]
         },
+        include: { actor: { select: { name: true, email: true } } },
         orderBy: { createdAt: "desc" },
         take: 12
       }),
@@ -101,10 +103,11 @@ export class CollaborationService {
         projectName: project.name
       }))
     );
-    const approvedDocuments = documents.filter((document) => document.status === "APPROVED" || document.status === "SIGNED_OFF").length;
-    const draftDocuments = documents.length - approvedDocuments;
-    const pendingReviewDocuments = documents.filter((document) =>
+    const draftDocuments = documents.filter((document) =>
       ["DRAFT", "IN_REVIEW", "CHANGES_REQUESTED"].includes(document.status)
+    ).length;
+    const deployedDocuments = documents.filter((document) =>
+      ["DEPLOYED", "APPROVED", "SIGNED_OFF", "ARCHIVED"].includes(document.status)
     ).length;
     const projectsWithOpenComments = projects.filter((project) => {
       const projectOpenComments = project.documents.reduce((total, document) => total + (document._count?.comments ?? 0), 0);
@@ -114,6 +117,11 @@ export class CollaborationService {
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
     const updatedToday = documents.filter((document) => document.updatedAt >= startOfToday).length;
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+    const documentsCreatedThisMonth = documents.filter((document) => document.createdAt >= startOfMonth).length;
+    const documentsUpdatedThisMonth = documents.filter((document) => document.updatedAt >= startOfMonth).length;
 
     return {
       role: user.role,
@@ -122,7 +130,7 @@ export class CollaborationService {
         projects: projects.length,
         documents: documents.length,
         draftDocuments,
-        approvedDocuments,
+        deployedDocuments,
         openComments,
         openCommentThreads: openComments,
         resolvedComments,
@@ -131,9 +139,10 @@ export class CollaborationService {
         tags,
         traces,
         updatedToday,
+        documentsCreatedThisMonth,
+        documentsUpdatedThisMonth,
         importJobs: projects.reduce((total, project) => total + project._count.importJobs, 0),
         projectsWithOpenComments,
-        pendingReviewDocuments,
         versions: documents.reduce((total, document) => total + (document._count?.versions ?? 0), 0)
       },
       projectBreakdown: projects.map((project) => ({
@@ -162,7 +171,7 @@ export class CollaborationService {
       this.prisma.document.findMany({
         where: { projectId },
         orderBy: { updatedAt: "desc" },
-        select: { id: true, title: true, type: true, status: true, updatedAt: true, _count: { select: { comments: true, versions: true } } }
+        select: { id: true, title: true, type: true, status: true, createdAt: true, updatedAt: true, _count: { select: { comments: true, versions: true } } }
       }),
       this.prisma.comment.count({ where: { document: { projectId }, status: "OPEN", parentId: null } }),
       this.prisma.comment.count({ where: { document: { projectId }, status: "RESOLVED", parentId: null } }),
@@ -399,6 +408,7 @@ export class CollaborationService {
           { metadata: { path: ["projectId"], equals: projectId } }
         ]
       },
+      include: { actor: { select: { name: true, email: true } } },
       orderBy: { createdAt: "desc" },
       take
     });

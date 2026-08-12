@@ -61,7 +61,9 @@ export class DocumentsService {
           sourceType: dto.sourceType ?? "manual",
           sourceFileName: dto.sourceFileName,
           externalCompanyId: project?.externalCompanyId ?? user.externalCompanyId ?? null,
-          externalDepartmentId: project?.externalDepartmentId ?? user.externalDepartmentId ?? null
+          externalDepartmentId: project?.externalDepartmentId ?? user.externalDepartmentId ?? null,
+          createdBy: user.name || user.email,
+          createdByEmail: user.email
         }
       });
 

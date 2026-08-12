@@ -1,7 +1,6 @@
 import {
   Activity as ActivityIcon,
   AlertTriangle,
-  Archive,
   BarChart2,
   Bell,
   BookOpen,
@@ -47,7 +46,7 @@ import {
   Users,
   X
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   createComment,
   createDocument,
@@ -244,14 +243,14 @@ const DEFAULT_DOC_CONTENT = `
         <td>Single Source of Truth</td>
         <td>Cung cấp dữ liệu chuẩn cho cả team tham chiếu.</td>
         <td><span class="badge high">Cao</span></td>
-        <td><span class="status-pill approved"><span class="status-dot"></span>Approved</span></td>
+        <td><span class="status-pill deployed"><span class="status-dot"></span>Triển khai</span></td>
       </tr>
       <tr>
         <td><code>REQ-002</code></td>
         <td>Import & Xem File</td>
         <td>Đọc và hiển thị nội dung tệp Markdown/Word/PDF.</td>
         <td><span class="badge high">Cao</span></td>
-        <td><span class="status-pill approved"><span class="status-dot"></span>Approved</span></td>
+        <td><span class="status-pill deployed"><span class="status-dot"></span>Triển khai</span></td>
       </tr>
       <tr>
         <td><code>REQ-003</code></td>
@@ -285,7 +284,7 @@ const DEFAULT_DOC_CONTENT = `
       C -->|Sơ Đồ Mermaid| E[🎨 Visual Mermaid Diagram SVG]
       D --> F[💬 Team Đọc, Gắn REQ Tag & Comment Review]
       E --> F
-      F --> G[✅ Phê Duyệt & Lưu Kho Approved]
+      F --> G[✅ Lưu trữ & Quản lý tài liệu]
 
       style A fill:#e0e7ff,stroke:#4f46e5,stroke-width:2px;
       style D fill:#fef3c7,stroke:#d97706,stroke-width:2px;
@@ -419,7 +418,7 @@ function App() {
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>(projectsList[0]?.id ?? "");
   const [selectedDocumentId, setSelectedDocumentId] = useState<string>(documentsList[0]?.id ?? "");
-  const [activeTabNav, setActiveTabNav] = useState<"dashboard" | "projects" | "review" | "vault" | "admin">("dashboard");
+  const [activeTabNav, setActiveTabNav] = useState<"dashboard" | "projects" | "review" | "admin">("dashboard");
   
   // Left Panel Tab Mode ("docs" vs "toc")
   const [leftPanelMode, setLeftPanelMode] = useState<"docs" | "toc">("docs");
@@ -484,7 +483,7 @@ function App() {
 
   // Comments state
   const [commentsList, setCommentsList] = useState<CommentThread[]>(initialComments);
-  const [commentFilter, setCommentFilter] = useState<"all" | "open" | "withReplies" | "resolved" | "mine">("all");
+  const [commentFilter, setCommentFilter] = useState<"all" | "open" | "resolved" | "mine">("all");
   const [collabPanelTab, setCollabPanelTab] = useState<"comments" | "diff" | "tags" | "trace" | "activity" | "notifications">("comments");
   const [projectDashboard, setProjectDashboard] = useState<ProjectDashboard | null>(null);
   const [roleDashboard, setRoleDashboard] = useState<RoleDashboard | null>(null);
@@ -570,6 +569,7 @@ function App() {
     title: "",
     message: ""
   });
+  const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState<boolean>(false);
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -1282,9 +1282,6 @@ function App() {
 
   // Documents for current scope
   const projectDocuments = useMemo(() => {
-    if (activeTabNav === "vault") {
-      return documentsList.filter((doc) => doc.status === "Approved");
-    }
     if (activeTabNav === "review") {
       return documentsList.filter((doc) => {
         const openCount = documentCommentCounts[doc.id] ?? doc.openCommentsCount ?? 0;
@@ -1315,7 +1312,7 @@ function App() {
   const selectedDocument = useMemo(() => {
     const selected = documentsList.find((doc) => doc.id === selectedDocumentId);
     const selectedFitsCurrentScope =
-      activeTabNav !== "review" && activeTabNav !== "vault"
+      activeTabNav !== "review"
         ? true
         : Boolean(selected && projectDocuments.some((document) => document.id === selected.id));
     const doc = selectedFitsCurrentScope
@@ -1358,7 +1355,6 @@ function App() {
       .filter((comment) => !comment.parentId)
       .filter((comment) => {
         if (commentFilter === "open") return comment.status === "open";
-        if (commentFilter === "withReplies") return (repliesByParent.get(comment.id) ?? []).length > 0;
         if (commentFilter === "resolved") return comment.status === "resolved";
         if (commentFilter === "mine") return comment.authorEmail === currentUser?.email || comment.author === currentUser?.name;
         return true;
@@ -1586,6 +1582,28 @@ function App() {
     }
   }
 
+  async function handleDeploySelectedDocument() {
+    if (selectedDocument.id === "empty-document" || selectedDocument.status === "Triển khai") return;
+
+    try {
+      const updatedDocument = await updateDocument(selectedDocument.id, {
+        status: "Triển khai"
+      });
+      setDocumentsList((prev) =>
+        prev.map((document) =>
+          document.id === updatedDocument.id
+            ? { ...document, ...updatedDocument }
+            : document
+        )
+      );
+      addToast("success", "Đã chuyển sang Triển khai", `Tài liệu "${updatedDocument.title}" đã được cập nhật trạng thái.`);
+      void loadRoleDashboard();
+    } catch (error) {
+      console.error("Deploy document error:", error);
+      addToast("error", "Không chuyển được trạng thái", "BE chưa lưu được trạng thái Triển khai.");
+    }
+  }
+
   // Request Document Deletion (Opens Confirmation Modal)
   function requestDeleteDocument(docId: string) {
     const doc = documentsList.find((d) => d.id === docId);
@@ -1664,6 +1682,13 @@ function App() {
     }
 
     setConfirmDeleteModal({ isOpen: false, type: null, id: null, title: "", message: "" });
+  }
+
+  async function executeLogout() {
+    setIsLogoutConfirmOpen(false);
+    await logout();
+    setCurrentUser(null);
+    addToast("info", "Đã đăng xuất", "Hẹn gặp lại bạn!");
   }
 
   // Handle File Import with REAL text reading for pure document viewing & commenting
@@ -1994,6 +2019,11 @@ function App() {
         setConfirmDeleteModal({ isOpen: false, type: null, id: null, title: "", message: "" });
         return;
       }
+      if (isLogoutConfirmOpen) {
+        e.preventDefault();
+        setIsLogoutConfirmOpen(false);
+        return;
+      }
       if (isShareModalOpen) {
         e.preventDefault();
         setIsShareModalOpen(false);
@@ -2049,6 +2079,7 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     confirmDeleteModal.isOpen,
+    isLogoutConfirmOpen,
     editingCommentId,
     isActionsDropdownOpen,
     isCreateDocModalOpen,
@@ -2409,10 +2440,6 @@ function App() {
     );
   }, [documentCommentCounts, documentsList]);
 
-  const approvedDocsTotalCount = useMemo(() => {
-    return documentsList.filter((d) => d.status === "Approved").length;
-  }, [documentsList]);
-
   const docOpenCommentsCount = useMemo(() => {
     return documentCommentCounts[selectedDocument.id] ?? selectedDocument.openCommentsCount ?? 0;
   }, [documentCommentCounts, selectedDocument]);
@@ -2462,7 +2489,7 @@ function App() {
         ["Comment mở", totals?.openComments ?? openCommentsTotalCount, MessageSquareText, "amber", "Cần trao đổi & xử lý"],
         ["Comment của tôi", totals?.myOpenComments ?? 0, UserCheck, "indigo", "Do bạn khởi tạo/phản hồi"],
         ["Thông báo mới", totals?.unreadNotifications ?? 0, Bell, "violet", "Cập nhật cần chú ý"],
-        ["Đã approved", totals?.approvedDocuments ?? approvedDocsTotalCount, Archive, "sky", "Kho tài liệu chính thức"],
+        ["Triển khai", totals?.deployedDocuments ?? documentsList.filter((doc) => doc.status === "Triển khai").length, File, "sky", "Tài liệu đã chuyển triển khai"],
         ["Phiên bản", totals?.versions ?? 0, Layers, "rose", "Lịch sử cập nhật"]
       ] as const;
     }
@@ -2473,8 +2500,214 @@ function App() {
       ["Cần xử lý", totals?.openComments ?? openCommentsTotalCount, MessageSquareText, "amber", "Comment chưa hoàn thành"],
       ["Luồng đang mở", totals?.openCommentThreads ?? totals?.openComments ?? openCommentsTotalCount, Clock, "violet", "Trao đổi chưa hoàn thành"],
       ["Dự án có trao đổi", totals?.projectsWithOpenComments ?? 0, MessageSquarePlus, "rose", "Có comment đang mở"],
-      ["Chờ duyệt", totals?.pendingReviewDocuments ?? totals?.draftDocuments ?? 0, FileCheck2, "sky", "Tài liệu cần quản lý xem"]
+      ["Triển khai", totals?.deployedDocuments ?? documentsList.filter((doc) => doc.status === "Triển khai").length, UploadCloud, "sky", "Tài liệu đã chuyển triển khai"]
     ] as const;
+  }
+
+  function dashboardChartData() {
+    const totals = roleDashboard?.totals;
+    const projectCount = totals?.projects ?? projectsList.length;
+    const totalDocuments = totals?.documents ?? documentsList.length;
+    const draftDocuments = totals?.draftDocuments ?? documentsList.filter((doc) => doc.status === "Draft").length;
+    const deployedDocuments = totals?.deployedDocuments ?? documentsList.filter((doc) => doc.status === "Triển khai").length;
+    const otherDocuments = Math.max(totalDocuments - draftDocuments - deployedDocuments, 0);
+    const maxDocumentBucket = Math.max(draftDocuments, deployedDocuments, otherDocuments, 1);
+    const deploymentRate = totalDocuments ? Math.round((deployedDocuments / totalDocuments) * 100) : 0;
+
+    return {
+      projectCount,
+      totalDocuments,
+      draftDocuments,
+      deployedDocuments,
+      otherDocuments,
+      maxDocumentBucket,
+      deploymentRate,
+      openComments: totals?.openComments ?? openCommentsTotalCount,
+      openThreads: totals?.openCommentThreads ?? totals?.openComments ?? openCommentsTotalCount,
+      projectsWithOpenComments: totals?.projectsWithOpenComments ?? projectsList.filter((project) => getProjectOpenCommentsCount(project.id) > 0).length,
+      versions: totals?.versions ?? 0,
+      importJobs: totals?.importJobs ?? 0
+    };
+  }
+
+  function dashboardAttentionRows() {
+    const projects = roleDashboard?.projectBreakdown ?? projectsList.map((project) => ({
+      id: project.id,
+      code: project.code,
+      name: project.name,
+      client: project.client,
+      documents: documentsList.filter((doc) => doc.projectId === project.id).length,
+      openComments: getProjectOpenCommentsCount(project.id),
+      tags: 0,
+      traces: 0,
+      members: 0,
+      updatedAt: ""
+    }));
+
+    return projects
+      .map((project) => {
+        const projectDocs = documentsList.filter((doc) => doc.projectId === project.id);
+        const draftDocuments = projectDocs.filter((doc) => doc.status === "Draft").length;
+        const deployedDocuments = projectDocs.filter((doc) => doc.status === "Triển khai").length;
+        const openComments = project.openComments ?? getProjectOpenCommentsCount(project.id);
+        const attentionScore = openComments * 3 + draftDocuments * 2 + (project.documents === 0 ? 1 : 0);
+
+        return {
+          ...project,
+          draftDocuments,
+          deployedDocuments,
+          openComments,
+          attentionScore,
+          signal: openComments > 0 ? "Đang trao đổi" : draftDocuments > 0 ? "Còn Draft" : "Ổn định"
+        };
+      })
+      .sort((first, second) => second.attentionScore - first.attentionScore || second.openComments - first.openComments || second.draftDocuments - first.draftDocuments);
+  }
+
+  function parseDashboardDate(value?: string | Date | null) {
+    if (!value) return null;
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  function isSameMonth(date: Date | null) {
+    if (!date) return false;
+    const now = new Date();
+    return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+  }
+
+  function relativeDashboardTime(value?: string | Date | null) {
+    const date = parseDashboardDate(value);
+    if (!date) return "Chưa có cập nhật";
+    const diffMs = Date.now() - date.getTime();
+    const minutes = Math.max(Math.floor(diffMs / 60000), 0);
+    if (minutes < 1) return "Vừa xong";
+    if (minutes < 60) return `${minutes} phút trước`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} giờ trước`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days} ngày trước`;
+    return date.toLocaleDateString("vi-VN");
+  }
+
+  function dashboardDocumentsSource() {
+    const recent = roleDashboard?.recentDocuments ?? [];
+    if (recent.length > 0) {
+      return recent.map((document) => ({
+        id: document.id,
+        title: normalizeVietnameseText(document.title),
+        type: document.type,
+        projectId: document.projectId,
+        projectCode: document.projectCode,
+        projectName: document.projectName,
+        version: document.currentVersion,
+        createdAt: document.createdAt,
+        updatedAt: document.updatedAt
+      }));
+    }
+
+    return documentsList.map((document) => {
+      const project = projectsList.find((item) => item.id === document.projectId);
+      return {
+        id: document.id,
+        title: normalizeVietnameseText(document.title),
+        type: document.type,
+        projectId: document.projectId ?? "",
+        projectCode: project?.code ?? "",
+        projectName: project?.name ?? "",
+        version: document.version,
+        createdAt: document.createdAt,
+        updatedAt: document.updatedAt
+      };
+    });
+  }
+
+  function executiveDashboardData() {
+    const totals = roleDashboard?.totals;
+    const projects = roleDashboard?.projectBreakdown ?? projectsList.map((project) => ({
+      id: project.id,
+      code: project.code,
+      name: project.name,
+      client: project.client,
+      documents: documentsList.filter((doc) => doc.projectId === project.id).length,
+      openComments: getProjectOpenCommentsCount(project.id),
+      tags: 0,
+      traces: 0,
+      members: 0,
+      updatedAt: ""
+    }));
+    const documents = dashboardDocumentsSource();
+    const projectCount = totals?.projects ?? projects.length;
+    const totalDocuments = totals?.documents ?? documentsList.length;
+    const activeProjects = projects.filter((project) => {
+      const updatedAt = parseDashboardDate(project.updatedAt);
+      return project.openComments > 0 || isSameMonth(updatedAt);
+    }).length;
+    const createdThisMonth = totals?.documentsCreatedThisMonth ?? documents.filter((document) => isSameMonth(parseDashboardDate(document.createdAt))).length;
+    const updatedThisMonth = totals?.documentsUpdatedThisMonth ?? documents.filter((document) => isSameMonth(parseDashboardDate(document.updatedAt))).length;
+    const maxProjectDocuments = Math.max(...projects.map((project) => project.documents), 1);
+
+    const projectRows = [...projects]
+      .sort((first, second) => second.documents - first.documents || new Date(String(second.updatedAt)).getTime() - new Date(String(first.updatedAt)).getTime())
+      .map((project) => {
+        const updatedAt = parseDashboardDate(project.updatedAt);
+        const inactiveDays = updatedAt ? Math.max(Math.floor((Date.now() - updatedAt.getTime()) / 86400000), 0) : null;
+        return {
+          ...project,
+          inactiveDays,
+          width: Math.max((project.documents / maxProjectDocuments) * 100, project.documents > 0 ? 8 : 0)
+        };
+      });
+
+    const recentDocuments = [...documents]
+      .sort((first, second) => (parseDashboardDate(second.updatedAt)?.getTime() ?? 0) - (parseDashboardDate(first.updatedAt)?.getTime() ?? 0))
+      .slice(0, 6);
+
+    const recentActivity = (roleDashboard?.recentActivity ?? []).slice(0, 8);
+    const activitySeries = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date();
+      date.setDate(date.getDate() - (6 - index));
+      date.setHours(0, 0, 0, 0);
+      const next = new Date(date);
+      next.setDate(date.getDate() + 1);
+      const activityCount = recentActivity.filter((item) => {
+        const createdAt = parseDashboardDate(item.createdAt);
+        return createdAt ? createdAt >= date && createdAt < next : false;
+      }).length;
+      const documentCount = documents.filter((document) => {
+        const updatedAt = parseDashboardDate(document.updatedAt);
+        return updatedAt ? updatedAt >= date && updatedAt < next : false;
+      }).length;
+
+      return {
+        label: date.toLocaleDateString("vi-VN", { weekday: "short" }).replace("Th ", "T"),
+        value: activityCount + documentCount
+      };
+    });
+    const maxActivity = Math.max(...activitySeries.map((item) => item.value), 1);
+
+    return {
+      projectCount,
+      activeProjects,
+      totalDocuments,
+      createdThisMonth,
+      updatedThisMonth,
+      projectRows,
+      recentDocuments,
+      recentActivity,
+      activitySeries,
+      maxActivity
+    };
+  }
+
+  function activityDashboardText(log: ActivityLog) {
+    const metadata = log.metadata ?? {};
+    const title = typeof metadata.title === "string" ? metadata.title : undefined;
+    const projectName = typeof metadata.name === "string" ? metadata.name : undefined;
+    const projectCode = typeof metadata.code === "string" ? metadata.code : undefined;
+    const actor = log.actor?.name ?? log.actor?.email ?? "Người dùng";
+    const target = title ?? projectName ?? projectCode ?? "tài liệu";
+    return `${actor} ${activityLabel(log.action).toLowerCase()} ${normalizeVietnameseText(target)}`;
   }
 
   // Compute grid layout class name
@@ -2550,18 +2783,6 @@ function App() {
                 <span>Ghi chú & Review</span>
               </div>
               <span className="nav-badge">{openCommentsTotalCount}</span>
-            </button>
-
-            <button
-              className={activeTabNav === "vault" ? "nav-item active" : "nav-item"}
-              type="button"
-              onClick={() => setActiveTabNav("vault")}
-            >
-              <div className="nav-item-content">
-                <Archive size={17} />
-                <span>Kho Approved</span>
-              </div>
-              <span className="nav-badge">{approvedDocsTotalCount}</span>
             </button>
 
             {(currentUser.role === "ADMIN" || currentUser.role === "MANAGER") && (
@@ -2658,11 +2879,7 @@ function App() {
                 type="button"
                 className="logout-icon-btn"
                 title="Đăng xuất khỏi tài khoản"
-                onClick={() => {
-                  void logout();
-                  setCurrentUser(null);
-                  addToast("info", "Đã đăng xuất", "Hẹn gặp lại bạn!");
-                }}
+                onClick={() => setIsLogoutConfirmOpen(true)}
               >
                 <LogOut size={15} />
               </button>
@@ -2682,10 +2899,8 @@ function App() {
                 ? `${currentUser.role === "ADMIN" ? "Admin" : currentUser.role === "MANAGER" ? "Manager" : "Nhân viên"} • ${roleDashboard?.scopeLabel ?? "Dashboard"}`
                 : activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
                 ? "Quản trị hệ thống • Users & Permissions"
-                : activeTabNav === "vault"
-                ? "Tài Liệu Đã Duyệt • Approved Vault"
                 : activeTabNav === "review"
-                  ? "Hàng chờ Kiểm duyệt • Ghi chú & Review"
+                  ? "Trao đổi tài liệu • Ghi chú & Review"
                   : `${selectedProject.code} / ${selectedProject.client}`}
             </p>
             <h1>
@@ -2693,10 +2908,8 @@ function App() {
                 ? "Dashboard điều hành"
                 : activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
                 ? "Quản Lý User & Phân Quyền"
-                : activeTabNav === "vault"
-                ? "Kho Tài Liệu Approved"
                 : activeTabNav === "review"
-                  ? "Hàng Chờ Đánh Giá & Ghi Chú"
+                  ? "Trao Đổi & Ghi Chú"
                   : selectedProject.name}
             </h1>
           </div>
@@ -2801,197 +3014,183 @@ function App() {
 
 
         {activeTabNav === "dashboard" ? (
-          <section className="role-dashboard-page">
-            {/* Hero Executive Banner */}
-            <div className="role-dashboard-hero">
-              <div className="hero-content">
-                <span className="hero-live-badge">
-                  <span className="pulse-dot"></span> System Live • Realtime Dashboard
-                </span>
-                <h2>
-                  {currentUser.role === "ADMIN"
-                    ? "Toàn cảnh vận hành & Quản trị tài liệu"
-                    : currentUser.role === "MANAGER"
-                      ? "Tổng quan dự án, tài liệu & thảo luận team"
-                      : "Trung tâm tài liệu & phản hồi cá nhân"}
-                </h2>
-                <p>{roleDashboard?.scopeLabel ?? "Tổng hợp dữ liệu theo phân quyền hệ thống DocSpace."}</p>
+          <section className="role-dashboard-page executive-dashboard">
+            <div className="exec-dashboard-header">
+              <div>
+                <span>Dashboard</span>
+                <h2>Điều hành kho tài liệu</h2>
+                <p>{roleDashboard?.scopeLabel ?? "Tổng hợp theo phạm vi phân quyền."}</p>
               </div>
-              <div className="hero-action-group">
+              <div className="exec-dashboard-actions">
                 {(currentUser.role === "ADMIN" || currentUser.role === "MANAGER") && (
-                  <button className="btn-hero-action primary" type="button" onClick={() => setIsCreateProjectModalOpen(true)}>
+                  <button className="exec-action primary" type="button" onClick={() => setIsCreateProjectModalOpen(true)}>
                     <Plus size={15} /> Tạo dự án mới
                   </button>
                 )}
-                <button className="btn-hero-action glass" type="button" onClick={() => void loadRoleDashboard()}>
+                <button className="exec-action secondary" type="button" onClick={() => void loadRoleDashboard()}>
                   <BarChart2 size={15} /> Làm mới
                 </button>
               </div>
             </div>
 
-            {/* 6 KPI Metric Cards */}
-            <div className="role-dashboard-grid">
-              {roleDashboardMetrics().map(([label, value, Icon, colorTheme, subtext]) => {
-                const MetricIcon = Icon as typeof FileText;
-                return (
-                  <div key={String(label)} className="role-metric-card">
-                    <div className="role-metric-card-top">
-                      <span className="metric-label">{String(label)}</span>
-                      <div className={`role-metric-icon ${colorTheme}`}>
-                        <MetricIcon size={18} />
-                      </div>
-                    </div>
-                    <strong>{String(value)}</strong>
-                    <span className="role-metric-subtext">{subtext}</span>
-                  </div>
-                );
-              })}
+            <div className="exec-kpi-grid">
+              {[
+                ["Tổng Project", executiveDashboardData().projectCount, "Quy mô dự án"],
+                ["Project active", executiveDashboardData().activeProjects, "Còn phát sinh hoạt động"],
+                ["Tổng tài liệu", executiveDashboardData().totalDocuments, "Quy mô kho tài liệu"],
+                ["Mới tháng này", `+${executiveDashboardData().createdThisMonth}`, "Tài liệu vừa bổ sung"],
+                ["Cập nhật tháng này", executiveDashboardData().updatedThisMonth, "Mức độ duy trì"]
+              ].map(([label, value, note]) => (
+                <div className="exec-kpi-card" key={String(label)}>
+                  <strong>{String(value)}</strong>
+                  <span>{String(label)}</span>
+                  <small>{String(note)}</small>
+                </div>
+              ))}
             </div>
 
-            {/* Asymmetric 2-Column Main Layout */}
-            <div className="role-dashboard-columns">
-              {/* Left Column: Projects Overview Table/Cards */}
-              <section className="role-dashboard-panel">
-                <div className="role-panel-header">
-                  <div className="header-left">
-                    <div className="panel-header-icon">
-                      <FolderKanban size={16} />
-                    </div>
-                    <div>
-                      <h3>Danh sách dự án quản lý</h3>
-                      <small style={{ color: "var(--text-muted)", fontSize: "0.76rem" }}>
-                        {currentUser.role === "ADMIN" ? "Tất cả dự án công ty" : currentUser.role === "MANAGER" ? "Dự án phòng/team" : "Dự án bạn tham gia"}
-                      </small>
-                    </div>
+            <div className="exec-main-grid">
+              <section className="exec-panel project-volume">
+                <div className="exec-panel-header">
+                  <div>
+                    <span>Theo Project</span>
+                    <h3>Tài liệu theo Project</h3>
                   </div>
-                  <span className="panel-count-badge">
-                    {(roleDashboard?.projectBreakdown ?? projectsList).length} dự án
-                  </span>
+                  <strong>{executiveDashboardData().projectRows.length} project</strong>
                 </div>
-                <div className="role-project-table">
-                  {(roleDashboard?.projectBreakdown ?? projectsList.map((project) => ({
-                    id: project.id,
-                    code: project.code,
-                    name: project.name,
-                    client: project.client,
-                    documents: documentsList.filter((doc) => doc.projectId === project.id).length,
-                    openComments: getProjectOpenCommentsCount(project.id),
-                    members: 0,
-                    updatedAt: ""
-                  }))).map((project) => (
-                    <button
-                      key={project.id}
-                      type="button"
-                      className="project-dashboard-card"
-                      onClick={() => handleSelectProject(project.id)}
-                    >
-                      <div className="project-card-main">
-                        <div className="project-card-top-row">
-                          <span className="code-chip">{project.code}</span>
-                          <strong>{project.name}</strong>
-                        </div>
-                        <div className="project-card-metrics">
-                          <span className="project-metric-item">
-                            <FileText size={13} /> {project.documents} tài liệu
-                          </span>
-                          <span className="project-metric-item">
-                            <MessageSquareText size={13} /> {project.openComments} comment
-                          </span>
-                        </div>
+                <div className="exec-project-bars">
+                  {executiveDashboardData().projectRows.slice(0, 8).map((project) => (
+                    <button className="exec-project-bar-row" type="button" key={project.id} onClick={() => handleSelectProject(project.id)}>
+                      <div className="project-bar-label">
+                        <strong>{project.name}</strong>
+                        <small>{project.members} thành viên · {relativeDashboardTime(project.updatedAt)}</small>
                       </div>
-                      <ChevronRight size={18} className="project-card-arrow" />
+                      <div className="project-bar-track">
+                        <span style={{ width: `${project.width}%` }}></span>
+                      </div>
+                      <b>{project.documents}</b>
                     </button>
                   ))}
                 </div>
               </section>
 
-              {/* Right Column: Stack of Recent Docs + Activity Feed */}
-              <div className="role-dashboard-right-stack">
-                {/* Panel 2: Recent Documents */}
-                <section className="role-dashboard-panel">
-                  <div className="role-panel-header">
-                    <div className="header-left">
-                      <div className="panel-header-icon">
-                        <FileText size={16} />
-                      </div>
-                      <h3>Tài liệu mới cập nhật</h3>
-                    </div>
-                    <span className="panel-count-badge">
-                      {(roleDashboard?.recentDocuments ?? []).length} file
-                    </span>
+              <section className="exec-panel activity-chart">
+                <div className="exec-panel-header">
+                  <div>
+                    <span>Hoạt động</span>
+                    <h3>Hoạt động tài liệu theo thời gian</h3>
                   </div>
-                  <div className="role-doc-list">
-                    {(roleDashboard?.recentDocuments ?? []).map((document) => (
-                      <button
-                        key={document.id}
-                        type="button"
-                        className="doc-dashboard-row"
-                        onClick={() => {
-                          setSelectedProjectId(document.projectId);
-                          setSelectedDocumentId(document.id);
-                          setActiveTabNav("projects");
-                        }}
-                      >
-                        <div className="doc-row-left">
-                          <div className="doc-row-icon">
-                            <FileText size={16} />
-                          </div>
-                          <div className="doc-row-details">
-                            <strong>{normalizeVietnameseText(document.title)}</strong>
-                            <small>{document.projectCode} • {document.currentVersion}</small>
-                          </div>
-                        </div>
-                        <span className="doc-type-badge">{document.type}</span>
+                  <strong>7 ngày</strong>
+                </div>
+                <div className="exec-activity-bars">
+                  {executiveDashboardData().activitySeries.map((item) => (
+                    <div className="activity-bar-column" key={item.label}>
+                      <div className="activity-bar-track">
+                        <span style={{ height: `${Math.max((item.value / executiveDashboardData().maxActivity) * 100, item.value > 0 ? 8 : 0)}%` }}></span>
+                      </div>
+                      <strong>{item.value}</strong>
+                      <small>{item.label}</small>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+
+            <div className="exec-secondary-grid">
+              <section className="exec-panel recent-projects">
+                <div className="exec-panel-header">
+                  <div>
+                    <span>Project</span>
+                    <h3>Project gần đây</h3>
+                  </div>
+                  <strong>Cập nhật</strong>
+                </div>
+                <div className="exec-compact-list">
+                  {executiveDashboardData().projectRows
+                    .sort((first, second) => (parseDashboardDate(second.updatedAt)?.getTime() ?? 0) - (parseDashboardDate(first.updatedAt)?.getTime() ?? 0))
+                    .slice(0, 5)
+                    .map((project) => (
+                      <button type="button" key={project.id} onClick={() => handleSelectProject(project.id)}>
+                        <span className="ops-code-chip">{project.code}</span>
+                        <strong>{project.name}</strong>
+                        <small>{relativeDashboardTime(project.updatedAt)}</small>
                       </button>
                     ))}
-                    {(roleDashboard?.recentDocuments ?? []).length === 0 && (
-                      <div className="empty-collab-state">Chưa có tài liệu mới trong hệ thống.</div>
-                    )}
-                  </div>
-                </section>
+                </div>
+              </section>
 
-                {/* Panel 3: Live Activity / Notifications */}
-                <section className="role-dashboard-panel">
-                  <div className="role-panel-header">
-                    <div className="header-left">
-                      <div className="panel-header-icon">
-                        {currentUser.role === "EMPLOYEE" ? <Bell size={16} /> : <ActivityIcon size={16} />}
-                      </div>
-                      <h3>{currentUser.role === "EMPLOYEE" ? "Thông báo của tôi" : "Nhật ký hoạt động"}</h3>
-                    </div>
+              <section className="exec-panel recent-docs">
+                <div className="exec-panel-header">
+                  <div>
+                    <span>Tài liệu</span>
+                    <h3>Tài liệu gần đây</h3>
                   </div>
-                  <div className="activity-feed">
-                    {currentUser.role === "EMPLOYEE"
-                      ? (roleDashboard?.notifications ?? []).map((notification) => (
-                        <button
-                          key={notification.id}
-                          type="button"
-                          className={notification.readAt ? "notification-item read" : "notification-item"}
-                          onClick={() => void handleMarkNotificationRead(notification)}
-                        >
-                          <Bell size={14} />
-                          <span>
-                            <strong>{notification.title}</strong>
-                            <small>{notification.message}</small>
-                          </span>
-                        </button>
-                      ))
-                      : (roleDashboard?.recentActivity ?? []).map((log) => (
-                        <div key={log.id} className="activity-item">
-                          <ActivityIcon size={14} className="act-icon" />
-                          <div className="activity-item-content">
-                            <strong>{activityLabel(log.action)}</strong>
-                            <small>{new Date(log.createdAt).toLocaleString("vi-VN")}</small>
-                          </div>
-                        </div>
-                      ))}
-                    {(roleDashboard?.recentActivity ?? []).length === 0 && currentUser.role !== "EMPLOYEE" && (
-                      <div className="empty-collab-state">Chưa ghi nhận nhật ký hoạt động gần đây.</div>
-                    )}
+                  <strong>{executiveDashboardData().recentDocuments.length} file</strong>
+                </div>
+                <div className="exec-compact-list docs">
+                  {executiveDashboardData().recentDocuments.map((document) => (
+                    <button
+                      type="button"
+                      key={document.id}
+                      onClick={() => {
+                        setSelectedProjectId(document.projectId);
+                        setSelectedDocumentId(document.id);
+                        setActiveTabNav("projects");
+                      }}
+                    >
+                      <FileText size={14} />
+                      <strong>{document.title}</strong>
+                      <small>{document.projectCode} · {relativeDashboardTime(document.updatedAt)}</small>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section className="exec-panel quiet-projects">
+                <div className="exec-panel-header">
+                  <div>
+                    <span>Theo dõi</span>
+                    <h3>Project ít hoạt động</h3>
                   </div>
-                </section>
-              </div>
+                  <strong>Không phải rủi ro</strong>
+                </div>
+                <div className="exec-compact-list quiet">
+                  {executiveDashboardData().projectRows
+                    .filter((project) => project.inactiveDays !== null)
+                    .sort((first, second) => (second.inactiveDays ?? 0) - (first.inactiveDays ?? 0))
+                    .slice(0, 4)
+                    .map((project) => (
+                      <button type="button" key={project.id} onClick={() => handleSelectProject(project.id)}>
+                        <span className={(project.inactiveDays ?? 0) >= 30 ? "quiet-dot high" : "quiet-dot"}></span>
+                        <strong>{project.name}</strong>
+                        <small>{project.inactiveDays} ngày không cập nhật</small>
+                      </button>
+                    ))}
+                </div>
+              </section>
             </div>
+
+            <section className="exec-panel activity-feed-panel">
+              <div className="exec-panel-header">
+                <div>
+                  <span>Activity Feed</span>
+                  <h3>Hoạt động gần đây</h3>
+                </div>
+                <strong>{executiveDashboardData().recentActivity.length} hoạt động</strong>
+              </div>
+              <div className="exec-activity-feed">
+                {executiveDashboardData().recentActivity.map((log) => (
+                  <div className="exec-feed-row" key={log.id}>
+                    <time>{parseDashboardDate(log.createdAt)?.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</time>
+                    <strong>{activityDashboardText(log)}</strong>
+                    <span>{relativeDashboardTime(log.createdAt)}</span>
+                  </div>
+                ))}
+                {executiveDashboardData().recentActivity.length === 0 && (
+                  <div className="empty-collab-state">Chưa có hoạt động tài liệu gần đây.</div>
+                )}
+              </div>
+            </section>
           </section>
         ) : activeTabNav === "admin" ? (
           <Suspense fallback={<div className="content-loading">Đang tải quản trị user...</div>}>
@@ -3005,11 +3204,9 @@ function App() {
               <div className="panel-header">
                 <div className="panel-title">
                   <p className="eyebrow">
-                    {activeTabNav === "vault"
-                      ? "Kho Approved"
-                      : activeTabNav === "review"
-                        ? "Hàng chờ Review"
-                        : `Thư viện • ${selectedProject.code}`}
+                    {activeTabNav === "review"
+                      ? "Luồng trao đổi"
+                      : `Thư viện • ${selectedProject.code}`}
                   </p>
                   <h2>{activeTabNav === "review" ? "Luồng review" : "Tài liệu"} ({filteredDocuments.length})</h2>
                 </div>
@@ -3067,7 +3264,7 @@ function App() {
                     </div>
                   ) : (
                     <div className="library-filter-tabs">
-                      {(["All", "Draft", "Approved"] as const).map((tab) => (
+                      {(["All", "Draft", "Triển khai"] as const).map((tab) => (
                         <button
                           key={tab}
                           className={statusFilter === tab ? "tab-btn active" : "tab-btn"}
@@ -3147,7 +3344,7 @@ function App() {
                             </div>
                             <div className="doc-status-col">
                               <span className="version-tag">{doc.version}</span>
-                              <span className={`status-pill ${doc.status.toLowerCase().replace(" ", "")}`}>
+                              <span className={`status-pill ${doc.status === "Triển khai" ? "deployed" : "draft"}`}>
                                 <span className="status-dot" />
                                 {doc.status}
                               </span>
@@ -3248,6 +3445,19 @@ function App() {
                       >
                         <Pencil size={14} /> Sửa thông tin tài liệu
                       </button>
+
+                      {selectedDocument.status !== "Triển khai" && (
+                        <button
+                          type="button"
+                          className="menu-item deploy"
+                          onClick={() => {
+                            setIsActionsDropdownOpen(false);
+                            void handleDeploySelectedDocument();
+                          }}
+                        >
+                          <CheckCircle2 size={14} /> Chuyển sang Triển khai
+                        </button>
+                      )}
 
                       <button
                         type="button"
@@ -3450,7 +3660,6 @@ function App() {
                 {[
                   ["all", "Tất cả"],
                   ["open", "Đang mở"],
-                  ["withReplies", "Có phản hồi"],
                   ["resolved", "Hoàn thành"],
                   ["mine", "Của tôi"]
                 ].map(([id, label]) => (
@@ -4082,7 +4291,7 @@ function App() {
       {/* Modal 4: Edit Existing Document Metadata */}
       {isEditDocModalOpen && editingDoc && (
         <div className="modal-backdrop">
-          <div className="modal-content">
+          <div className="modal-content document-edit-modal">
             <div className="modal-header">
               <div className="modal-title-with-icon">
                 <div className="modal-header-badge">
@@ -4090,7 +4299,7 @@ function App() {
                 </div>
                 <div>
                   <h3>Chỉnh Sửa Thuộc Tính Tài Liệu</h3>
-                  <p className="modal-subtitle">Cập nhật thông tin chi tiết và trạng thái của tài liệu</p>
+                  <p className="modal-subtitle">Cập nhật thông tin lưu trữ, phân loại và trạng thái tài liệu</p>
                 </div>
               </div>
               <button className="icon-btn" type="button" onClick={() => setIsEditDocModalOpen(false)}>
@@ -4098,7 +4307,7 @@ function App() {
               </button>
             </div>
             <div className="modal-body">
-              <div className="form-group project-name-priority">
+              <div className="form-group project-name-priority document-title-priority">
                 <label>Tên / Tiêu Đề Tài Liệu</label>
                 <input
                   className="form-input"
@@ -4108,12 +4317,12 @@ function App() {
                 />
               </div>
 
-              <div className="form-group-section">
+              <div className="form-group-section document-property-section">
                 <div className="form-section-header">
                   <Layers size={15} /> THÔNG TIN THUỘC TÍNH & PHÂN LOẠI
                 </div>
 
-                <div className="form-row">
+                <div className="document-property-grid">
                   <div className="form-group">
                     <label>Loại Tài Liệu</label>
                     <div className="input-with-icon-wrapper">
@@ -4131,7 +4340,7 @@ function App() {
                   </div>
 
                   <div className="form-group">
-                    <label>Trạng Thái Tài Liệu</label>
+                    <label>Trạng Thái</label>
                     <div className="input-with-icon-wrapper">
                       <CheckCircle2 size={16} className="field-icon" />
                       <select
@@ -4139,23 +4348,24 @@ function App() {
                         value={editDocStatus}
                         onChange={(e) => setEditDocStatus(e.target.value as DocumentStatus)}
                       >
-                        <option value="Draft">Draft (Bản nháp)</option>
-                        <option value="Approved">Approved (Đã duyệt)</option>
+                        <option value="Draft">Draft</option>
+                        <option value="Triển khai">Triển khai</option>
                       </select>
                     </div>
                   </div>
-                </div>
 
-                <div className="form-row">
+                  <small className="form-hint document-status-hint">
+                    Chỉ đổi trạng thái quản lý tài liệu, không có luồng duyệt.
+                  </small>
+
                   <div className="form-group">
-                    <label>Người Phụ Trách (Owner)</label>
+                    <label>Người Import / Phụ Trách</label>
                     <div className="input-with-icon-wrapper">
                       <Users size={16} className="field-icon" />
                       <input
-                        className="form-input"
-                        placeholder="Ví dụ: BA Team, John Doe..."
-                        value={editDocOwner}
-                        onChange={(e) => setEditDocOwner(e.target.value)}
+                        className="form-input document-owner-readonly"
+                        value={editDocOwner || "Người import tài liệu"}
+                        readOnly
                       />
                     </div>
                   </div>
@@ -4183,6 +4393,51 @@ function App() {
               <button className="btn-primary" type="button" onClick={handleSaveEditDocument}>
                 <Pencil size={16} /> Lưu Thay Đổi
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isLogoutConfirmOpen && (
+        <div className="modal-backdrop">
+          <div className="modal-content" style={{ maxWidth: 440 }}>
+            <div className="modal-header" style={{ background: "rgba(37, 99, 235, 0.06)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div className="logout-confirm-icon">
+                  <LogOut size={22} />
+                </div>
+                <h3 style={{ color: "var(--accent-primary)" }}>Xác nhận đăng xuất</h3>
+              </div>
+              <button
+                className="icon-btn"
+                type="button"
+                onClick={() => setIsLogoutConfirmOpen(false)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <p style={{ fontSize: "0.88rem", lineHeight: 1.5, color: "var(--text-primary)" }}>
+                Bạn có chắc muốn đăng xuất khỏi tài khoản <strong>{currentUser.name}</strong> không?
+              </p>
+
+              <div className="modal-footer">
+                <button
+                  className="btn-secondary"
+                  type="button"
+                  onClick={() => setIsLogoutConfirmOpen(false)}
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  className="btn-primary"
+                  type="button"
+                  onClick={() => void executeLogout()}
+                >
+                  <LogOut size={15} /> Đăng xuất
+                </button>
+              </div>
             </div>
           </div>
         </div>
