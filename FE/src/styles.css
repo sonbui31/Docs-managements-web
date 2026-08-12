@@ -9700,7 +9700,7 @@ button {
   --exec-blue: #2563eb;
   --exec-blue-soft: #dbeafe;
   gap: 16px;
-  padding: 18px 20px 24px;
+  padding: 16px 20px 24px;
   background: #f6f8fb;
 }
 
@@ -9757,14 +9757,14 @@ button {
 }
 
 .exec-action.primary {
-  background: var(--exec-blue);
+  background: var(--exec-blue, #2563eb);
   color: #ffffff;
 }
 
 .exec-action.secondary {
-  border: 1px solid var(--exec-line);
+  border: 1px solid var(--exec-line, #dbe4ef);
   background: #ffffff;
-  color: var(--exec-ink);
+  color: var(--exec-ink, #111827);
 }
 
 .exec-kpi-grid {

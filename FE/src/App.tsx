@@ -2958,6 +2958,19 @@ function App() {
             </h1>
           </div>
 
+          {activeTabNav === "dashboard" && (
+            <div className="topbar-actions">
+              {(currentUser.role === "ADMIN" || currentUser.role === "MANAGER") && (
+                <button className="exec-action primary" type="button" onClick={() => setIsCreateProjectModalOpen(true)}>
+                  <Plus size={15} /> Tạo dự án mới
+                </button>
+              )}
+              <button className="exec-action secondary" type="button" onClick={() => void loadRoleDashboard()}>
+                <BarChart2 size={15} /> Làm mới
+              </button>
+            </div>
+          )}
+
           {activeTabNav !== "admin" && activeTabNav !== "dashboard" && (
           <div className="topbar-actions">
             <label className="search-box">
@@ -3059,24 +3072,6 @@ function App() {
 
         {activeTabNav === "dashboard" ? (
           <section className="role-dashboard-page executive-dashboard">
-            <div className="exec-dashboard-header">
-              <div>
-                <span>Dashboard</span>
-                <h2>Điều hành kho tài liệu</h2>
-                <p>{roleDashboard?.scopeLabel ?? "Tổng hợp theo phạm vi phân quyền."}</p>
-              </div>
-              <div className="exec-dashboard-actions">
-                {(currentUser.role === "ADMIN" || currentUser.role === "MANAGER") && (
-                  <button className="exec-action primary" type="button" onClick={() => setIsCreateProjectModalOpen(true)}>
-                    <Plus size={15} /> Tạo dự án mới
-                  </button>
-                )}
-                <button className="exec-action secondary" type="button" onClick={() => void loadRoleDashboard()}>
-                  <BarChart2 size={15} /> Làm mới
-                </button>
-              </div>
-            </div>
-
             <div className="exec-kpi-grid">
               {[
                 ["Tổng Project", executiveDashboardData().projectCount, "Quy mô dự án"],
