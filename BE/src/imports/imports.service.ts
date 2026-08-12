@@ -11,6 +11,7 @@ import pdfParse = require("pdf-parse");
 import sanitizeHtml = require("sanitize-html");
 import * as showdown from "showdown";
 import { AuthenticatedUser } from "../auth/auth.types";
+import { CollaborationService } from "../collaboration/collaboration.service";
 import { DocumentsService } from "../documents/documents.service";
 import { MediaService } from "../media/media.service";
 import { PermissionsService } from "../permissions/permissions.service";
@@ -43,7 +44,8 @@ export class ImportsService {
     private readonly prisma: PrismaService,
     private readonly documentsService: DocumentsService,
     private readonly mediaService: MediaService,
-    private readonly permissions: PermissionsService
+    private readonly permissions: PermissionsService,
+    private readonly collaboration: CollaborationService
   ) {}
 
   async importDocument(file: Express.Multer.File | undefined, dto: ImportDocumentDto, user: AuthenticatedUser) {
@@ -86,6 +88,19 @@ export class ImportsService {
           completedAt: new Date()
         }
       });
+      await this.collaboration.log(
+        user,
+        dto.documentId ? "DOCUMENT_REIMPORTED" : "DOCUMENT_IMPORTED",
+        "Document",
+        document.id,
+        { projectId: dto.projectId, importJobId: importJob.id, sourceFileName: normalizedFile.originalname }
+      );
+      await this.collaboration.notifyDocumentParticipants(
+        document.id,
+        dto.documentId ? "Tài liệu vừa được cập nhật" : "Tài liệu mới được import",
+        `${document.title} từ file ${normalizedFile.originalname}`,
+        user.id
+      );
 
       return document;
     } catch (error) {

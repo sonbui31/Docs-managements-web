@@ -67,6 +67,15 @@ export class ProjectsService {
           }
         });
       }
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: "PROJECT_CREATED",
+          entityType: "Project",
+          entityId: project.id,
+          metadata: { projectId: project.id, code: project.code, name: project.name }
+        }
+      });
       return project;
     });
   }
@@ -83,16 +92,28 @@ export class ProjectsService {
       throw new BadRequestException("No project fields to update");
     }
 
-    return this.prisma.project.update({
-      where: { id },
-      data: {
-        code: dto.code?.trim().toUpperCase(),
-        name: dto.name?.trim(),
-        client: dto.client?.trim(),
-        description: dto.description?.trim(),
-        externalCompanyId: dto.externalCompanyId?.trim(),
-        externalDepartmentId: dto.externalDepartmentId?.trim()
-      }
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.project.update({
+        where: { id },
+        data: {
+          code: dto.code?.trim().toUpperCase(),
+          name: dto.name?.trim(),
+          client: dto.client?.trim(),
+          description: dto.description?.trim(),
+          externalCompanyId: dto.externalCompanyId?.trim(),
+          externalDepartmentId: dto.externalDepartmentId?.trim()
+        }
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: "PROJECT_UPDATED",
+          entityType: "Project",
+          entityId: id,
+          metadata: { projectId: id, code: updated.code, name: updated.name }
+        }
+      });
+      return updated;
     });
   }
 
@@ -108,7 +129,18 @@ export class ProjectsService {
       throw new NotFoundException("Project not found");
     }
 
-    await this.prisma.project.delete({ where: { id } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: "PROJECT_DELETED",
+          entityType: "Project",
+          entityId: id,
+          metadata: { projectId: id }
+        }
+      });
+      await tx.project.delete({ where: { id } });
+    });
     return { ok: true };
   }
 }

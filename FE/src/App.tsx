@@ -1,10 +1,13 @@
 import {
+  Activity as ActivityIcon,
   AlertTriangle,
   Archive,
   BarChart2,
+  Bell,
   BookOpen,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Clock,
   Copy,
@@ -13,11 +16,14 @@ import {
   File,
   FileCheck2,
   FileCode,
+  FileDiff,
   FilePlus,
   FileText,
   FolderKanban,
   FolderPlus,
+  GitBranch,
   Layers,
+  LayoutDashboard,
   ListTree,
   LogOut,
   Maximize2,
@@ -29,10 +35,12 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Pencil,
+  Plus,
   Search,
   Send,
   Share2,
   Sparkles,
+  Tags,
   Trash2,
   UploadCloud,
   UserCheck,
@@ -43,16 +51,31 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, 
 import {
   createComment,
   createDocument,
+  createDocumentFromTemplate,
   createProject,
+  createRequirementTag,
+  createTraceLink,
   deleteComment,
   deleteDocument,
   deleteProject,
+  deleteRequirementTag,
+  deleteTraceLink,
   downloadExport,
   fetchComments,
+  fetchDocumentDiff,
+  fetchDocumentTags,
+  fetchDocumentTemplates,
   fetchDocumentsByProject,
+  fetchNotifications,
+  fetchProjectActivity,
+  fetchProjectDashboard,
   fetchProjects,
+  fetchRoleDashboard,
+  fetchTraceLinks,
   importDocument,
+  markNotificationRead,
   resolveComment,
+  searchProject,
   updateComment,
   updateDocument,
   updateProject
@@ -60,7 +83,23 @@ import {
 import { AuthPage } from "./AuthPage";
 import { clearAuthSession, fetchCurrentUser, getAccessToken, getStoredUser, logout } from "./authApi";
 import { initialComments, documents as initialDocuments, projects as initialProjects } from "./data";
-import type { CommentThread, DocumentStatus, Project, ProjectDocument, ToastMessage, User } from "./types";
+import type {
+  ActivityLog,
+  CommentThread,
+  DocumentStatus,
+  DocumentTemplate,
+  NotificationItem,
+  Project,
+  ProjectDashboard,
+  ProjectDocument,
+  RequirementTag,
+  RoleDashboard,
+  SearchResult,
+  ToastMessage,
+  TraceLink,
+  User,
+  VersionDiff
+} from "./types";
 
 const AdminPanel = lazy(() => import("./AdminPanel").then((module) => ({ default: module.AdminPanel })));
 const ShareAccessModal = lazy(() => import("./ShareAccessModal").then((module) => ({ default: module.ShareAccessModal })));
@@ -380,7 +419,7 @@ function App() {
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>(projectsList[0]?.id ?? "");
   const [selectedDocumentId, setSelectedDocumentId] = useState<string>(documentsList[0]?.id ?? "");
-  const [activeTabNav, setActiveTabNav] = useState<"projects" | "review" | "vault" | "admin">("projects");
+  const [activeTabNav, setActiveTabNav] = useState<"dashboard" | "projects" | "review" | "vault" | "admin">("dashboard");
   
   // Left Panel Tab Mode ("docs" vs "toc")
   const [leftPanelMode, setLeftPanelMode] = useState<"docs" | "toc">("docs");
@@ -445,6 +484,24 @@ function App() {
 
   // Comments state
   const [commentsList, setCommentsList] = useState<CommentThread[]>(initialComments);
+  const [commentFilter, setCommentFilter] = useState<"all" | "open" | "withReplies" | "resolved" | "mine">("all");
+  const [collabPanelTab, setCollabPanelTab] = useState<"comments" | "diff" | "tags" | "trace" | "activity" | "notifications">("comments");
+  const [projectDashboard, setProjectDashboard] = useState<ProjectDashboard | null>(null);
+  const [roleDashboard, setRoleDashboard] = useState<RoleDashboard | null>(null);
+  const [advancedSearchResults, setAdvancedSearchResults] = useState<SearchResult | null>(null);
+  const [isAdvancedSearchOpen, setIsAdvancedSearchOpen] = useState<boolean>(false);
+  const [documentDiff, setDocumentDiff] = useState<VersionDiff | null>(null);
+  const [savedTags, setSavedTags] = useState<RequirementTag[]>([]);
+  const [inferredTags, setInferredTags] = useState<RequirementTag[]>([]);
+  const [traceLinks, setTraceLinks] = useState<TraceLink[]>([]);
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [documentTemplates, setDocumentTemplates] = useState<DocumentTemplate[]>([]);
+  const [newTagCode, setNewTagCode] = useState<string>("");
+  const [newTagKind, setNewTagKind] = useState<string>("REQ");
+  const [newTagLabel, setNewTagLabel] = useState<string>("");
+  const [newTraceSource, setNewTraceSource] = useState<string>("");
+  const [newTraceTarget, setNewTraceTarget] = useState<string>("");
   const [newCommentText, setNewCommentText] = useState<string>("");
   const [isLoadingBackend, setIsLoadingBackend] = useState<boolean>(true);
   const [isBackendConnected, setIsBackendConnected] = useState<boolean>(false);
@@ -587,11 +644,59 @@ function App() {
   }, [currentUser?.role, activeTabNav]);
 
   useEffect(() => {
+    if (activeTabNav !== "projects" || !selectedProjectId) return;
+    const currentDocument = documentsList.find((document) => document.id === selectedDocumentId);
+    if (currentDocument?.projectId === selectedProjectId) return;
+
+    const firstProjectDocument = documentsList.find((document) => document.projectId === selectedProjectId);
+    setSelectedDocumentId(firstProjectDocument?.id ?? "empty-document");
+  }, [activeTabNav, documentsList, selectedDocumentId, selectedProjectId]);
+
+  useEffect(() => {
+    if (activeTabNav !== "review") return;
+    const currentDocumentHasComments = (documentCommentCounts[selectedDocumentId] ?? 0) > 0;
+    if (currentDocumentHasComments) return;
+
+    const firstReviewDocument = documentsList.find((document) => {
+      const openCount = documentCommentCounts[document.id] ?? document.openCommentsCount ?? 0;
+      return openCount > 0;
+    });
+    if (firstReviewDocument?.projectId) setSelectedProjectId(firstReviewDocument.projectId);
+    setSelectedDocumentId(firstReviewDocument?.id ?? "empty-document");
+  }, [activeTabNav, documentCommentCounts, documentsList, selectedDocumentId]);
+
+  useEffect(() => {
     if (!isBackendConnected || !selectedDocumentId || selectedDocumentId === "empty-document") return;
     setSelectedCommentTarget(null);
     setActiveBlockId(null);
     void loadCommentsForDocument(selectedDocumentId);
+    void loadDocumentCollaboration(selectedDocumentId);
   }, [isBackendConnected, selectedDocumentId]);
+
+  useEffect(() => {
+    if (!isBackendConnected || !selectedProjectId) return;
+    void loadProjectCollaboration(selectedProjectId);
+    void loadRoleDashboard();
+    void loadNotifications();
+    void loadTemplates();
+  }, [isBackendConnected, selectedProjectId]);
+
+  useEffect(() => {
+    if (!isBackendConnected || !selectedProjectId || searchQuery.trim().length < 2) {
+      setAdvancedSearchResults(null);
+      setIsAdvancedSearchOpen(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void searchProject(selectedProjectId, searchQuery.trim())
+        .then((results) => {
+          setAdvancedSearchResults(results);
+          setIsAdvancedSearchOpen(true);
+        })
+        .catch((error) => console.error("Cannot search project:", error));
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [isBackendConnected, selectedProjectId, searchQuery]);
 
   async function loadWorkspaceFromBackend(preferredProjectId?: string, preferredDocumentId?: string) {
     setIsLoadingBackend(true);
@@ -661,6 +766,59 @@ function App() {
       );
     } catch (error) {
       console.error("Cannot load comments:", error);
+    }
+  }
+
+  async function loadProjectCollaboration(projectId: string) {
+    try {
+      const [dashboard, traces, activity] = await Promise.all([
+        fetchProjectDashboard(projectId),
+        fetchTraceLinks(projectId),
+        fetchProjectActivity(projectId)
+      ]);
+      setProjectDashboard(dashboard);
+      setTraceLinks(traces);
+      setActivityLogs(activity);
+    } catch (error) {
+      console.error("Cannot load project collaboration:", error);
+    }
+  }
+
+  async function loadRoleDashboard() {
+    try {
+      setRoleDashboard(await fetchRoleDashboard());
+    } catch (error) {
+      console.error("Cannot load role dashboard:", error);
+    }
+  }
+
+  async function loadDocumentCollaboration(documentId: string) {
+    try {
+      const [diff, tagResult] = await Promise.all([
+        fetchDocumentDiff(documentId),
+        fetchDocumentTags(documentId)
+      ]);
+      setDocumentDiff(diff);
+      setSavedTags(tagResult.saved);
+      setInferredTags(tagResult.inferred);
+    } catch (error) {
+      console.error("Cannot load document collaboration:", error);
+    }
+  }
+
+  async function loadNotifications() {
+    try {
+      setNotifications(await fetchNotifications());
+    } catch (error) {
+      console.error("Cannot load notifications:", error);
+    }
+  }
+
+  async function loadTemplates() {
+    try {
+      setDocumentTemplates(await fetchDocumentTemplates());
+    } catch (error) {
+      console.error("Cannot load templates:", error);
     }
   }
 
@@ -1128,10 +1286,13 @@ function App() {
       return documentsList.filter((doc) => doc.status === "Approved");
     }
     if (activeTabNav === "review") {
-      return documentsList.filter((doc) => doc.status === "Draft");
+      return documentsList.filter((doc) => {
+        const openCount = documentCommentCounts[doc.id] ?? doc.openCommentsCount ?? 0;
+        return openCount > 0;
+      });
     }
     return documentsList.filter((doc) => doc.projectId === selectedProjectId);
-  }, [documentsList, selectedProjectId, activeTabNav]);
+  }, [documentsList, documentCommentCounts, selectedProjectId, activeTabNav]);
 
   // Handle project change: auto select first document of new project
   const handleSelectProject = (projectId: string) => {
@@ -1152,13 +1313,20 @@ function App() {
   }
 
   const selectedDocument = useMemo(() => {
-    const doc = documentsList.find((doc) => doc.id === selectedDocumentId) ?? projectDocuments[0] ?? documentsList[0] ?? EMPTY_DOCUMENT;
+    const selected = documentsList.find((doc) => doc.id === selectedDocumentId);
+    const selectedFitsCurrentScope =
+      activeTabNav !== "review" && activeTabNav !== "vault"
+        ? true
+        : Boolean(selected && projectDocuments.some((document) => document.id === selected.id));
+    const doc = selectedFitsCurrentScope
+      ? selected ?? projectDocuments[0] ?? documentsList[0] ?? EMPTY_DOCUMENT
+      : projectDocuments[0] ?? EMPTY_DOCUMENT;
     return {
       ...doc,
       title: normalizeVietnameseText(doc.title),
       contentHtml: normalizeVietnameseText(doc.contentHtml || "")
     };
-  }, [documentsList, selectedDocumentId, projectDocuments]);
+  }, [activeTabNav, documentsList, selectedDocumentId, projectDocuments]);
 
   const importTargetDocuments = useMemo(
     () => documentsList.filter((doc) => doc.projectId === importTargetProjectId),
@@ -1168,14 +1336,14 @@ function App() {
   // Filtered documents list
   const filteredDocuments = useMemo(() => {
     return projectDocuments.filter((doc) => {
-      const matchesStatus = statusFilter === "All" || doc.status === statusFilter;
+      const matchesStatus = activeTabNav === "review" || statusFilter === "All" || doc.status === statusFilter;
       const matchesSearch =
         doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         doc.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
         doc.owner.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesStatus && matchesSearch;
     });
-  }, [projectDocuments, statusFilter, searchQuery]);
+  }, [activeTabNav, projectDocuments, statusFilter, searchQuery]);
 
   // Filtered comments for selected block or document
   const displayedComments = useMemo(() => {
@@ -1188,11 +1356,18 @@ function App() {
 
     return documentComments
       .filter((comment) => !comment.parentId)
+      .filter((comment) => {
+        if (commentFilter === "open") return comment.status === "open";
+        if (commentFilter === "withReplies") return (repliesByParent.get(comment.id) ?? []).length > 0;
+        if (commentFilter === "resolved") return comment.status === "resolved";
+        if (commentFilter === "mine") return comment.authorEmail === currentUser?.email || comment.author === currentUser?.name;
+        return true;
+      })
       .map((comment) => ({
         ...comment,
         replies: repliesByParent.get(comment.id) ?? []
       }));
-  }, [commentsList, selectedDocument.id]);
+  }, [commentsList, selectedDocument.id, commentFilter, currentUser?.email, currentUser?.name]);
 
   useEffect(() => {
     if (!documentContainerRef.current) return;
@@ -1521,6 +1696,8 @@ function App() {
       setSelectedProjectId(targetProject.id);
       setSelectedDocumentId(importedDoc.id);
       setIsImportModalOpen(false);
+      void loadProjectCollaboration(targetProject.id);
+      void loadDocumentCollaboration(importedDoc.id);
 
       addToast(
         "success",
@@ -1544,6 +1721,128 @@ function App() {
     if (extension === "doc" || extension === "docx") return "Đang chuyển Word sang HTML và upload ảnh nhúng lên Cloudinary...";
     if (extension === "md") return "Đang chuyển Markdown sang HTML và lưu vào Neon...";
     return "Đang upload và chuyển đổi tài liệu...";
+  }
+
+  async function handleCreateRequirementTagFromForm() {
+    if (!newTagCode.trim() || !newTagLabel.trim() || selectedDocument.id === "empty-document") {
+      addToast("warning", "Thiếu thông tin tag", "Nhập mã và nhãn truy vết trước khi lưu.");
+      return;
+    }
+    try {
+      const tag = await createRequirementTag(selectedDocument.id, {
+        code: newTagCode,
+        kind: newTagKind,
+        label: newTagLabel,
+        selectedText: selectedCommentTarget?.selectedText
+      });
+      setSavedTags((prev) => [tag, ...prev.filter((item) => item.id !== tag.id && item.code !== tag.code)]);
+      setInferredTags((prev) => prev.filter((item) => item.code !== tag.code));
+      setNewTagCode("");
+      setNewTagLabel("");
+      addToast("success", "Đã gắn tag", `${tag.code} đã được lưu cho tài liệu.`);
+      void loadProjectCollaboration(selectedProject.id);
+    } catch (error) {
+      console.error("Create tag error:", error);
+      addToast("error", "Không lưu được tag", "Kiểm tra quyền chỉnh sửa tài liệu rồi thử lại.");
+    }
+  }
+
+  async function handleAcceptInferredTag(tag: RequirementTag) {
+    try {
+      const saved = await createRequirementTag(selectedDocument.id, {
+        code: tag.code,
+        kind: tag.kind,
+        label: tag.label,
+        selectedText: tag.selectedText ?? undefined
+      });
+      setSavedTags((prev) => [saved, ...prev.filter((item) => item.code !== saved.code)]);
+      setInferredTags((prev) => prev.filter((item) => item.code !== saved.code));
+      addToast("success", "Đã lưu tag suy luận", `${saved.code} đã vào danh sách truy vết.`);
+      void loadProjectCollaboration(selectedProject.id);
+    } catch (error) {
+      console.error("Accept inferred tag error:", error);
+      addToast("error", "Không lưu được tag", "Tag này chưa được lưu vào Neon.");
+    }
+  }
+
+  async function handleDeleteRequirementTag(tagId: string) {
+    try {
+      await deleteRequirementTag(tagId);
+      setSavedTags((prev) => prev.filter((tag) => tag.id !== tagId));
+      addToast("info", "Đã xóa tag", "Tag truy vết đã được gỡ khỏi tài liệu.");
+      void loadProjectCollaboration(selectedProject.id);
+    } catch (error) {
+      console.error("Delete tag error:", error);
+      addToast("error", "Không xóa được tag", "Kiểm tra quyền rồi thử lại.");
+    }
+  }
+
+  async function handleCreateTraceLink() {
+    if (!newTraceSource.trim() || !newTraceTarget.trim()) {
+      addToast("warning", "Thiếu truy vết", "Nhập mã nguồn và mã đích trước khi lưu.");
+      return;
+    }
+    try {
+      const trace = await createTraceLink(selectedProject.id, {
+        sourceDocumentId: selectedDocument.id === "empty-document" ? undefined : selectedDocument.id,
+        targetDocumentId: selectedDocument.id === "empty-document" ? undefined : selectedDocument.id,
+        sourceCode: newTraceSource,
+        sourceLabel: newTraceSource,
+        targetCode: newTraceTarget,
+        targetLabel: newTraceTarget,
+        relation: "traces"
+      });
+      setTraceLinks((prev) => [trace, ...prev]);
+      setNewTraceSource("");
+      setNewTraceTarget("");
+      addToast("success", "Đã thêm truy vết", `${trace.sourceCode} → ${trace.targetCode}`);
+      void loadProjectCollaboration(selectedProject.id);
+    } catch (error) {
+      console.error("Create trace error:", error);
+      addToast("error", "Không tạo được truy vết", "Kiểm tra quyền dự án rồi thử lại.");
+    }
+  }
+
+  async function handleDeleteTraceLink(traceId: string) {
+    try {
+      await deleteTraceLink(traceId);
+      setTraceLinks((prev) => prev.filter((trace) => trace.id !== traceId));
+      addToast("info", "Đã xóa truy vết", "Liên kết truy vết đã được gỡ.");
+      void loadProjectCollaboration(selectedProject.id);
+    } catch (error) {
+      console.error("Delete trace error:", error);
+      addToast("error", "Không xóa được truy vết", "Kiểm tra quyền dự án rồi thử lại.");
+    }
+  }
+
+  async function handleCreateDocumentFromTemplate(template: DocumentTemplate) {
+    const targetTitle = newDocTitle.trim() || template.name;
+    try {
+      const document = await createDocumentFromTemplate(template.id, {
+        projectId: newDocProjectId || selectedProject.id,
+        title: targetTitle,
+        type: newDocType || template.type
+      });
+      setDocumentsList((prev) => [document, ...prev]);
+      setSelectedProjectId(document.projectId || selectedProject.id);
+      setSelectedDocumentId(document.id);
+      setIsCreateDocModalOpen(false);
+      addToast("success", "Đã tạo từ mẫu", `"${document.title}" đã được tạo từ template.`);
+      void loadProjectCollaboration(document.projectId || selectedProject.id);
+    } catch (error) {
+      console.error("Create document from template error:", error);
+      addToast("error", "Không tạo được từ mẫu", "Kiểm tra quyền tạo tài liệu trong dự án.");
+    }
+  }
+
+  async function handleMarkNotificationRead(notification: NotificationItem) {
+    if (notification.readAt) return;
+    try {
+      const updated = await markNotificationRead(notification.id);
+      setNotifications((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+    } catch (error) {
+      console.error("Mark notification read error:", error);
+    }
   }
 
   // Edit Comment Handler
@@ -1578,6 +1877,7 @@ function App() {
       );
       adjustDocumentCommentCount(comment.documentId, -resolvedOpenCount);
       clearActiveCommentHighlight();
+      void loadProjectCollaboration(selectedProject.id);
       addToast("success", "Đã đánh dấu hoàn thành", "Comment này đã được chuyển sang trạng thái hoàn thành.");
     } catch (error) {
       console.error("Resolve comment error:", error);
@@ -1608,6 +1908,7 @@ function App() {
       adjustDocumentCommentCount(newComment.documentId, 1);
       setNewCommentText("");
       clearSelectedCommentTarget();
+      void loadProjectCollaboration(selectedProject.id);
       addToast("success", "Đã thêm nhận xét", "Comment đã được lưu theo đoạn bạn bôi đen.");
     } catch (error) {
       console.error("Create comment error:", error);
@@ -1630,6 +1931,7 @@ function App() {
       adjustDocumentCommentCount(newReply.documentId, 1);
       setReplyText("");
       setReplyingCommentId(null);
+      void loadProjectCollaboration(selectedProject.id);
       addToast("success", "Đã trả lời nhận xét", "Reply đã được lưu vào thread.");
     } catch (error) {
       console.error("Create reply error:", error);
@@ -1944,6 +2246,8 @@ function App() {
   // Extract document headings (h1, h2, h3, h4) to generate Table of Contents (TOC)
   useEffect(() => {
     let isSubscribed = true;
+    let rafId = 0;
+    let timer = 0;
 
     const parseHeadings = () => {
       if (!selectedDocument.id || selectedDocument.id === "empty-document") {
@@ -1951,6 +2255,7 @@ function App() {
         return;
       }
 
+      if (activeTabNav === "dashboard" || activeTabNav === "admin") return;
       if (!documentContainerRef.current) return;
       const container = documentContainerRef.current;
       const headings = container.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5");
@@ -1972,14 +2277,15 @@ function App() {
       }
     };
 
-    parseHeadings();
-    const timer = window.setTimeout(parseHeadings, 300);
+    rafId = window.requestAnimationFrame(parseHeadings);
+    timer = window.setTimeout(parseHeadings, 300);
 
     return () => {
       isSubscribed = false;
+      window.cancelAnimationFrame(rafId);
       window.clearTimeout(timer);
     };
-  }, [selectedDocument.id, selectedDocument.contentHtml]);
+  }, [activeTabNav, selectedDocument.id, selectedDocument.contentHtml]);
 
   // Smooth scroll and focus target heading in reader
   const scrollToHeading = (item: TocItem) => {
@@ -2117,15 +2423,70 @@ function App() {
       .reduce((total, document) => total + (documentCommentCounts[document.id] ?? document.openCommentsCount ?? 0), 0);
   }
 
+  function getDocumentPreviewText(html?: string) {
+    const text = normalizeVietnameseText((html ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+    if (!text) return "Chưa có nội dung xem nhanh.";
+    return text.length > 130 ? `${text.slice(0, 130).trim()}...` : text;
+  }
+
+  function activityLabel(action: string) {
+    const labels: Record<string, string> = {
+      PROJECT_CREATED: "Tạo dự án",
+      PROJECT_UPDATED: "Cập nhật dự án",
+      PROJECT_DELETED: "Xóa dự án",
+      DOCUMENT_CREATED: "Tạo tài liệu",
+      DOCUMENT_UPDATED: "Cập nhật tài liệu",
+      DOCUMENT_DELETED: "Xóa tài liệu",
+      DOCUMENT_IMPORTED: "Import tài liệu",
+      DOCUMENT_REIMPORTED: "Re-import tài liệu",
+      DOCUMENT_CREATED_FROM_TEMPLATE: "Tạo tài liệu từ mẫu",
+      COMMENT_CREATED: "Thêm nhận xét",
+      COMMENT_REPLIED: "Trả lời nhận xét",
+      COMMENT_UPDATED: "Sửa nhận xét",
+      COMMENT_RESOLVED: "Hoàn thành nhận xét",
+      COMMENT_DELETED: "Xóa nhận xét",
+      TAG_UPSERTED: "Gắn tag truy vết",
+      TAG_DELETED: "Xóa tag truy vết",
+      TRACE_CREATED: "Tạo liên kết truy vết",
+      TRACE_DELETED: "Xóa liên kết truy vết",
+      TEMPLATE_CREATED: "Tạo template"
+    };
+    return labels[action] ?? action.replace(/_/g, " ").toLowerCase();
+  }
+
+  function roleDashboardMetrics() {
+    const totals = roleDashboard?.totals;
+    if (currentUser?.role === "EMPLOYEE") {
+      return [
+        ["Tài liệu", totals?.documents ?? documentsList.length, FileText, "emerald", "Trong phạm vi phân quyền"],
+        ["Comment mở", totals?.openComments ?? openCommentsTotalCount, MessageSquareText, "amber", "Cần trao đổi & xử lý"],
+        ["Comment của tôi", totals?.myOpenComments ?? 0, UserCheck, "indigo", "Do bạn khởi tạo/phản hồi"],
+        ["Thông báo mới", totals?.unreadNotifications ?? 0, Bell, "violet", "Cập nhật cần chú ý"],
+        ["Đã approved", totals?.approvedDocuments ?? approvedDocsTotalCount, Archive, "sky", "Kho tài liệu chính thức"],
+        ["Phiên bản", totals?.versions ?? 0, Layers, "rose", "Lịch sử cập nhật"]
+      ] as const;
+    }
+
+    return [
+      ["Dự án", totals?.projects ?? projectsList.length, FolderKanban, "indigo", "Dự án đang vận hành"],
+      ["Tài liệu", totals?.documents ?? documentsList.length, FileText, "emerald", "Tổng số tài liệu"],
+      ["Cần xử lý", totals?.openComments ?? openCommentsTotalCount, MessageSquareText, "amber", "Comment chưa hoàn thành"],
+      ["Luồng đang mở", totals?.openCommentThreads ?? totals?.openComments ?? openCommentsTotalCount, Clock, "violet", "Trao đổi chưa hoàn thành"],
+      ["Dự án có trao đổi", totals?.projectsWithOpenComments ?? 0, MessageSquarePlus, "rose", "Có comment đang mở"],
+      ["Chờ duyệt", totals?.pendingReviewDocuments ?? totals?.draftDocuments ?? 0, FileCheck2, "sky", "Tài liệu cần quản lý xem"]
+    ] as const;
+  }
+
   // Compute grid layout class name
   const gridLayoutClass = useMemo(() => {
     let base = "work-grid";
+    if (activeTabNav === "review") base += " review-mode";
     if (isZenMode) base += " zen-mode";
     if (!showLibraryPanel && !showCommentsPanel) return `${base} hide-both`;
     if (!showLibraryPanel) return `${base} hide-library`;
     if (!showCommentsPanel) return `${base} hide-comments`;
     return base;
-  }, [isZenMode, showLibraryPanel, showCommentsPanel]);
+  }, [activeTabNav, isZenMode, showLibraryPanel, showCommentsPanel]);
 
   if (!currentUser) {
     return (
@@ -2154,6 +2515,20 @@ function App() {
         <div>
           <div className="nav-section-title">Danh mục</div>
           <nav className="nav-list" aria-label="Project navigation">
+            <button
+              className={activeTabNav === "dashboard" ? "nav-item active" : "nav-item"}
+              type="button"
+              onClick={() => setActiveTabNav("dashboard")}
+            >
+              <div className="nav-item-content">
+                <LayoutDashboard size={17} />
+                <span>Dashboard</span>
+              </div>
+              {roleDashboard?.totals.unreadNotifications ? (
+                <span className="nav-badge">{roleDashboard.totals.unreadNotifications}</span>
+              ) : null}
+            </button>
+
             <button
               className={activeTabNav === "projects" ? "nav-item active" : "nav-item"}
               type="button"
@@ -2303,7 +2678,9 @@ function App() {
         <header className="topbar">
           <div className="topbar-title-area">
             <p className="eyebrow">
-              {activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
+              {activeTabNav === "dashboard"
+                ? `${currentUser.role === "ADMIN" ? "Admin" : currentUser.role === "MANAGER" ? "Manager" : "Nhân viên"} • ${roleDashboard?.scopeLabel ?? "Dashboard"}`
+                : activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
                 ? "Quản trị hệ thống • Users & Permissions"
                 : activeTabNav === "vault"
                 ? "Tài Liệu Đã Duyệt • Approved Vault"
@@ -2312,7 +2689,9 @@ function App() {
                   : `${selectedProject.code} / ${selectedProject.client}`}
             </p>
             <h1>
-              {activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
+              {activeTabNav === "dashboard"
+                ? "Dashboard điều hành"
+                : activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
                 ? "Quản Lý User & Phân Quyền"
                 : activeTabNav === "vault"
                 ? "Kho Tài Liệu Approved"
@@ -2322,18 +2701,82 @@ function App() {
             </h1>
           </div>
 
-          {activeTabNav !== "admin" && (
+          {activeTabNav !== "admin" && activeTabNav !== "dashboard" && (
           <div className="topbar-actions">
             <label className="search-box">
               <Search size={15} />
               <input
                 id="main-search"
-                placeholder="Tìm tài liệu..."
+                placeholder="Tìm tài liệu, comment, tag..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onFocus={() => {
+                  if (advancedSearchResults) setIsAdvancedSearchOpen(true);
+                }}
               />
               <span className="kbd-shortcut">{searchShortcutLabel}</span>
             </label>
+
+            {isAdvancedSearchOpen && advancedSearchResults && (
+              <div className="advanced-search-popover">
+                <div className="advanced-search-header">
+                  <strong>Kết quả tìm kiếm</strong>
+                  <button type="button" onClick={() => setIsAdvancedSearchOpen(false)}><X size={13} /></button>
+                </div>
+                <div className="advanced-search-group">
+                  <span>Tài liệu</span>
+                  {advancedSearchResults.documents.length === 0 ? (
+                    <small>Không có tài liệu phù hợp.</small>
+                  ) : advancedSearchResults.documents.slice(0, 5).map((result) => (
+                    <button
+                      key={result.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedDocumentId(result.id);
+                        setIsAdvancedSearchOpen(false);
+                      }}
+                    >
+                      <FileText size={13} />
+                      <span>
+                        <strong>{normalizeVietnameseText(result.title)}</strong>
+                        <small>{result.snippet}</small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <div className="advanced-search-group">
+                  <span>Comment & Tag</span>
+                  {[...advancedSearchResults.comments.slice(0, 4).map((comment) => ({
+                    id: comment.id,
+                    documentId: comment.documentId,
+                    icon: <MessageSquareText size={13} />,
+                    title: comment.document?.title || comment.blockId,
+                    text: comment.selectedText || comment.content
+                  })), ...advancedSearchResults.tags.slice(0, 4).map((tag) => ({
+                    id: tag.id,
+                    documentId: tag.documentId,
+                    icon: <Tags size={13} />,
+                    title: tag.code,
+                    text: tag.label
+                  }))].map((result) => (
+                    <button
+                      key={result.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedDocumentId(result.documentId);
+                        setIsAdvancedSearchOpen(false);
+                      }}
+                    >
+                      {result.icon}
+                      <span>
+                        <strong>{normalizeVietnameseText(result.title)}</strong>
+                        <small>{result.text}</small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
 
 
@@ -2357,7 +2800,200 @@ function App() {
 
 
 
-        {activeTabNav === "admin" ? (
+        {activeTabNav === "dashboard" ? (
+          <section className="role-dashboard-page">
+            {/* Hero Executive Banner */}
+            <div className="role-dashboard-hero">
+              <div className="hero-content">
+                <span className="hero-live-badge">
+                  <span className="pulse-dot"></span> System Live • Realtime Dashboard
+                </span>
+                <h2>
+                  {currentUser.role === "ADMIN"
+                    ? "Toàn cảnh vận hành & Quản trị tài liệu"
+                    : currentUser.role === "MANAGER"
+                      ? "Tổng quan dự án, tài liệu & thảo luận team"
+                      : "Trung tâm tài liệu & phản hồi cá nhân"}
+                </h2>
+                <p>{roleDashboard?.scopeLabel ?? "Tổng hợp dữ liệu theo phân quyền hệ thống DocSpace."}</p>
+              </div>
+              <div className="hero-action-group">
+                {(currentUser.role === "ADMIN" || currentUser.role === "MANAGER") && (
+                  <button className="btn-hero-action primary" type="button" onClick={() => setIsCreateProjectModalOpen(true)}>
+                    <Plus size={15} /> Tạo dự án mới
+                  </button>
+                )}
+                <button className="btn-hero-action glass" type="button" onClick={() => void loadRoleDashboard()}>
+                  <BarChart2 size={15} /> Làm mới
+                </button>
+              </div>
+            </div>
+
+            {/* 6 KPI Metric Cards */}
+            <div className="role-dashboard-grid">
+              {roleDashboardMetrics().map(([label, value, Icon, colorTheme, subtext]) => {
+                const MetricIcon = Icon as typeof FileText;
+                return (
+                  <div key={String(label)} className="role-metric-card">
+                    <div className="role-metric-card-top">
+                      <span className="metric-label">{String(label)}</span>
+                      <div className={`role-metric-icon ${colorTheme}`}>
+                        <MetricIcon size={18} />
+                      </div>
+                    </div>
+                    <strong>{String(value)}</strong>
+                    <span className="role-metric-subtext">{subtext}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Asymmetric 2-Column Main Layout */}
+            <div className="role-dashboard-columns">
+              {/* Left Column: Projects Overview Table/Cards */}
+              <section className="role-dashboard-panel">
+                <div className="role-panel-header">
+                  <div className="header-left">
+                    <div className="panel-header-icon">
+                      <FolderKanban size={16} />
+                    </div>
+                    <div>
+                      <h3>Danh sách dự án quản lý</h3>
+                      <small style={{ color: "var(--text-muted)", fontSize: "0.76rem" }}>
+                        {currentUser.role === "ADMIN" ? "Tất cả dự án công ty" : currentUser.role === "MANAGER" ? "Dự án phòng/team" : "Dự án bạn tham gia"}
+                      </small>
+                    </div>
+                  </div>
+                  <span className="panel-count-badge">
+                    {(roleDashboard?.projectBreakdown ?? projectsList).length} dự án
+                  </span>
+                </div>
+                <div className="role-project-table">
+                  {(roleDashboard?.projectBreakdown ?? projectsList.map((project) => ({
+                    id: project.id,
+                    code: project.code,
+                    name: project.name,
+                    client: project.client,
+                    documents: documentsList.filter((doc) => doc.projectId === project.id).length,
+                    openComments: getProjectOpenCommentsCount(project.id),
+                    members: 0,
+                    updatedAt: ""
+                  }))).map((project) => (
+                    <button
+                      key={project.id}
+                      type="button"
+                      className="project-dashboard-card"
+                      onClick={() => handleSelectProject(project.id)}
+                    >
+                      <div className="project-card-main">
+                        <div className="project-card-top-row">
+                          <span className="code-chip">{project.code}</span>
+                          <strong>{project.name}</strong>
+                        </div>
+                        <div className="project-card-metrics">
+                          <span className="project-metric-item">
+                            <FileText size={13} /> {project.documents} tài liệu
+                          </span>
+                          <span className="project-metric-item">
+                            <MessageSquareText size={13} /> {project.openComments} comment
+                          </span>
+                        </div>
+                      </div>
+                      <ChevronRight size={18} className="project-card-arrow" />
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              {/* Right Column: Stack of Recent Docs + Activity Feed */}
+              <div className="role-dashboard-right-stack">
+                {/* Panel 2: Recent Documents */}
+                <section className="role-dashboard-panel">
+                  <div className="role-panel-header">
+                    <div className="header-left">
+                      <div className="panel-header-icon">
+                        <FileText size={16} />
+                      </div>
+                      <h3>Tài liệu mới cập nhật</h3>
+                    </div>
+                    <span className="panel-count-badge">
+                      {(roleDashboard?.recentDocuments ?? []).length} file
+                    </span>
+                  </div>
+                  <div className="role-doc-list">
+                    {(roleDashboard?.recentDocuments ?? []).map((document) => (
+                      <button
+                        key={document.id}
+                        type="button"
+                        className="doc-dashboard-row"
+                        onClick={() => {
+                          setSelectedProjectId(document.projectId);
+                          setSelectedDocumentId(document.id);
+                          setActiveTabNav("projects");
+                        }}
+                      >
+                        <div className="doc-row-left">
+                          <div className="doc-row-icon">
+                            <FileText size={16} />
+                          </div>
+                          <div className="doc-row-details">
+                            <strong>{normalizeVietnameseText(document.title)}</strong>
+                            <small>{document.projectCode} • {document.currentVersion}</small>
+                          </div>
+                        </div>
+                        <span className="doc-type-badge">{document.type}</span>
+                      </button>
+                    ))}
+                    {(roleDashboard?.recentDocuments ?? []).length === 0 && (
+                      <div className="empty-collab-state">Chưa có tài liệu mới trong hệ thống.</div>
+                    )}
+                  </div>
+                </section>
+
+                {/* Panel 3: Live Activity / Notifications */}
+                <section className="role-dashboard-panel">
+                  <div className="role-panel-header">
+                    <div className="header-left">
+                      <div className="panel-header-icon">
+                        {currentUser.role === "EMPLOYEE" ? <Bell size={16} /> : <ActivityIcon size={16} />}
+                      </div>
+                      <h3>{currentUser.role === "EMPLOYEE" ? "Thông báo của tôi" : "Nhật ký hoạt động"}</h3>
+                    </div>
+                  </div>
+                  <div className="activity-feed">
+                    {currentUser.role === "EMPLOYEE"
+                      ? (roleDashboard?.notifications ?? []).map((notification) => (
+                        <button
+                          key={notification.id}
+                          type="button"
+                          className={notification.readAt ? "notification-item read" : "notification-item"}
+                          onClick={() => void handleMarkNotificationRead(notification)}
+                        >
+                          <Bell size={14} />
+                          <span>
+                            <strong>{notification.title}</strong>
+                            <small>{notification.message}</small>
+                          </span>
+                        </button>
+                      ))
+                      : (roleDashboard?.recentActivity ?? []).map((log) => (
+                        <div key={log.id} className="activity-item">
+                          <ActivityIcon size={14} className="act-icon" />
+                          <div className="activity-item-content">
+                            <strong>{activityLabel(log.action)}</strong>
+                            <small>{new Date(log.createdAt).toLocaleString("vi-VN")}</small>
+                          </div>
+                        </div>
+                      ))}
+                    {(roleDashboard?.recentActivity ?? []).length === 0 && currentUser.role !== "EMPLOYEE" && (
+                      <div className="empty-collab-state">Chưa ghi nhận nhật ký hoạt động gần đây.</div>
+                    )}
+                  </div>
+                </section>
+              </div>
+            </div>
+          </section>
+        ) : activeTabNav === "admin" ? (
           <Suspense fallback={<div className="content-loading">Đang tải quản trị user...</div>}>
             <AdminPanel projects={projectsList} documents={documentsList} currentUser={currentUser} onToast={addToast} />
           </Suspense>
@@ -2375,21 +3011,23 @@ function App() {
                         ? "Hàng chờ Review"
                         : `Thư viện • ${selectedProject.code}`}
                   </p>
-                  <h2>Tài liệu ({filteredDocuments.length})</h2>
+                  <h2>{activeTabNav === "review" ? "Luồng review" : "Tài liệu"} ({filteredDocuments.length})</h2>
                 </div>
                 <div className="panel-action-group">
-                  <button
-                    className="btn-add-mini"
-                    type="button"
-                    title="Import tệp tài liệu vào dự án"
-                    disabled={!selectedProjectId}
-                    onClick={() => {
-                      setImportTargetProjectId(selectedProjectId);
-                      setIsImportModalOpen(true);
-                    }}
-                  >
-                    <UploadCloud size={12} /> Import File
-                  </button>
+                  {activeTabNav !== "review" && (
+                    <button
+                      className="btn-add-mini"
+                      type="button"
+                      title="Import tệp tài liệu vào dự án"
+                      disabled={!selectedProjectId}
+                      onClick={() => {
+                        setImportTargetProjectId(selectedProjectId);
+                        setIsImportModalOpen(true);
+                      }}
+                    >
+                      <UploadCloud size={12} /> Import File
+                    </button>
+                  )}
                   <button
                     className="panel-close-btn"
                     type="button"
@@ -2401,57 +3039,98 @@ function App() {
                 </div>
               </div>
 
-              {/* Panel Mode Switcher Tabs (Tài liệu vs Mục lục) */}
-              <div className="panel-mode-tabs">
-                <button
-                  className={leftPanelMode === "docs" ? "mode-tab active" : "mode-tab"}
-                  type="button"
-                  onClick={() => setLeftPanelMode("docs")}
-                >
-                  <FileText size={12} /> Tài liệu ({filteredDocuments.length})
-                </button>
-                <button
-                  className={leftPanelMode === "toc" ? "mode-tab active" : "mode-tab"}
-                  type="button"
-                  onClick={() => setLeftPanelMode("toc")}
-                >
-                  <ListTree size={12} /> Mục lục ({selectedDocument.id === "empty-document" ? 0 : tocItems.length})
-                </button>
-              </div>
+              {activeTabNav !== "review" && (
+                <div className="panel-mode-tabs">
+                  <button
+                    className={leftPanelMode === "docs" ? "mode-tab active" : "mode-tab"}
+                    type="button"
+                    onClick={() => setLeftPanelMode("docs")}
+                  >
+                    <FileText size={12} /> Tài liệu ({filteredDocuments.length})
+                  </button>
+                  <button
+                    className={leftPanelMode === "toc" ? "mode-tab active" : "mode-tab"}
+                    type="button"
+                    onClick={() => setLeftPanelMode("toc")}
+                  >
+                    <ListTree size={12} /> Mục lục ({selectedDocument.id === "empty-document" ? 0 : tocItems.length})
+                  </button>
+                </div>
+              )}
 
-              {leftPanelMode === "docs" ? (
+              {activeTabNav === "review" || leftPanelMode === "docs" ? (
                 <>
-                  {/* Status Filter Tabs (Draft | Approved) */}
-                  <div className="library-filter-tabs">
-                    {(["All", "Draft", "Approved"] as const).map((tab) => (
-                      <button
-                        key={tab}
-                        className={statusFilter === tab ? "tab-btn active" : "tab-btn"}
-                        type="button"
-                        onClick={() => setStatusFilter(tab)}
-                      >
-                        {tab === "All" ? "Tất cả" : tab}
-                      </button>
-                    ))}
-                  </div>
+                  {activeTabNav === "review" ? (
+                    <div className="review-inbox-strip">
+                      <MessageSquareText size={13} />
+                      <span>Chỉ hiển thị tài liệu đang có trao đổi mở.</span>
+                    </div>
+                  ) : (
+                    <div className="library-filter-tabs">
+                      {(["All", "Draft", "Approved"] as const).map((tab) => (
+                        <button
+                          key={tab}
+                          className={statusFilter === tab ? "tab-btn active" : "tab-btn"}
+                          type="button"
+                          onClick={() => setStatusFilter(tab)}
+                        >
+                          {tab === "All" ? "Tất cả" : tab}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Documents List */}
                   <div className="document-table">
                     {filteredDocuments.length === 0 ? (
                       <div style={{ padding: 16, textAlign: "center", color: "var(--text-muted)", fontSize: "0.78rem" }}>
-                        Không có tài liệu nào phù hợp.
+                        {activeTabNav === "review"
+                          ? "Không có tài liệu nào đang có trao đổi mở."
+                          : "Không có tài liệu nào phù hợp."}
                       </div>
                     ) : (
                       filteredDocuments.map((doc) => {
                         const docCommentsCount = documentCommentCounts[doc.id] ?? doc.openCommentsCount ?? 0;
                         const fullTitle = normalizeVietnameseText(doc.title);
+                        const docProject = projectsList.find((project) => project.id === doc.projectId);
+                        if (activeTabNav === "review") {
+                          return (
+                            <button
+                              key={doc.id}
+                              className={doc.id === selectedDocumentId ? "review-thread-card selected" : "review-thread-card"}
+                              type="button"
+                              title={fullTitle}
+                              onClick={() => {
+                                if (doc.projectId) setSelectedProjectId(doc.projectId);
+                                setSelectedDocumentId(doc.id);
+                                setCommentFilter("all");
+                              }}
+                            >
+                              <div className="review-thread-head">
+                                <span className="review-thread-state">
+                                  <MessageSquareText size={12} /> Đang mở
+                                </span>
+                                <span className="review-thread-count">{docCommentsCount} trao đổi</span>
+                              </div>
+                              <strong>{fullTitle}</strong>
+                              <p>{getDocumentPreviewText(doc.contentHtml)}</p>
+                              <div className="review-thread-meta">
+                                <span>{docProject?.code ?? "Dự án"} • {doc.type}</span>
+                                <span>{doc.updatedAt}</span>
+                              </div>
+                            </button>
+                          );
+                        }
                         return (
                           <button
                             key={doc.id}
                             className={doc.id === selectedDocumentId ? "document-row selected" : "document-row"}
                             type="button"
                             title={fullTitle}
-                            onClick={() => setSelectedDocumentId(doc.id)}
+                            onClick={() => {
+                              if (doc.projectId) setSelectedProjectId(doc.projectId);
+                              setSelectedDocumentId(doc.id);
+                            }}
                           >
                             <div className="doc-icon">
                               {doc.fileType === "pdf" ? (
@@ -2766,6 +3445,25 @@ function App() {
               </div>
 
               {/* Comment Threads List */}
+              <>
+              <div className="comment-filter-strip">
+                {[
+                  ["all", "Tất cả"],
+                  ["open", "Đang mở"],
+                  ["withReplies", "Có phản hồi"],
+                  ["resolved", "Hoàn thành"],
+                  ["mine", "Của tôi"]
+                ].map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={commentFilter === id ? "active" : ""}
+                    onClick={() => setCommentFilter(id as typeof commentFilter)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <div className="comments-list">
                 {displayedComments.map((comment) => (
                   <div
@@ -3017,7 +3715,11 @@ function App() {
                     )}
                   </div>
                 ))}
+                {displayedComments.length === 0 && (
+                  <div className="empty-collab-state">Không có nhận xét phù hợp với bộ lọc.</div>
+                )}
               </div>
+              </>
             </aside>
         </section>
         )}
@@ -3342,6 +4044,27 @@ function App() {
                   />
                 </div>
               </div>
+
+              {documentTemplates.length > 0 && (
+                <div className="template-picker">
+                  <div className="collab-section-title">Tạo nhanh từ mẫu</div>
+                  <div className="template-grid">
+                    {documentTemplates.slice(0, 6).map((template) => (
+                      <button
+                        key={template.id}
+                        type="button"
+                        onClick={() => void handleCreateDocumentFromTemplate(template)}
+                      >
+                        <FileText size={15} />
+                        <span>
+                          <strong>{template.name}</strong>
+                          <small>{template.description || `${template.type} template`}</small>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="modal-footer">

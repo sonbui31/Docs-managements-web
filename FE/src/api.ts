@@ -1,4 +1,18 @@
-import type { CommentThread, DocumentStatus, Project, ProjectDocument } from "./types";
+import type {
+  ActivityLog,
+  CommentThread,
+  DocumentStatus,
+  DocumentTemplate,
+  NotificationItem,
+  Project,
+  ProjectDashboard,
+  ProjectDocument,
+  RequirementTag,
+  RoleDashboard,
+  SearchResult,
+  TraceLink,
+  VersionDiff
+} from "./types";
 import { getAccessToken, refreshSession } from "./authApi";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "/api/v1";
@@ -332,6 +346,90 @@ export async function resolveComment(commentId: string) {
     method: "PATCH"
   });
   return mapComment(comment);
+}
+
+export async function fetchProjectDashboard(projectId: string) {
+  return apiFetch<ProjectDashboard>(`/collaboration/projects/${projectId}/dashboard`);
+}
+
+export async function fetchRoleDashboard() {
+  return apiFetch<RoleDashboard>("/collaboration/dashboard");
+}
+
+export async function searchProject(projectId: string, query: string) {
+  return apiFetch<SearchResult>(`/collaboration/projects/${projectId}/search?q=${encodeURIComponent(query)}`);
+}
+
+export async function fetchProjectActivity(projectId: string) {
+  return apiFetch<ActivityLog[]>(`/collaboration/projects/${projectId}/activity`);
+}
+
+export async function fetchDocumentDiff(documentId: string) {
+  return apiFetch<VersionDiff>(`/collaboration/documents/${documentId}/diff`);
+}
+
+export async function fetchDocumentTags(documentId: string) {
+  return apiFetch<{ saved: RequirementTag[]; inferred: RequirementTag[] }>(`/collaboration/documents/${documentId}/tags`);
+}
+
+export async function createRequirementTag(documentId: string, payload: {
+  code: string;
+  kind: string;
+  label: string;
+  selectedText?: string;
+  selector?: string;
+}) {
+  return apiFetch<RequirementTag>(`/collaboration/documents/${documentId}/tags`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteRequirementTag(tagId: string) {
+  return apiFetch<{ ok: boolean }>(`/collaboration/tags/${tagId}`, { method: "DELETE" });
+}
+
+export async function fetchTraceLinks(projectId: string) {
+  return apiFetch<TraceLink[]>(`/collaboration/projects/${projectId}/traces`);
+}
+
+export async function createTraceLink(projectId: string, payload: {
+  sourceDocumentId?: string;
+  targetDocumentId?: string;
+  sourceCode: string;
+  sourceLabel: string;
+  targetCode: string;
+  targetLabel: string;
+  relation?: string;
+}) {
+  return apiFetch<TraceLink>(`/collaboration/projects/${projectId}/traces`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteTraceLink(traceId: string) {
+  return apiFetch<{ ok: boolean }>(`/collaboration/traces/${traceId}`, { method: "DELETE" });
+}
+
+export async function fetchNotifications() {
+  return apiFetch<NotificationItem[]>("/collaboration/notifications");
+}
+
+export async function markNotificationRead(notificationId: string) {
+  return apiFetch<NotificationItem>(`/collaboration/notifications/${notificationId}/read`, { method: "PATCH" });
+}
+
+export async function fetchDocumentTemplates() {
+  return apiFetch<DocumentTemplate[]>("/collaboration/templates");
+}
+
+export async function createDocumentFromTemplate(templateId: string, payload: { projectId: string; title?: string; type?: string }) {
+  const document = await apiFetch<BackendDocument>(`/collaboration/templates/${templateId}/documents`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  return mapDocument(document);
 }
 
 export async function downloadExport(documentId: string, type: "pdf" | "docx") {

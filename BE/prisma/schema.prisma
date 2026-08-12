@@ -62,6 +62,8 @@ model Project {
   documents   Document[]
   mediaAssets MediaAsset[]
   importJobs  ImportJob[]
+  requirementTags RequirementTag[]
+  traceLinks  TraceLink[]
   members     ProjectMember[]
   documentPermissions DocumentPermission[]
   createdAt   DateTime   @default(now())
@@ -86,6 +88,9 @@ model Document {
   versions        DocumentVersion[]
   comments        Comment[]
   mediaAssets     MediaAsset[]
+  requirementTags RequirementTag[]
+  traceLinksFrom  TraceLink[]       @relation("TraceSourceDocument")
+  traceLinksTo    TraceLink[]       @relation("TraceTargetDocument")
   importJob       ImportJob?
   permissions     DocumentPermission[]
   createdAt       DateTime          @default(now())
@@ -113,6 +118,8 @@ model User {
   refreshSessions       RefreshSession[]
   projectMemberships    ProjectMember[]
   documentPermissions   DocumentPermission[]
+  notifications         Notification[]
+  documentTemplates     DocumentTemplate[]
   verificationTokens    VerificationToken[]
   auditLogs             AuditLog[]       @relation("AuditActor")
   createdAt             DateTime         @default(now())
@@ -232,6 +239,75 @@ model Comment {
 
   @@index([documentId, blockId])
   @@index([parentId])
+}
+
+model RequirementTag {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  documentId  String
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  code        String
+  kind        String
+  label       String
+  selectedText String?
+  selector    String?
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([documentId, code])
+  @@index([projectId, kind])
+}
+
+model TraceLink {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceDocumentId String?
+  sourceDocument   Document? @relation("TraceSourceDocument", fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+  targetDocumentId String?
+  targetDocument   Document? @relation("TraceTargetDocument", fields: [targetDocumentId], references: [id], onDelete: SetNull)
+  sourceCode  String
+  sourceLabel String
+  targetCode  String
+  targetLabel String
+  relation    String   @default("traces")
+  createdBy   String?
+  createdAt   DateTime @default(now())
+
+  @@index([projectId])
+  @@index([sourceDocumentId])
+  @@index([targetDocumentId])
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  message     String
+  entityType  String?
+  entityId    String?
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, readAt, createdAt])
+}
+
+model DocumentTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  type        String
+  description String?
+  htmlContent String
+  isSystem    Boolean  @default(false)
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([type, isSystem])
 }
 
 model MediaAsset {

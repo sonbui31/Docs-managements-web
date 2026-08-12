@@ -74,6 +74,16 @@ export class DocumentsService {
         }
       });
 
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: "DOCUMENT_CREATED",
+          entityType: "Document",
+          entityId: document.id,
+          metadata: { projectId: dto.projectId, title: dto.title }
+        }
+      });
+
       return document;
     });
   }
@@ -117,6 +127,16 @@ export class DocumentsService {
         });
       }
 
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: "DOCUMENT_UPDATED",
+          entityType: "Document",
+          entityId: id,
+          metadata: { projectId: document.projectId, title: updatedDocument.title }
+        }
+      });
+
       return updatedDocument;
     });
   }
@@ -126,14 +146,25 @@ export class DocumentsService {
 
     const document = await this.prisma.document.findUnique({
       where: { id },
-      select: { id: true }
+      select: { id: true, projectId: true, title: true }
     });
 
     if (!document) {
       throw new NotFoundException("Document not found");
     }
 
-    await this.prisma.document.delete({ where: { id } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: "DOCUMENT_DELETED",
+          entityType: "Project",
+          entityId: document.projectId,
+          metadata: { projectId: document.projectId, documentId: id, title: document.title }
+        }
+      });
+      await tx.document.delete({ where: { id } });
+    });
     return { ok: true };
   }
 

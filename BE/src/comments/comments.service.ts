@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { AuthenticatedUser } from "../auth/auth.types";
+import { CollaborationService } from "../collaboration/collaboration.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateCommentDto } from "./dto/create-comment.dto";
@@ -9,7 +10,8 @@ import { UpdateCommentDto } from "./dto/update-comment.dto";
 export class CommentsService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly permissions: PermissionsService
+    private readonly permissions: PermissionsService,
+    private readonly collaboration: CollaborationService
   ) {}
 
   async findByDocument(documentId: string, user: AuthenticatedUser) {
@@ -35,6 +37,19 @@ export class CommentsService {
         createdByEmail: user.email
       }
     });
+    await this.collaboration.log(
+      user,
+      dto.parentId ? "COMMENT_REPLIED" : "COMMENT_CREATED",
+      "Document",
+      dto.documentId,
+      { commentId: comment.id, projectId: await this.projectIdForDocument(dto.documentId), blockId: dto.blockId }
+    );
+    await this.collaboration.notifyDocumentParticipants(
+      dto.documentId,
+      dto.parentId ? "Có phản hồi nhận xét mới" : "Có nhận xét mới",
+      `${authorName}: ${dto.content.slice(0, 120)}`,
+      user.id
+    );
     return this.withAuthorProfile(comment);
   }
 
@@ -42,12 +57,13 @@ export class CommentsService {
     await this.permissions.assertCommentRole(user, id, ["REVIEWER", "EDITOR", "MANAGER"]);
 
     const resolvedAt = new Date();
-    return this.prisma.$transaction(async (tx) => {
+    const comment = await this.prisma.$transaction(async (tx) => {
       const comment = await tx.comment.update({
         where: { id },
         data: {
           status: "RESOLVED",
-          resolvedAt
+          resolvedAt,
+          resolvedBy: user.id
         }
       });
 
@@ -61,6 +77,14 @@ export class CommentsService {
 
       return comment;
     });
+    await this.collaboration.log(
+      user,
+      "COMMENT_RESOLVED",
+      "Document",
+      comment.documentId,
+      { commentId: id, projectId: await this.projectIdForDocument(comment.documentId) }
+    );
+    return this.withAuthorProfile(comment);
   }
 
   async update(id: string, dto: UpdateCommentDto, user: AuthenticatedUser) {
@@ -77,19 +101,41 @@ export class CommentsService {
         blockId: dto.blockId?.trim()
       }
     });
+    await this.collaboration.log(
+      user,
+      "COMMENT_UPDATED",
+      "Document",
+      comment.documentId,
+      { commentId: id, projectId: await this.projectIdForDocument(comment.documentId) }
+    );
     return this.withAuthorProfile(comment);
   }
 
   async remove(id: string, user: AuthenticatedUser) {
     await this.permissions.assertCommentRole(user, id, ["REVIEWER", "EDITOR", "MANAGER"]);
 
+    const comment = await this.prisma.comment.findUnique({ where: { id }, select: { documentId: true } });
     await this.prisma.comment.deleteMany({
       where: {
         OR: [{ id }, { parentId: id }]
       }
     });
+    if (comment) {
+      await this.collaboration.log(
+        user,
+        "COMMENT_DELETED",
+        "Document",
+        comment.documentId,
+        { commentId: id, projectId: await this.projectIdForDocument(comment.documentId) }
+      );
+    }
 
     return { ok: true };
+  }
+
+  private async projectIdForDocument(documentId: string) {
+    const document = await this.prisma.document.findUnique({ where: { id: documentId }, select: { projectId: true } });
+    return document?.projectId ?? null;
   }
 
   private async withAuthorProfiles<T extends Array<{ createdBy: string | null; createdByEmail?: string | null }>>(comments: T) {
