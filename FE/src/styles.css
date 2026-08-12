@@ -94,6 +94,15 @@ button {
   transition: all 0.18s ease-in-out;
 }
 
+.sidebar button {
+  transition:
+    background-color 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    color 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 /* App Shell Layout (Fix Zen Mode Grid Squish Error) */
 .app-shell {
   --sidebar-open-width: 250px;
@@ -219,7 +228,7 @@ button {
   justify-content: center;
   flex-shrink: 0;
   background: transparent;
-  border: 0;
+  border: 1px solid transparent;
   overflow: visible;
 }
 
@@ -274,13 +283,12 @@ button {
   margin: 0 auto;
   border-radius: 12px;
   background: linear-gradient(135deg, rgba(79, 70, 229, 0.08) 0%, rgba(99, 102, 241, 0.12) 100%);
-  border: 1.5px solid rgba(79, 70, 229, 0.22);
+  border-color: rgba(79, 70, 229, 0.22);
   box-shadow: 0 2px 8px rgba(79, 70, 229, 0.1);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .app-shell.sidebar-collapsed .sidebar-logo-button:hover {
@@ -378,10 +386,17 @@ button {
   align-items: center;
   justify-content: space-between;
   padding: 8px 10px;
+  border: 1px solid transparent;
   border-radius: 8px;
   font-size: 0.85rem;
   font-weight: 500;
   color: var(--text-secondary);
+  transition:
+    background-color 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    color 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .app-shell.sidebar-collapsed .nav-item {
@@ -394,7 +409,6 @@ button {
   color: var(--text-secondary);
   border: 1px solid transparent;
   background: transparent;
-  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .app-shell.sidebar-collapsed .nav-item:hover {
@@ -407,7 +421,7 @@ button {
 .app-shell.sidebar-collapsed .nav-item.active {
   color: #ffffff;
   background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
-  border: none;
+  border-color: transparent;
   box-shadow: 0 4px 12px rgba(79, 70, 229, 0.35);
 }
 
@@ -488,7 +502,7 @@ button {
 .nav-item.active {
   background: rgba(79, 70, 229, 0.08);
   color: var(--accent-primary);
-  border: 1px solid rgba(79, 70, 229, 0.2);
+  border-color: rgba(79, 70, 229, 0.2);
   font-weight: 600;
 }
 
@@ -1117,12 +1131,19 @@ button {
 
 /* READER-DOMINANT GRID LAYOUT (Clean Grid Area & Column Tracking Fix) */
 .work-grid {
+  --library-column: 260px;
+  --document-column: minmax(0, 1fr);
+  --comments-column: 270px;
   display: grid;
-  grid-template-columns: 260px 1fr 270px;
+  grid-template-columns: var(--library-column) var(--document-column) var(--comments-column);
   grid-template-areas: "library document comments";
   gap: 14px;
   align-items: stretch;
-  transition: opacity 0.16s ease, transform 0.16s ease;
+  transition:
+    grid-template-columns 0.34s cubic-bezier(0.16, 1, 0.3, 1),
+    gap 0.34s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.16s ease,
+    transform 0.16s ease;
   width: 100%;
   flex: 1;
   min-height: 0;
@@ -1131,7 +1152,9 @@ button {
 }
 
 .work-grid.review-mode {
-  grid-template-columns: minmax(340px, 0.78fr) minmax(540px, 1.45fr) minmax(310px, 0.78fr);
+  --library-column: minmax(340px, 0.78fr);
+  --document-column: minmax(540px, 1.45fr);
+  --comments-column: minmax(310px, 0.78fr);
   gap: 16px;
 }
 
@@ -1141,6 +1164,13 @@ button {
 
 .panel.document-viewer {
   grid-area: document;
+  min-width: 0;
+  transform-origin: center top;
+  transition:
+    transform 0.34s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.24s ease,
+    border-color 0.24s ease;
+  will-change: transform;
 }
 
 .panel.comments-panel {
@@ -1149,29 +1179,51 @@ button {
 
 /* Dynamic Toggle Views for Reader Focus */
 .work-grid.hide-library {
-  grid-template-columns: 1fr 270px;
-  grid-template-areas: "document comments";
+  --library-column: 0px;
 }
 
 .work-grid.review-mode.hide-library {
-  grid-template-columns: minmax(560px, 1fr) minmax(310px, 0.78fr);
+  --document-column: minmax(560px, 1fr);
 }
 
 .work-grid.hide-library .library {
-  display: none !important;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(-10px) scaleX(0.96);
 }
 
 .work-grid.hide-comments {
-  grid-template-columns: 260px 1fr;
-  grid-template-areas: "library document";
+  --comments-column: 0px;
 }
 
 .work-grid.review-mode.hide-comments {
-  grid-template-columns: minmax(340px, 0.78fr) minmax(560px, 1fr);
+  --document-column: minmax(560px, 1fr);
 }
 
 .work-grid.hide-comments .comments-panel {
-  display: none !important;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(10px) scaleX(0.96);
+}
+
+.work-grid.hide-library .document-viewer,
+.work-grid.hide-comments .document-viewer,
+.work-grid.hide-both .document-viewer {
+  animation: documentFocusShift 0.34s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes documentFocusShift {
+  0% {
+    opacity: 0.94;
+    transform: translateY(4px) scale(0.995);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .app-shell.zen-mode {
@@ -1199,8 +1251,11 @@ button {
 }
 
 .work-grid.zen-mode {
+  --library-column: 260px;
+  --document-column: minmax(0, 1fr);
+  --comments-column: 270px;
   display: grid !important;
-  grid-template-columns: 260px 1fr 270px !important;
+  grid-template-columns: var(--library-column) var(--document-column) var(--comments-column) !important;
   grid-template-areas: "library document comments" !important;
   gap: 12px;
   width: 100% !important;
@@ -1208,28 +1263,28 @@ button {
 }
 
 .work-grid.zen-mode.hide-library {
-  grid-template-columns: 1fr 270px !important;
-  grid-template-areas: "document comments" !important;
+  --library-column: 0px;
 }
 
 .work-grid.zen-mode.hide-comments {
-  grid-template-columns: 260px 1fr !important;
-  grid-template-areas: "library document" !important;
+  --comments-column: 0px;
 }
 
 .work-grid.zen-mode.hide-both {
-  grid-template-columns: 1fr !important;
-  grid-template-areas: "document" !important;
+  --library-column: 0px;
+  --comments-column: 0px;
 }
 
 .work-grid.hide-both {
-  grid-template-columns: 1fr;
-  grid-template-areas: "document";
+  --library-column: 0px;
+  --comments-column: 0px;
 }
 
 .work-grid.hide-both .library,
 .work-grid.hide-both .comments-panel {
-  display: none !important;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* Panel Common Styles */
@@ -1245,6 +1300,11 @@ button {
   height: 100%;
   max-height: 100%;
   min-height: 0;
+  transition:
+    opacity 0.24s ease,
+    transform 0.34s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.24s ease,
+    box-shadow 0.24s ease;
 }
 
 .panel-header {
@@ -1583,33 +1643,6 @@ button {
 
 .status-pill.draft .status-dot {
   background: #64748b;
-}
-
-.status-pill.review {
-  background: #fef3c7;
-  color: #b45309;
-}
-
-.status-pill.review .status-dot {
-  background: #d97706;
-}
-
-.status-pill.approved {
-  background: #d1fae5;
-  color: #047857;
-}
-
-.status-pill.approved .status-dot {
-  background: #059669;
-}
-
-.status-pill.stored {
-  background: #e0f2fe;
-  color: #0369a1;
-}
-
-.status-pill.stored .status-dot {
-  background: #0284c7;
 }
 
 .status-pill.deployed {
@@ -4619,7 +4652,8 @@ button {
   }
 
   .work-grid {
-    grid-template-columns: 280px 1fr 330px;
+    --library-column: 280px;
+    --comments-column: 330px;
   }
 
   .html-document {
@@ -4635,7 +4669,8 @@ button {
   }
 
   .work-grid {
-    grid-template-columns: 240px 1fr 280px;
+    --library-column: 240px;
+    --comments-column: 280px;
   }
 
   .html-document {
@@ -4651,7 +4686,8 @@ button {
   }
 
   .work-grid {
-    grid-template-columns: 220px 1fr 250px;
+    --library-column: 220px;
+    --comments-column: 250px;
     gap: 10px;
   }
 
@@ -5324,13 +5360,6 @@ button {
   font-size: 0.76rem;
   font-weight: 600;
   margin-bottom: 8px;
-}
-
-.mock-note {
-  font-size: 0.78rem;
-
-  color: #64748b;
-  line-height: 1.4;
 }
 
 /* Right Card Form (Light Theme) */

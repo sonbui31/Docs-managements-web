@@ -300,7 +300,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
             <div className="hero-brand-details">
               <h1 className="hero-brand-name">DocSpace</h1>
-              <p className="hero-brand-subtitle">Nền tảng Quản lý Tài liệu Nghiệp vụ BA</p>
+              <p className="hero-brand-subtitle">Nền tảng Quản lý Tài liệu Nghiệp vụ</p>
               <div className="hero-status-badge">
                 <span className="pulse-dot"></span> System Operational
               </div>

@@ -5,10 +5,13 @@ dist/
 .agents
 .claude
 *.log
+*.tsbuildinfo
 
 FE/node_modules/
 FE/dist/
 FE/.env
+FE/vite.config.js
+FE/vite.config.d.ts
 
 BE/node_modules/
 BE/dist/

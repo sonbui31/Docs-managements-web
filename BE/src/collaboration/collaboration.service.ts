@@ -103,12 +103,8 @@ export class CollaborationService {
         projectName: project.name
       }))
     );
-    const draftDocuments = documents.filter((document) =>
-      ["DRAFT", "IN_REVIEW", "CHANGES_REQUESTED"].includes(document.status)
-    ).length;
-    const deployedDocuments = documents.filter((document) =>
-      ["DEPLOYED", "APPROVED", "SIGNED_OFF", "ARCHIVED"].includes(document.status)
-    ).length;
+    const draftDocuments = documents.filter((document) => document.status !== "DEPLOYED").length;
+    const deployedDocuments = documents.filter((document) => document.status === "DEPLOYED").length;
     const projectsWithOpenComments = projects.filter((project) => {
       const projectOpenComments = project.documents.reduce((total, document) => total + (document._count?.comments ?? 0), 0);
       return projectOpenComments > 0;

@@ -81,7 +81,6 @@ import {
 } from "./api";
 import { AuthPage } from "./AuthPage";
 import { clearAuthSession, fetchCurrentUser, getAccessToken, getStoredUser, logout } from "./authApi";
-import { initialComments, documents as initialDocuments, projects as initialProjects } from "./data";
 import type {
   ActivityLog,
   CommentThread,
@@ -203,96 +202,7 @@ function scoreUtf8Mojibake(value: string): number {
   return value.match(/[ÃÂÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàâ€šƒ„…†‡ˆ‰Š‹ŒŽ]|[\u0080-\u009F]|�/g)?.length ?? 0;
 }
 
-// Standard formatted reading document template
-const DEFAULT_DOC_CONTENT = `
-<h3>1. Mục tiêu Nghiệp vụ (Business Objective)</h3>
-<div class="req-block" data-req="REQ-001">
-  <div class="req-block-header">
-    <span class="req-tag">REQ-001</span>
-  </div>
-  <p>Hệ thống quản lý tài liệu CRM cần cung cấp một nguồn dữ liệu duy nhất (Single Source of Truth) cho các thành viên trong team xem và tham chiếu yêu cầu đã phê duyệt.</p>
-</div>
-
-<h3>2. Yêu cầu Chức năng (Functional Requirements)</h3>
-<div class="req-block" data-req="REQ-002">
-  <div class="req-block-header">
-    <span class="req-tag">REQ-002</span>
-  </div>
-  <p>Mọi người trong team có thể xem các thư mục theo từng giai đoạn dự án, dễ dàng đọc nội dung từ tệp import đã chuẩn hóa sang giao diện HTML rõ ràng và tiện theo dõi.</p>
-</div>
-
-<h3>3. Ma trận Bảng Yêu cầu & Trạng thái Kiểm duyệt (Requirements Matrix)</h3>
-<div class="req-block" data-req="REQ-004">
-  <div class="req-block-header">
-    <span class="req-tag">REQ-004</span>
-  </div>
-  <p>Bảng ma trận phân công nghiệp vụ và trạng thái phê duyệt tính năng:</p>
-  <table class="doc-table">
-    <thead>
-      <tr>
-        <th>Mã Yêu Cầu</th>
-        <th>Tên Chức Năng</th>
-        <th>Mô Tả Chi Tiết</th>
-        <th>Độ Ưu Tiên</th>
-        <th>Trạng Thái</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><code>REQ-001</code></td>
-        <td>Single Source of Truth</td>
-        <td>Cung cấp dữ liệu chuẩn cho cả team tham chiếu.</td>
-        <td><span class="badge high">Cao</span></td>
-        <td><span class="status-pill deployed"><span class="status-dot"></span>Triển khai</span></td>
-      </tr>
-      <tr>
-        <td><code>REQ-002</code></td>
-        <td>Import & Xem File</td>
-        <td>Đọc và hiển thị nội dung tệp Markdown/Word/PDF.</td>
-        <td><span class="badge high">Cao</span></td>
-        <td><span class="status-pill deployed"><span class="status-dot"></span>Triển khai</span></td>
-      </tr>
-      <tr>
-        <td><code>REQ-003</code></td>
-        <td>Bảng Ma Trận Động</td>
-        <td>Hiển thị sắc nét các dòng, cột và dữ liệu bảng kiểm thử.</td>
-        <td><span class="badge high">Cao</span></td>
-        <td><span class="status-pill draft"><span class="status-dot"></span>Draft</span></td>
-      </tr>
-      <tr>
-        <td><code>REQ-004</code></td>
-        <td>Comment & Review</td>
-        <td>Gắn nhận xét trực tiếp vào từng block yêu cầu.</td>
-        <td><span class="badge medium">Trung bình</span></td>
-        <td><span class="status-pill draft"><span class="status-dot"></span>Draft</span></td>
-      </tr>
-    </tbody>
-  </table>
-</div>
-
-<h3>4. Sơ đồ Quy trình Luồng Nghiệp vụ (Mermaid System Diagram)</h3>
-<div class="req-block" data-req="REQ-005">
-  <div class="req-block-header">
-    <span class="req-tag">REQ-005</span>
-  </div>
-  <p>Sơ đồ kiến trúc xử lý tệp và hiển thị sơ đồ Mermaid đồ họa trực quan:</p>
-  <div class="mermaid">
-    graph TD
-      A[📥 Import File Tài Liệu] --> B[⚙️ Parser Đọc Văn Bản HTML/Markdown]
-      B --> C{Loại dữ liệu}
-      C -->|Bảng Ma Trận| D[📊 Render Bảng HTML Sắc Nét]
-      C -->|Sơ Đồ Mermaid| E[🎨 Visual Mermaid Diagram SVG]
-      D --> F[💬 Team Đọc, Gắn REQ Tag & Comment Review]
-      E --> F
-      F --> G[✅ Lưu trữ & Quản lý tài liệu]
-
-      style A fill:#e0e7ff,stroke:#4f46e5,stroke-width:2px;
-      style D fill:#fef3c7,stroke:#d97706,stroke-width:2px;
-      style E fill:#d1fae5,stroke:#059669,stroke-width:2px;
-      style G fill:#dbeafe,stroke:#0284c7,stroke-width:2px;
-  </div>
-</div>
-`;
+const DEFAULT_DOC_CONTENT = `<h3>Chưa có nội dung hiển thị</h3><p>Tài liệu này chưa có HTML hoặc quá trình import chưa hoàn tất.</p>`;
 
 const EMPTY_DOCUMENT: ProjectDocument = {
   id: "empty-document",
@@ -404,17 +314,10 @@ function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(() => getStoredUser());
 
   // State for dynamic projects & documents lists
-  const [projectsList, setProjectsList] = useState<Project[]>(initialProjects);
+  const [projectsList, setProjectsList] = useState<Project[]>([]);
 
-  const [documentsList, setDocumentsList] = useState<ProjectDocument[]>(() =>
-    initialDocuments.map((doc) => ({
-      ...doc,
-      contentHtml: doc.contentHtml || DEFAULT_DOC_CONTENT
-    }))
-  );
-  const [documentCommentCounts, setDocumentCommentCounts] = useState<Record<string, number>>(() =>
-    Object.fromEntries(initialDocuments.map((doc) => [doc.id, doc.openCommentsCount ?? 0]))
-  );
+  const [documentsList, setDocumentsList] = useState<ProjectDocument[]>([]);
+  const [documentCommentCounts, setDocumentCommentCounts] = useState<Record<string, number>>({});
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>(projectsList[0]?.id ?? "");
   const [selectedDocumentId, setSelectedDocumentId] = useState<string>(documentsList[0]?.id ?? "");
@@ -487,7 +390,7 @@ function App() {
   const [isSelectionComposerOpen, setIsSelectionComposerOpen] = useState<boolean>(false);
 
   // Comments state
-  const [commentsList, setCommentsList] = useState<CommentThread[]>(initialComments);
+  const [commentsList, setCommentsList] = useState<CommentThread[]>([]);
   const [commentFilter, setCommentFilter] = useState<"all" | "open" | "resolved" | "mine">("all");
   const [collabPanelTab, setCollabPanelTab] = useState<"comments" | "diff" | "tags" | "trace" | "activity" | "notifications">("comments");
   const [projectDashboard, setProjectDashboard] = useState<ProjectDashboard | null>(null);
@@ -2757,7 +2660,6 @@ function App() {
           </button>
           <div className="brand-info">
             <strong>DocSpace</strong>
-            <small>Quản Lý Tài Liệu BA</small>
           </div>
           <button
             className="sidebar-toggle-btn"
