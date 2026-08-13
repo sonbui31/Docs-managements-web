@@ -2751,6 +2751,8 @@ function App() {
       if (isZenMode) {
         e.preventDefault();
         setIsZenMode(false);
+        setShowLibraryPanel(true);
+        setShowCommentsPanel(true);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -3477,6 +3479,20 @@ function App() {
     if (!showCommentsPanel) return `${base} hide-comments`;
     return base;
   }, [isZenMode, showLibraryPanel, showCommentsPanel]);
+
+  function toggleFocusReadingMode() {
+    if (isZenMode) {
+      setIsZenMode(false);
+      setShowLibraryPanel(true);
+      setShowCommentsPanel(true);
+      return;
+    }
+
+    setIsActionsDropdownOpen(false);
+    setIsZenMode(true);
+    setShowLibraryPanel(false);
+    setShowCommentsPanel(false);
+  }
 
   if (!currentUser) {
     return (
@@ -4514,6 +4530,16 @@ function App() {
                     </div>
                   )}
                 </div>
+
+                <button
+                  className={`btn-secondary focus-read-btn ${isZenMode ? "active" : ""}`}
+                  type="button"
+                  onClick={toggleFocusReadingMode}
+                  title={isZenMode ? "Thoát chế độ tập trung đọc" : "Bật chế độ tập trung đọc"}
+                >
+                  <BookOpen size={14} />
+                  <span>{isZenMode ? "Thoát đọc" : "Tập trung đọc"}</span>
+                </button>
               </div>
             </div>
             {/* Reading Toolbar Controls */}

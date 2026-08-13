@@ -8322,6 +8322,13 @@ button {
   border-color: var(--border-highlight);
 }
 
+.focus-read-btn.active {
+  background: #eef2ff;
+  color: #4338ca;
+  border-color: rgba(79, 70, 229, 0.35);
+  font-weight: 800;
+}
+
 .dropdown-chevron {
   color: var(--text-muted);
   transition: transform 0.2s ease;
