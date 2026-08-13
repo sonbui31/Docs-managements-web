@@ -3,6 +3,7 @@ import type {
   CommentThread,
   DocumentStatus,
   DocumentTemplate,
+  DocumentVersion,
   NotificationItem,
   Project,
   ProjectDashboard,
@@ -11,7 +12,12 @@ import type {
   RoleDashboard,
   SearchResult,
   TraceLink,
-  VersionDiff
+  VersionDiff,
+  WorkItem,
+  WorkItemComment,
+  WorkItemPriority,
+  WorkItemStatus,
+  WorkItemType
 } from "./types";
 import { getAccessToken, refreshSession } from "./authApi";
 
@@ -66,6 +72,8 @@ type BackendComment = {
   createdAt: string;
 };
 
+type BackendWorkItem = WorkItem;
+
 export async function apiFetch<T>(path: string, options?: RequestInit, retry = true): Promise<T> {
   const token = getAccessToken();
   const response = await fetch(`${API_BASE}${path}`, {
@@ -73,14 +81,14 @@ export async function apiFetch<T>(path: string, options?: RequestInit, retry = t
     credentials: "include",
     headers: options?.body instanceof FormData
       ? {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...options.headers
-        }
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers
+      }
       : {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...options?.headers
-        }
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options?.headers
+      }
   });
 
   if (response.status === 401 && retry) {
@@ -229,7 +237,7 @@ export async function fetchProjects() {
   return projects.map(mapProject);
 }
 
-export async function createProject(payload: { code: string; name: string; client?: string }) {
+export async function createProject(payload: { code?: string; name: string; client?: string }) {
   const project = await apiFetch<BackendProject>("/projects", {
     method: "POST",
     body: JSON.stringify(payload)
@@ -299,6 +307,17 @@ export async function deleteDocument(documentId: string) {
   });
 }
 
+export async function fetchDocumentVersions(documentId: string) {
+  return apiFetch<DocumentVersion[]>(`/documents/${documentId}/versions`);
+}
+
+export async function restoreDocumentVersion(documentId: string, versionId: string) {
+  const document = await apiFetch<BackendDocument>(`/documents/${documentId}/versions/${versionId}/restore`, {
+    method: "POST"
+  });
+  return mapDocument(document);
+}
+
 export async function importDocument(file: File, projectId: string, documentId?: string) {
   const body = new FormData();
   body.append("file", file);
@@ -351,6 +370,105 @@ export async function resolveComment(commentId: string) {
     method: "PATCH"
   });
   return mapComment(comment);
+}
+
+export async function fetchProjectWorkItems(projectId: string) {
+  return apiFetch<BackendWorkItem[]>(`/work-items/project/${projectId}`);
+}
+
+export async function createWorkItem(payload: {
+  projectId: string;
+  documentId?: string;
+  sourceCommentId?: string;
+  type?: WorkItemType;
+  status?: WorkItemStatus;
+  priority?: WorkItemPriority;
+  title: string;
+  description?: string;
+  attachments?: Array<{ url: string; name?: string; mimeType?: string }>;
+  assigneeId?: string;
+  assigneeName?: string;
+  dueDate?: string;
+}) {
+  return apiFetch<BackendWorkItem>("/work-items", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function createWorkItemFromComment(commentId: string, payload: {
+  type?: WorkItemType;
+  status?: WorkItemStatus;
+  priority?: WorkItemPriority;
+  title: string;
+  description?: string;
+  attachments?: Array<{ url: string; name?: string; mimeType?: string }>;
+  assigneeId?: string;
+  assigneeName?: string;
+  dueDate?: string;
+}) {
+  return apiFetch<BackendWorkItem>(`/work-items/from-comment/${commentId}`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateWorkItem(workItemId: string, payload: Partial<{
+  documentId: string | null;
+  sourceCommentId: string | null;
+  type: WorkItemType;
+  status: WorkItemStatus;
+  priority: WorkItemPriority;
+  title: string;
+  description: string | null;
+  attachments: Array<{ url: string; name?: string; mimeType?: string }> | null;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  dueDate: string | null;
+}>) {
+  return apiFetch<BackendWorkItem>(`/work-items/${workItemId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteWorkItem(workItemId: string) {
+  return apiFetch<{ ok: boolean }>(`/work-items/${workItemId}`, {
+    method: "DELETE"
+  });
+}
+
+export async function uploadWorkItemAttachment(workItemId: string, file: File) {
+  const body = new FormData();
+  body.append("file", file);
+  return apiFetch<BackendWorkItem>(`/work-items/${workItemId}/attachments`, {
+    method: "POST",
+    body
+  });
+}
+
+export async function fetchWorkItemComments(workItemId: string) {
+  return apiFetch<WorkItemComment[]>(`/work-items/${workItemId}/comments`);
+}
+
+export async function createWorkItemComment(workItemId: string, payload: { content: string; parentId?: string }) {
+  return apiFetch<WorkItemComment>(`/work-items/${workItemId}/comments`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateWorkItemComment(workItemId: string, commentId: string, payload: { content: string }) {
+  return apiFetch<WorkItemComment>(`/work-items/${workItemId}/comments/${commentId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteWorkItemComment(workItemId: string, commentId: string) {
+  return apiFetch<{ ok: boolean }>(`/work-items/${workItemId}/comments/${commentId}`, {
+    method: "DELETE"
+  });
 }
 
 export async function fetchProjectDashboard(projectId: string) {

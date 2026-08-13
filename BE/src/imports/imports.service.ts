@@ -149,7 +149,7 @@ export class ImportsService {
           createdBy: user.name || user.email,
           createdByEmail: user.email
         },
-        include: { _count: { select: { comments: { where: { status: "OPEN" } }, versions: true } } }
+        include: { _count: { select: { comments: { where: { status: "OPEN", parentId: null } }, versions: true } } }
       });
 
       await tx.documentVersion.upsert({
@@ -159,12 +159,27 @@ export class ImportsService {
           version: nextVersion,
           htmlContent,
           changeNote: `Re-imported from ${file.originalname}`,
-          createdBy: user.id
+          createdBy: user.name || user.email
         },
         update: {
           htmlContent,
           changeNote: `Re-imported from ${file.originalname}`,
-          createdBy: user.id
+          createdBy: user.name || user.email
+        }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: "DOCUMENT_VERSION_CREATED",
+          entityType: "Document",
+          entityId: documentId,
+          metadata: {
+            projectId: existingDocument.projectId,
+            sourceFileName: file.originalname,
+            previousVersion: existingDocument.currentVersion,
+            newVersion: nextVersion
+          }
         }
       });
 

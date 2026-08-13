@@ -167,7 +167,15 @@ export class CollaborationService {
       this.prisma.document.findMany({
         where: { projectId },
         orderBy: { updatedAt: "desc" },
-        select: { id: true, title: true, type: true, status: true, createdAt: true, updatedAt: true, _count: { select: { comments: true, versions: true } } }
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          status: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: { select: { comments: { where: { status: "OPEN", parentId: null } }, versions: true } }
+        }
       }),
       this.prisma.comment.count({ where: { document: { projectId }, status: "OPEN", parentId: null } }),
       this.prisma.comment.count({ where: { document: { projectId }, status: "RESOLVED", parentId: null } }),

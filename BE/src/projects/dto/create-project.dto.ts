@@ -1,9 +1,10 @@
 import { IsOptional, IsString, MaxLength } from "class-validator";
 
 export class CreateProjectDto {
+  @IsOptional()
   @IsString()
   @MaxLength(32)
-  code: string;
+  code?: string;
 
   @IsString()
   @MaxLength(160)

@@ -26,9 +26,9 @@ export class MediaService {
     }
 
     if (dto.documentId) {
-      await this.permissions.assertDocumentRole(user, dto.documentId, ["EDITOR", "MANAGER"]);
+      await this.permissions.assertDocumentRole(user, dto.documentId, ["REVIEWER", "EDITOR", "MANAGER"]);
     } else {
-      await this.permissions.assertProjectRole(user, dto.projectId, ["EDITOR", "MANAGER"]);
+      await this.permissions.assertProjectRole(user, dto.projectId, ["REVIEWER", "EDITOR", "MANAGER"]);
     }
 
     const result = await new Promise<{

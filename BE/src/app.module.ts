@@ -12,6 +12,7 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { PermissionsModule } from "./permissions/permissions.module";
 import { ProjectsModule } from "./projects/projects.module";
 import { UsersModule } from "./users/users.module";
+import { WorkItemsModule } from "./work-items/work-items.module";
 
 @Module({
   imports: [
@@ -27,7 +28,8 @@ import { UsersModule } from "./users/users.module";
     CommentsModule,
     MediaModule,
     ImportsModule,
-    ExportsModule
+    ExportsModule,
+    WorkItemsModule
   ]
 })
 export class AppModule {}

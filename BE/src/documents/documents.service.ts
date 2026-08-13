@@ -20,7 +20,7 @@ export class DocumentsService {
     return this.prisma.document.findMany({
       where: { projectId },
       orderBy: { updatedAt: "desc" },
-      include: { _count: { select: { comments: { where: { status: "OPEN" } }, versions: true } } }
+      include: { _count: { select: { comments: { where: { status: "OPEN", parentId: null } }, versions: true } } }
     });
   }
 
@@ -40,6 +40,93 @@ export class DocumentsService {
     }
 
     return document;
+  }
+
+  async versions(id: string, user: AuthenticatedUser) {
+    await this.permissions.assertDocumentRole(user, id, ["VIEWER"]);
+
+    const document = await this.prisma.document.findUnique({
+      where: { id },
+      select: { id: true }
+    });
+
+    if (!document) {
+      throw new NotFoundException("Document not found");
+    }
+
+    return this.prisma.documentVersion.findMany({
+      where: { documentId: id },
+      orderBy: [{ createdAt: "desc" }, { version: "desc" }],
+      select: {
+        id: true,
+        documentId: true,
+        version: true,
+        changeNote: true,
+        createdBy: true,
+        createdAt: true
+      }
+    });
+  }
+
+  async restoreVersion(id: string, versionId: string, user: AuthenticatedUser) {
+    await this.permissions.assertDocumentRole(user, id, ["EDITOR", "MANAGER"]);
+
+    const document = await this.prisma.document.findUnique({
+      where: { id },
+      select: { id: true, projectId: true, title: true, currentVersion: true }
+    });
+
+    if (!document) {
+      throw new NotFoundException("Document not found");
+    }
+
+    const version = await this.prisma.documentVersion.findFirst({
+      where: { id: versionId, documentId: id }
+    });
+
+    if (!version) {
+      throw new NotFoundException("Document version not found");
+    }
+
+    const nextVersion = this.nextVersion(document.currentVersion);
+
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const updatedDocument = await tx.document.update({
+        where: { id },
+        data: {
+          currentVersion: nextVersion,
+          htmlContent: version.htmlContent
+        },
+        include: { _count: { select: { comments: { where: { status: "OPEN", parentId: null } }, versions: true } } }
+      });
+
+      await tx.documentVersion.create({
+        data: {
+          documentId: id,
+          version: nextVersion,
+          htmlContent: version.htmlContent,
+          changeNote: `Restored from ${version.version}`,
+          createdBy: user.name || user.email
+        }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: "DOCUMENT_VERSION_RESTORED",
+          entityType: "Document",
+          entityId: id,
+          metadata: {
+            projectId: document.projectId,
+            restoredVersion: version.version,
+            newVersion: nextVersion,
+            title: document.title
+          }
+        }
+      });
+
+      return updatedDocument;
+    });
   }
 
   async create(dto: CreateDocumentDto, user: AuthenticatedUser) {
@@ -72,7 +159,8 @@ export class DocumentsService {
           documentId: document.id,
           version: document.currentVersion,
           htmlContent: cleanHtml,
-          changeNote: "Initial version"
+          changeNote: "Initial version",
+          createdBy: user.name || user.email
         }
       });
 
@@ -108,7 +196,7 @@ export class DocumentsService {
           currentVersion: dto.currentVersion?.trim(),
           htmlContent: cleanHtml
         },
-        include: { _count: { select: { comments: { where: { status: "OPEN" } }, versions: true } } }
+        include: { _count: { select: { comments: { where: { status: "OPEN", parentId: null } }, versions: true } } }
       });
 
       if (cleanHtml) {
@@ -119,12 +207,12 @@ export class DocumentsService {
             version: updatedDocument.currentVersion,
             htmlContent: cleanHtml,
             changeNote: dto.changeNote ?? "Updated content",
-            createdBy: user.id
+            createdBy: user.name || user.email
           },
           update: {
             htmlContent: cleanHtml,
             changeNote: dto.changeNote ?? "Updated content",
-            createdBy: user.id
+            createdBy: user.name || user.email
           }
         });
       }
@@ -209,5 +297,13 @@ export class DocumentsService {
         iframe: ["http", "https"]
       }
     });
+  }
+
+  private nextVersion(version: string) {
+    const match = version.match(/^v?(\d+)(?:\.(\d+))?$/i);
+    if (!match) return `v${Date.now()}`;
+    const major = Number(match[1] ?? 0);
+    const minor = Number(match[2] ?? 0);
+    return `v${major}.${minor + 1}`;
   }
 }

@@ -53,6 +53,69 @@ export type CommentThread = {
   replies?: CommentThread[];
 };
 
+export type WorkItemType = "TASK" | "BUG" | "REVIEW" | "CHANGE_REQUEST" | "QUESTION";
+export type WorkItemStatus = "BACKLOG" | "TODO" | "IN_PROGRESS" | "REVIEW" | "BLOCKED" | "DONE";
+export type WorkItemPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+
+export type WorkItem = {
+  id: string;
+  projectId: string;
+  documentId?: string | null;
+  sourceCommentId?: string | null;
+  type: WorkItemType;
+  status: WorkItemStatus;
+  priority: WorkItemPriority;
+  title: string;
+  description?: string | null;
+  attachments?: Array<{
+    url: string;
+    name?: string | null;
+    mimeType?: string | null;
+  }> | null;
+  assigneeId?: string | null;
+  assigneeName?: string | null;
+  dueDate?: string | null;
+  createdByName?: string | null;
+  createdByEmail?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  document?: {
+    id: string;
+    title: string;
+    type: string;
+    currentVersion: string;
+  } | null;
+  sourceComment?: {
+    id: string;
+    blockId: string;
+    selectedText?: string | null;
+    content: string;
+    status: "OPEN" | "RESOLVED";
+  } | null;
+  assignee?: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
+};
+
+export type WorkItemComment = {
+  id: string;
+  workItemId: string;
+  parentId?: string | null;
+  content: string;
+  createdByName?: string | null;
+  createdByEmail?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
+  replies?: WorkItemComment[];
+};
+
 export type ToastMessage = {
   id: string;
   type: "success" | "info" | "warning" | "error";
@@ -147,6 +210,15 @@ export type VersionDiff = {
   previous: { version: string; createdAt: string } | null;
   summary: { added: number; removed: number; unchanged: number };
   lines: Array<{ type: "same" | "added" | "removed"; text: string }>;
+};
+
+export type DocumentVersion = {
+  id: string;
+  documentId: string;
+  version: string;
+  changeNote?: string | null;
+  createdBy?: string | null;
+  createdAt: string;
 };
 
 export type RequirementTag = {

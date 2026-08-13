@@ -4,6 +4,7 @@ import {
   BarChart2,
   Bell,
   BookOpen,
+  CheckCheck,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -11,12 +12,14 @@ import {
   Clock,
   Copy,
   Download,
+  Eraser,
   Eye,
   File,
   FileCheck2,
   FileCode,
   FileDiff,
   FilePlus,
+  FileStack,
   FileText,
   FolderKanban,
   FolderPlus,
@@ -25,28 +28,29 @@ import {
   LayoutDashboard,
   ListTree,
   LogOut,
-  Maximize2,
   MessageSquarePlus,
   MessageSquareText,
-  Minimize2,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  PenLine,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Send,
   Share2,
   Sparkles,
   Tags,
   Trash2,
+  TrendingUp,
   UploadCloud,
   UserCheck,
   Users,
   X
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import {
   createComment,
   createDocument,
@@ -54,30 +58,39 @@ import {
   createProject,
   createRequirementTag,
   createTraceLink,
+  createWorkItem,
+  createWorkItemComment,
   deleteComment,
   deleteDocument,
   deleteProject,
   deleteRequirementTag,
   deleteTraceLink,
+  deleteWorkItem,
   downloadExport,
   fetchComments,
   fetchDocumentDiff,
   fetchDocumentTags,
+  fetchDocumentVersions,
   fetchDocumentTemplates,
   fetchDocumentsByProject,
   fetchNotifications,
   fetchProjectActivity,
   fetchProjectDashboard,
+  fetchProjectWorkItems,
+  fetchWorkItemComments,
   fetchProjects,
   fetchRoleDashboard,
   fetchTraceLinks,
   importDocument,
   markNotificationRead,
   resolveComment,
+  restoreDocumentVersion,
   searchProject,
   updateComment,
   updateDocument,
-  updateProject
+  updateProject,
+  updateWorkItem,
+  uploadWorkItemAttachment
 } from "./api";
 import { AuthPage } from "./AuthPage";
 import { clearAuthSession, fetchCurrentUser, getAccessToken, getStoredUser, logout } from "./authApi";
@@ -85,6 +98,7 @@ import type {
   ActivityLog,
   CommentThread,
   DocumentStatus,
+  DocumentVersion,
   DocumentTemplate,
   NotificationItem,
   Project,
@@ -96,7 +110,12 @@ import type {
   ToastMessage,
   TraceLink,
   User,
-  VersionDiff
+  VersionDiff,
+  WorkItem,
+  WorkItemComment,
+  WorkItemPriority,
+  WorkItemStatus,
+  WorkItemType
 } from "./types";
 
 const AdminPanel = lazy(() => import("./AdminPanel").then((module) => ({ default: module.AdminPanel })));
@@ -309,6 +328,44 @@ interface TocItem {
   level: number;
 }
 
+const WORKBOARD_COLUMNS: Array<{ id: WorkItemStatus; label: string; hint: string }> = [
+  { id: "BACKLOG", label: "Backlog", hint: "Mới ghi nhận" },
+  { id: "TODO", label: "To Do", hint: "Đã xác nhận" },
+  { id: "IN_PROGRESS", label: "In Progress", hint: "Đang xử lý" },
+  { id: "REVIEW", label: "Review / QA", hint: "Chờ kiểm tra" },
+  { id: "BLOCKED", label: "Blocked", hint: "Đang kẹt" },
+  { id: "DONE", label: "Done", hint: "Hoàn thành" }
+];
+
+const WORK_ITEM_TYPE_LABEL: Record<WorkItemType, string> = {
+  TASK: "Task",
+  BUG: "Bug",
+  REVIEW: "Review",
+  CHANGE_REQUEST: "Change",
+  QUESTION: "Question"
+};
+
+const WORK_ITEM_PRIORITY_LABEL: Record<WorkItemPriority, string> = {
+  LOW: "Low",
+  MEDIUM: "Medium",
+  HIGH: "High",
+  CRITICAL: "Critical"
+};
+
+type WorkItemDraft = {
+  id?: string;
+  projectId: string;
+  documentId: string;
+  type: WorkItemType;
+  status: WorkItemStatus;
+  priority: WorkItemPriority;
+  title: string;
+  description: string;
+  assigneeName: string;
+  dueDate: string;
+  attachmentsText: string;
+};
+
 function App() {
   // Authentication State
   const [currentUser, setCurrentUser] = useState<User | null>(() => getStoredUser());
@@ -391,6 +448,19 @@ function App() {
 
   // Comments state
   const [commentsList, setCommentsList] = useState<CommentThread[]>([]);
+  const [workItems, setWorkItems] = useState<WorkItem[]>([]);
+  const [isLoadingWorkItems, setIsLoadingWorkItems] = useState<boolean>(false);
+  const [draggingWorkItemId, setDraggingWorkItemId] = useState<string | null>(null);
+  const [workboardTypeFilter, setWorkboardTypeFilter] = useState<"ALL" | WorkItemType>("ALL");
+  const [workboardPriorityFilter, setWorkboardPriorityFilter] = useState<"ALL" | WorkItemPriority>("ALL");
+  const [isWorkItemModalOpen, setIsWorkItemModalOpen] = useState<boolean>(false);
+  const [workItemDraft, setWorkItemDraft] = useState<WorkItemDraft | null>(null);
+  const [viewingWorkItemId, setViewingWorkItemId] = useState<string | null>(null);
+  const [workItemComments, setWorkItemComments] = useState<WorkItemComment[]>([]);
+  const [workItemCommentText, setWorkItemCommentText] = useState<string>("");
+  const [replyingWorkItemCommentId, setReplyingWorkItemCommentId] = useState<string | null>(null);
+  const [workItemReplyText, setWorkItemReplyText] = useState<string>("");
+  const [isUploadingWorkItemAttachment, setIsUploadingWorkItemAttachment] = useState<boolean>(false);
   const [commentFilter, setCommentFilter] = useState<"all" | "open" | "resolved" | "mine">("all");
   const [collabPanelTab, setCollabPanelTab] = useState<"comments" | "diff" | "tags" | "trace" | "activity" | "notifications">("comments");
   const [projectDashboard, setProjectDashboard] = useState<ProjectDashboard | null>(null);
@@ -431,6 +501,10 @@ function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
   const [exportType, setExportType] = useState<"pdf" | "docx">("pdf");
   const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [isVersionModalOpen, setIsVersionModalOpen] = useState<boolean>(false);
+  const [documentVersions, setDocumentVersions] = useState<DocumentVersion[]>([]);
+  const [isLoadingVersions, setIsLoadingVersions] = useState<boolean>(false);
+  const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
 
   // Create Project Modal state
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState<boolean>(false);
@@ -466,7 +540,7 @@ function App() {
   // Confirmation Delete Popup Modal state
   const [confirmDeleteModal, setConfirmDeleteModal] = useState<{
     isOpen: boolean;
-    type: "project" | "document" | "comment" | null;
+    type: "project" | "document" | "comment" | "workItem" | null;
     id: string | null;
     title: string;
     message: string;
@@ -561,19 +635,6 @@ function App() {
   }, [activeTabNav, documentsList, selectedDocumentId, selectedProjectId]);
 
   useEffect(() => {
-    if (activeTabNav !== "review") return;
-    const currentDocumentHasComments = (documentCommentCounts[selectedDocumentId] ?? 0) > 0;
-    if (currentDocumentHasComments) return;
-
-    const firstReviewDocument = documentsList.find((document) => {
-      const openCount = documentCommentCounts[document.id] ?? document.openCommentsCount ?? 0;
-      return openCount > 0;
-    });
-    if (firstReviewDocument?.projectId) setSelectedProjectId(firstReviewDocument.projectId);
-    setSelectedDocumentId(firstReviewDocument?.id ?? "empty-document");
-  }, [activeTabNav, documentCommentCounts, documentsList, selectedDocumentId]);
-
-  useEffect(() => {
     if (!isBackendConnected || !selectedDocumentId || selectedDocumentId === "empty-document") return;
     setSelectedCommentTarget(null);
     setActiveBlockId(null);
@@ -614,6 +675,7 @@ function App() {
         setProjectsList([]);
         setDocumentsList([]);
         setCommentsList([]);
+        setWorkItems([]);
         setSelectedProjectId("");
         setSelectedDocumentId("empty-document");
         setIsBackendConnected(true);
@@ -690,6 +752,20 @@ function App() {
     } catch (error) {
       console.error("Cannot load project collaboration:", error);
     }
+    await loadProjectWorkItems(projectId);
+  }
+
+  async function loadProjectWorkItems(projectId: string) {
+    if (!projectId) return;
+    setIsLoadingWorkItems(true);
+    try {
+      setWorkItems(await fetchProjectWorkItems(projectId));
+    } catch (error) {
+      console.error("Cannot load project work items:", error);
+      setWorkItems([]);
+    } finally {
+      setIsLoadingWorkItems(false);
+    }
   }
 
   async function loadRoleDashboard() {
@@ -730,7 +806,7 @@ function App() {
     }
   }
 
-  function handleDocumentSelection() {
+  function handleDocumentSelection(event?: MouseEvent | ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>) {
     const selection = window.getSelection();
 
     if (!selection || selection.rangeCount === 0 || !documentContainerRef.current) return;
@@ -754,9 +830,11 @@ function App() {
     const selectedText = getSelectedRangeText(range);
     if (selectedText.length < 2) return;
 
+    const overlayRects = getSelectionOverlayRects(range);
+
     clearActiveCommentHighlight();
     activeCommentSelectionRangeRef.current = range.cloneRange();
-    setSelectionHighlightRects(getSelectionOverlayRects(range));
+    setSelectionHighlightRects(overlayRects);
     applyBrowserSelectionRange(selection, range);
 
     const sourceElement =
@@ -770,18 +848,68 @@ function App() {
       (pdfPage?.dataset.page ? `PDF-P${pdfPage.dataset.page}` : undefined) ??
       explicitReq?.dataset.blockId ??
       `SEL-${Math.abs(hashText(selectedText)).toString().slice(0, 6)}`;
-    const targetRect = getSelectionEndRect(range);
+    const anchorPoint = getSelectionAnchorPoint(overlayRects, event);
+    const targetRect = anchorPoint ? null : getSelectionEndRect(range);
 
     setSelectedCommentTarget({
       blockId,
       selectedText: selectedText.slice(0, 1000)
     });
     setIsSelectionComposerOpen(false);
-    if (targetRect) {
+    if (anchorPoint) {
+      setSelectionPopover(getSelectionPopoverPositionFromPoint(anchorPoint));
+    } else if (targetRect) {
       setSelectionPopover(getSelectionPopoverPosition(targetRect));
     }
     setActiveBlockId(blockId);
     setShowCommentsPanel(true);
+  }
+
+  function getSelectionPointerPoint(event?: MouseEvent | ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>) {
+    if (!event || !("clientX" in event) || !("clientY" in event)) return null;
+    if (typeof event.clientX !== "number" || typeof event.clientY !== "number") return null;
+    if (event.clientX <= 0 && event.clientY <= 0) return null;
+    const docPage = documentContainerRef.current?.closest(".doc-page") as HTMLElement | null;
+    if (!docPage) return null;
+
+    const pageRect = docPage.getBoundingClientRect();
+    return {
+      x: event.clientX - pageRect.left + docPage.scrollLeft,
+      y: event.clientY - pageRect.top + docPage.scrollTop
+    };
+  }
+
+  function getSelectionAnchorPoint(
+    rects: Array<{ top: number; left: number; width: number; height: number }>,
+    event?: MouseEvent | ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>
+  ) {
+    const pointerPoint = getSelectionPointerPoint(event);
+
+    if (rects.length === 0) return pointerPoint;
+
+    if (!pointerPoint) {
+      const lastRect = rects[rects.length - 1];
+      return { x: lastRect.left + lastRect.width, y: lastRect.top + lastRect.height };
+    }
+
+    const nearestRect = rects.reduce((nearest, rect) => {
+      const nearestDistance = distancePointToRect(pointerPoint, nearest);
+      const rectDistance = distancePointToRect(pointerPoint, rect);
+      return rectDistance < nearestDistance ? rect : nearest;
+    }, rects[0]);
+
+    return {
+      x: Math.min(Math.max(pointerPoint.x, nearestRect.left), nearestRect.left + nearestRect.width),
+      y: nearestRect.top + nearestRect.height
+    };
+  }
+
+  function distancePointToRect(point: { x: number; y: number }, rect: { top: number; left: number; width: number; height: number }) {
+    const right = rect.left + rect.width;
+    const bottom = rect.top + rect.height;
+    const dx = point.x < rect.left ? rect.left - point.x : point.x > right ? point.x - right : 0;
+    const dy = point.y < rect.top ? rect.top - point.y : point.y > bottom ? point.y - bottom : 0;
+    return Math.hypot(dx, dy);
   }
 
   function getCommentSelectionRange(range: Range, anchorNode: Node, focusNode: Node) {
@@ -844,26 +972,100 @@ function App() {
   }
 
   function getSelectionEndRect(range: Range) {
-    const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
+    const edgeRange = range.cloneRange();
+    edgeRange.collapse(false);
+
+    const edgeRect = firstUsableRect(edgeRange);
+    if (edgeRect) return edgeRect;
+
+    const lastCharacterRange = getLastCharacterRange(range);
+    const lastCharacterRect = lastCharacterRange ? firstUsableRect(lastCharacterRange) : null;
+    if (lastCharacterRect) {
+      return new DOMRect(
+        lastCharacterRect.right,
+        lastCharacterRect.top,
+        1,
+        lastCharacterRect.height
+      );
+    }
+
+    const rects = Array.from(range.getClientRects()).filter(isUsableRect);
     const lastRect = rects[rects.length - 1];
-    if (lastRect) return lastRect;
+    if (lastRect) return new DOMRect(lastRect.right, lastRect.top, 1, lastRect.height);
 
     const boundingRect = range.getBoundingClientRect();
     return boundingRect.width || boundingRect.height ? boundingRect : null;
   }
 
+  function firstUsableRect(range: Range) {
+    return Array.from(range.getClientRects()).find(isUsableRect) ?? null;
+  }
+
+  function isUsableRect(rect: DOMRect) {
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function getLastCharacterRange(range: Range) {
+    const walkerRoot = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+      ? range.commonAncestorContainer
+      : range.commonAncestorContainer.parentElement;
+    if (!walkerRoot) return null;
+
+    const walker = document.createTreeWalker(walkerRoot, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node.textContent?.trim()) return NodeFilter.FILTER_REJECT;
+        return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }
+    });
+
+    let lastTextNode: Text | null = null;
+    while (walker.nextNode()) {
+      lastTextNode = walker.currentNode as Text;
+    }
+    if (!lastTextNode) return null;
+
+    const endOffset = lastTextNode === range.endContainer
+      ? Math.min(range.endOffset, lastTextNode.length)
+      : lastTextNode.length;
+    if (endOffset <= 0) return null;
+
+    const lastCharacterRange = document.createRange();
+    lastCharacterRange.setStart(lastTextNode, Math.max(0, endOffset - 1));
+    lastCharacterRange.setEnd(lastTextNode, endOffset);
+    return lastCharacterRange;
+  }
+
   function getSelectionPopoverPosition(rect: DOMRect) {
-    const toolbarWidth = 128;
+    const docPage = documentContainerRef.current?.closest(".doc-page") as HTMLElement | null;
+    if (!docPage) {
+      return { top: rect.bottom, left: rect.right };
+    }
+
+    const pageRect = docPage.getBoundingClientRect();
+    return getSelectionPopoverPositionFromPoint({
+      x: rect.right - pageRect.left + docPage.scrollLeft,
+      y: rect.bottom - pageRect.top + docPage.scrollTop
+    });
+  }
+
+  function getSelectionPopoverPositionFromPoint(point: { x: number; y: number }) {
+    const docPage = documentContainerRef.current?.closest(".doc-page") as HTMLElement | null;
+    const toolbarWidth = 168;
     const toolbarHeight = 38;
-    const gutter = 10;
-    const preferredTop = rect.bottom + 8;
-    const top = preferredTop + toolbarHeight + gutter > window.innerHeight
-      ? Math.max(72, rect.top - toolbarHeight - 8)
-      : Math.max(72, preferredTop);
-    const left = Math.min(
-      window.innerWidth - toolbarWidth - gutter,
-      Math.max(gutter, rect.right - toolbarWidth)
-    );
+    const viewportGutter = 10;
+    const anchorGap = 8;
+    const visibleLeft = (docPage?.scrollLeft ?? 0) + viewportGutter;
+    const visibleTop = (docPage?.scrollTop ?? 0) + viewportGutter;
+    const visibleRight = (docPage?.scrollLeft ?? 0) + (docPage?.clientWidth ?? window.innerWidth) - viewportGutter;
+    const visibleBottom = (docPage?.scrollTop ?? 0) + (docPage?.clientHeight ?? window.innerHeight) - viewportGutter;
+    const preferredTop = point.y + anchorGap;
+    const top = preferredTop + toolbarHeight > visibleBottom
+      ? Math.max(visibleTop, point.y - toolbarHeight - anchorGap)
+      : Math.max(visibleTop, preferredTop);
+    const preferredLeft = point.x + anchorGap;
+    const left = preferredLeft + toolbarWidth > visibleRight
+      ? Math.max(visibleLeft, point.x - toolbarWidth)
+      : Math.max(visibleLeft, preferredLeft);
 
     return { top, left };
   }
@@ -924,13 +1126,20 @@ function App() {
   }
 
   function focusSelectedCommentComposer() {
+    if (!selectedCommentTarget?.selectedText) {
+      addToast("warning", "Chưa chọn đoạn", "Bôi đen đoạn cần góp ý trong tài liệu trước khi nhận xét.");
+      return;
+    }
     setShowCommentsPanel(true);
     setIsSelectionComposerOpen(true);
     window.setTimeout(() => inlineCommentTextareaRef.current?.focus(), 50);
   }
 
   async function handleCopySelectedText() {
-    if (!selectedCommentTarget?.selectedText) return;
+    if (!selectedCommentTarget?.selectedText) {
+      addToast("warning", "Chưa chọn đoạn", "Bôi đen đoạn cần copy trong tài liệu trước.");
+      return;
+    }
 
     try {
       await navigator.clipboard.writeText(selectedCommentTarget.selectedText);
@@ -1190,14 +1399,8 @@ function App() {
 
   // Documents for current scope
   const projectDocuments = useMemo(() => {
-    if (activeTabNav === "review") {
-      return documentsList.filter((doc) => {
-        const openCount = documentCommentCounts[doc.id] ?? doc.openCommentsCount ?? 0;
-        return openCount > 0;
-      });
-    }
     return documentsList.filter((doc) => doc.projectId === selectedProjectId);
-  }, [documentsList, documentCommentCounts, selectedProjectId, activeTabNav]);
+  }, [documentsList, selectedProjectId]);
 
   // Handle project change: auto select first document of new project
   const handleSelectProject = (projectId: string) => {
@@ -1219,19 +1422,13 @@ function App() {
 
   const selectedDocument = useMemo(() => {
     const selected = documentsList.find((doc) => doc.id === selectedDocumentId);
-    const selectedFitsCurrentScope =
-      activeTabNav !== "review"
-        ? true
-        : Boolean(selected && projectDocuments.some((document) => document.id === selected.id));
-    const doc = selectedFitsCurrentScope
-      ? selected ?? projectDocuments[0] ?? documentsList[0] ?? EMPTY_DOCUMENT
-      : projectDocuments[0] ?? EMPTY_DOCUMENT;
+    const doc = selected ?? projectDocuments[0] ?? documentsList[0] ?? EMPTY_DOCUMENT;
     return {
       ...doc,
       title: normalizeVietnameseText(doc.title),
       contentHtml: normalizeVietnameseText(doc.contentHtml || "")
     };
-  }, [activeTabNav, documentsList, selectedDocumentId, projectDocuments]);
+  }, [documentsList, selectedDocumentId, projectDocuments]);
 
   const importTargetDocuments = useMemo(
     () => documentsList.filter((doc) => doc.projectId === importTargetProjectId),
@@ -1241,14 +1438,14 @@ function App() {
   // Filtered documents list
   const filteredDocuments = useMemo(() => {
     return projectDocuments.filter((doc) => {
-      const matchesStatus = activeTabNav === "review" || statusFilter === "All" || doc.status === statusFilter;
+      const matchesStatus = statusFilter === "All" || doc.status === statusFilter;
       const matchesSearch =
         doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         doc.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
         doc.owner.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesStatus && matchesSearch;
     });
-  }, [activeTabNav, projectDocuments, statusFilter, searchQuery]);
+  }, [projectDocuments, statusFilter, searchQuery]);
 
   // Filtered comments for selected block or document
   const displayedComments = useMemo(() => {
@@ -1272,6 +1469,256 @@ function App() {
         replies: repliesByParent.get(comment.id) ?? []
       }));
   }, [commentsList, selectedDocument.id, commentFilter, currentUser?.email, currentUser?.name]);
+
+  const visibleWorkItems = useMemo(() => {
+    return workItems.filter((item) => {
+      const matchesType = workboardTypeFilter === "ALL" || item.type === workboardTypeFilter;
+      const matchesPriority = workboardPriorityFilter === "ALL" || item.priority === workboardPriorityFilter;
+      const query = searchQuery.trim().toLowerCase();
+      const matchesSearch =
+        !query ||
+        item.title.toLowerCase().includes(query) ||
+        (item.description ?? "").toLowerCase().includes(query) ||
+        (item.document?.title ?? "").toLowerCase().includes(query) ||
+        (item.assigneeName ?? item.assignee?.name ?? "").toLowerCase().includes(query);
+      return matchesType && matchesPriority && matchesSearch;
+    });
+  }, [searchQuery, workItems, workboardPriorityFilter, workboardTypeFilter]);
+
+  const workboardMetrics = useMemo(() => {
+    const openItems = workItems.filter((item) => item.status !== "DONE");
+    const criticalBugs = workItems.filter((item) => item.type === "BUG" && item.priority === "CRITICAL" && item.status !== "DONE");
+    const blockedItems = workItems.filter((item) => item.status === "BLOCKED");
+    const overdueItems = workItems.filter((item) => {
+      if (!item.dueDate || item.status === "DONE") return false;
+      const dueDate = new Date(item.dueDate);
+      return !Number.isNaN(dueDate.getTime()) && dueDate < new Date();
+    });
+    const doneItems = workItems.filter((item) => item.status === "DONE");
+    const completionRate = workItems.length ? Math.round((doneItems.length / workItems.length) * 100) : 0;
+    return { openItems, criticalBugs, blockedItems, overdueItems, doneItems, completionRate };
+  }, [workItems]);
+
+  const viewingWorkItem = useMemo(
+    () => workItems.find((item) => item.id === viewingWorkItemId) ?? null,
+    [viewingWorkItemId, workItems]
+  );
+
+  function workItemTypeIcon(type: WorkItemType) {
+    if (type === "BUG") return <AlertTriangle size={13} />;
+    if (type === "REVIEW") return <MessageSquareText size={13} />;
+    if (type === "CHANGE_REQUEST") return <FileDiff size={13} />;
+    if (type === "QUESTION") return <MessageSquarePlus size={13} />;
+    return <CheckCircle2 size={13} />;
+  }
+
+  function formatWorkItemDate(value?: string | null) {
+    if (!value) return "Chưa có hạn";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Chưa có hạn";
+    return date.toLocaleDateString("vi-VN");
+  }
+
+  function parseWorkItemAttachments(value: string) {
+    return value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((url) => ({
+        url,
+        name: url.split("/").pop() || "Attachment",
+        mimeType: inferAttachmentMimeType(url)
+      }));
+  }
+
+  function inferAttachmentMimeType(url: string) {
+    const cleanUrl = url.split("?")[0].toLowerCase();
+    if (/\.(png|jpe?g|gif|webp|avif)$/.test(cleanUrl)) return "image";
+    if (/\.(mp4|webm|mov|m4v)$/.test(cleanUrl)) return "video";
+    return "link";
+  }
+
+  function isVideoAttachment(attachment: { url: string; mimeType?: string | null }) {
+    return attachment.mimeType?.startsWith("video") || /\.(mp4|webm|mov|m4v)(\?|$)/i.test(attachment.url);
+  }
+
+  function isImageAttachment(attachment: { url: string; mimeType?: string | null }) {
+    return attachment.mimeType?.startsWith("image") || /\.(png|jpe?g|gif|webp|avif)(\?|$)/i.test(attachment.url);
+  }
+
+  async function handleDropWorkItem(status: WorkItemStatus) {
+    if (!draggingWorkItemId) return;
+    const item = workItems.find((workItem) => workItem.id === draggingWorkItemId);
+    setDraggingWorkItemId(null);
+    if (!item || item.status === status) return;
+
+    const previousItems = workItems;
+    setWorkItems((prev) => prev.map((workItem) => workItem.id === item.id ? { ...workItem, status } : workItem));
+    try {
+      const updated = await updateWorkItem(item.id, { status });
+      setWorkItems((prev) => prev.map((workItem) => workItem.id === updated.id ? updated : workItem));
+    } catch (error) {
+      console.error("Drop work item error:", error);
+      setWorkItems(previousItems);
+      addToast("error", "Không đổi được trạng thái", "BE chưa cập nhật trạng thái work item.");
+    }
+  }
+
+  function buildWorkItemDraft(overrides: Partial<WorkItemDraft> = {}): WorkItemDraft {
+    return {
+      projectId: selectedProject.id,
+      documentId: selectedDocument.id !== "empty-document" ? selectedDocument.id : "",
+      type: "TASK",
+      status: "BACKLOG",
+      priority: "MEDIUM",
+      title: "",
+      description: "",
+      assigneeName: currentUser?.name ?? "",
+      dueDate: "",
+      attachmentsText: "",
+      ...overrides
+    };
+  }
+
+  function openCreateWorkItemModal(status: WorkItemStatus = "BACKLOG") {
+    setWorkItemDraft(buildWorkItemDraft({ status }));
+    setIsWorkItemModalOpen(true);
+  }
+
+  function openEditWorkItemModal(item: WorkItem) {
+    setWorkItemDraft({
+      id: item.id,
+      projectId: item.projectId,
+      documentId: item.documentId ?? "",
+      type: item.type,
+      status: item.status,
+      priority: item.priority,
+      title: item.title,
+      description: item.description ?? "",
+      assigneeName: item.assigneeName ?? item.assignee?.name ?? "",
+      dueDate: item.dueDate ? item.dueDate.slice(0, 10) : "",
+      attachmentsText: (item.attachments ?? []).map((attachment) => attachment.url).join("\n")
+    });
+    setIsWorkItemModalOpen(true);
+  }
+
+  function openViewWorkItemModal(item: WorkItem) {
+    setViewingWorkItemId(item.id);
+    setWorkItemComments([]);
+    setWorkItemCommentText("");
+    setReplyingWorkItemCommentId(null);
+    setWorkItemReplyText("");
+    void loadWorkItemComments(item.id);
+  }
+
+  async function loadWorkItemComments(workItemId: string) {
+    try {
+      setWorkItemComments(await fetchWorkItemComments(workItemId));
+    } catch (error) {
+      console.error("Cannot load work item comments:", error);
+      addToast("error", "Không tải được comment", "BE chưa trả về luồng trao đổi của ticket.");
+    }
+  }
+
+  function groupedWorkItemComments() {
+    const repliesByParent = new Map<string, WorkItemComment[]>();
+    workItemComments.forEach((comment) => {
+      if (!comment.parentId) return;
+      repliesByParent.set(comment.parentId, [...(repliesByParent.get(comment.parentId) ?? []), comment]);
+    });
+    return workItemComments
+      .filter((comment) => !comment.parentId)
+      .map((comment) => ({ ...comment, replies: repliesByParent.get(comment.id) ?? [] }));
+  }
+
+  async function handleAddWorkItemComment(parentId?: string) {
+    if (!viewingWorkItem?.id) return;
+    const content = parentId ? workItemReplyText.trim() : workItemCommentText.trim();
+    if (!content) return;
+    try {
+      await createWorkItemComment(viewingWorkItem.id, { content, parentId });
+      if (parentId) {
+        setReplyingWorkItemCommentId(null);
+        setWorkItemReplyText("");
+      } else {
+        setWorkItemCommentText("");
+      }
+      await loadWorkItemComments(viewingWorkItem.id);
+    } catch (error) {
+      console.error("Create work item comment error:", error);
+      addToast("error", "Không gửi được comment", "BE chưa lưu được trao đổi ticket.");
+    }
+  }
+
+  async function handleUploadWorkItemAttachment(file?: File) {
+    if (!file || !viewingWorkItem?.id || isUploadingWorkItemAttachment) return;
+    setIsUploadingWorkItemAttachment(true);
+    try {
+      const updated = await uploadWorkItemAttachment(viewingWorkItem.id, file);
+      setWorkItems((prev) => prev.map((item) => item.id === updated.id ? updated : item));
+      addToast("success", "Đã tải file lên", "File đã được gắn vào ticket.");
+    } catch (error) {
+      console.error("Upload work item attachment error:", error);
+      addToast("error", "Không upload được file", "Kiểm tra định dạng file hoặc quyền truy cập.");
+    } finally {
+      setIsUploadingWorkItemAttachment(false);
+    }
+  }
+
+  async function handleSaveWorkItem() {
+    if (!workItemDraft) return;
+    if (!workItemDraft.title.trim()) {
+      addToast("warning", "Thiếu tiêu đề", "Vui lòng nhập tiêu đề ticket.");
+      return;
+    }
+
+    const payload = {
+      documentId: workItemDraft.documentId || undefined,
+      type: workItemDraft.type,
+      status: workItemDraft.status,
+      priority: workItemDraft.priority,
+      title: workItemDraft.title.trim(),
+      description: workItemDraft.description.trim() || undefined,
+      attachments: parseWorkItemAttachments(workItemDraft.attachmentsText),
+      assigneeName: workItemDraft.assigneeName.trim() || undefined,
+      dueDate: workItemDraft.dueDate || undefined
+    };
+
+    try {
+      const saved = workItemDraft.id
+        ? await updateWorkItem(workItemDraft.id, payload)
+        : await createWorkItem({ ...payload, projectId: workItemDraft.projectId });
+      setWorkItems((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)]);
+      setIsWorkItemModalOpen(false);
+      setWorkItemDraft(null);
+      addToast("success", workItemDraft.id ? "Đã cập nhật ticket" : "Đã tạo ticket", `"${saved.title}" đã được lưu vào Workboard.`);
+    } catch (error) {
+      console.error("Save work item error:", error);
+      addToast("error", "Không lưu được ticket", "BE chưa lưu được thay đổi này.");
+    }
+  }
+
+  function requestDeleteWorkItem(item: WorkItem) {
+    setConfirmDeleteModal({
+      isOpen: true,
+      type: "workItem",
+      id: item.id,
+      title: "Xác nhận xóa ticket",
+      message: `Bạn có chắc chắn muốn xóa ticket "${item.title}" khỏi Workboard?`
+    });
+  }
+
+  async function handleDeleteWorkItem(itemId: string) {
+    const item = workItems.find((workItem) => workItem.id === itemId);
+    try {
+      await deleteWorkItem(itemId);
+      setWorkItems((prev) => prev.filter((workItem) => workItem.id !== itemId));
+      addToast("info", "Đã xóa ticket", `"${item?.title ?? "Ticket"}" đã được xóa khỏi Workboard.`);
+    } catch (error) {
+      console.error("Delete work item error:", error);
+      addToast("error", "Không xóa được ticket", "BE chưa xóa được ticket này.");
+    }
+  }
 
   useEffect(() => {
     if (!documentContainerRef.current) return;
@@ -1587,6 +2034,8 @@ function App() {
       await handleDeleteDocument(id);
     } else if (type === "comment") {
       await handleDeleteComment(id);
+    } else if (type === "workItem") {
+      await handleDeleteWorkItem(id);
     }
 
     setConfirmDeleteModal({ isOpen: false, type: null, id: null, title: "", message: "" });
@@ -1636,7 +2085,7 @@ function App() {
         "success",
         targetDocumentId ? "Đã cập nhật tài liệu!" : "Import file thành công!",
         targetDocumentId
-          ? `Nội dung "${importedDoc.title}" đã được thay bằng file "${file.name}".`
+          ? `Nội dung "${importedDoc.title}" đã được cập nhật lên ${importedDoc.version} từ file "${file.name}".`
           : `BE đã chuyển "${file.name}" sang HTML và lưu vào Neon.`
       );
     } catch (error) {
@@ -1654,6 +2103,42 @@ function App() {
     if (extension === "doc" || extension === "docx") return "Đang chuyển Word sang HTML và upload ảnh nhúng lên Cloudinary...";
     if (extension === "md") return "Đang chuyển Markdown sang HTML và lưu vào Neon...";
     return "Đang upload và chuyển đổi tài liệu...";
+  }
+
+  async function openVersionHistoryModal() {
+    if (selectedDocument.id === "empty-document") return;
+    setIsVersionModalOpen(true);
+    setIsLoadingVersions(true);
+    try {
+      setDocumentVersions(await fetchDocumentVersions(selectedDocument.id));
+    } catch (error) {
+      console.error("Load document versions error:", error);
+      addToast("error", "Không tải được lịch sử phiên bản", "Vui lòng kiểm tra quyền truy cập hoặc thử lại.");
+    } finally {
+      setIsLoadingVersions(false);
+    }
+  }
+
+  async function handleRestoreVersion(version: DocumentVersion) {
+    if (selectedDocument.id === "empty-document" || restoringVersionId) return;
+    setRestoringVersionId(version.id);
+    try {
+      const restoredDocument = await restoreDocumentVersion(selectedDocument.id, version.id);
+      setDocumentsList((prev) => prev.map((doc) => (doc.id === restoredDocument.id ? restoredDocument : doc)));
+      setDocumentVersions(await fetchDocumentVersions(restoredDocument.id));
+      void loadProjectCollaboration(restoredDocument.projectId || selectedProjectId);
+      void loadDocumentCollaboration(restoredDocument.id);
+      addToast(
+        "success",
+        "Đã khôi phục phiên bản",
+        `${restoredDocument.title} đã được tạo phiên bản mới ${restoredDocument.version} từ ${version.version}.`
+      );
+    } catch (error) {
+      console.error("Restore document version error:", error);
+      addToast("error", "Không khôi phục được phiên bản", "Vui lòng kiểm tra quyền chỉnh sửa tài liệu hoặc thử lại.");
+    } finally {
+      setRestoringVersionId(null);
+    }
   }
 
   async function handleCreateRequirementTagFromForm() {
@@ -2019,9 +2504,9 @@ function App() {
 
   useEffect(() => {
     let timer = 0;
-    const scheduleSelectionCheck = () => {
+    const scheduleSelectionCheck = (event: MouseEvent) => {
       window.clearTimeout(timer);
-      timer = window.setTimeout(handleDocumentSelection, 90);
+      timer = window.setTimeout(() => handleDocumentSelection(event), 90);
     };
 
     document.addEventListener("mouseup", scheduleSelectionCheck);
@@ -2358,12 +2843,6 @@ function App() {
       .reduce((total, document) => total + (documentCommentCounts[document.id] ?? document.openCommentsCount ?? 0), 0);
   }
 
-  function getDocumentPreviewText(html?: string) {
-    const text = normalizeVietnameseText((html ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
-    if (!text) return "Chưa có nội dung xem nhanh.";
-    return text.length > 130 ? `${text.slice(0, 130).trim()}...` : text;
-  }
-
   function activityLabel(action: string) {
     const labels: Record<string, string> = {
       PROJECT_CREATED: "Tạo dự án",
@@ -2621,13 +3100,12 @@ function App() {
   // Compute grid layout class name
   const gridLayoutClass = useMemo(() => {
     let base = "work-grid";
-    if (activeTabNav === "review") base += " review-mode";
     if (isZenMode) base += " zen-mode";
     if (!showLibraryPanel && !showCommentsPanel) return `${base} hide-both`;
     if (!showLibraryPanel) return `${base} hide-library`;
     if (!showCommentsPanel) return `${base} hide-comments`;
     return base;
-  }, [activeTabNav, isZenMode, showLibraryPanel, showCommentsPanel]);
+  }, [isZenMode, showLibraryPanel, showCommentsPanel]);
 
   if (!currentUser) {
     return (
@@ -2709,15 +3187,14 @@ function App() {
             <button
               className={activeTabNav === "review" ? "nav-item active" : "nav-item"}
               type="button"
-              title="Ghi chú & Review"
-              data-tooltip="Ghi chú & Review"
+              title="Workboard"
+              data-tooltip="Workboard"
               onClick={() => setActiveTabNav("review")}
             >
               <div className="nav-item-content">
-                <MessageSquareText size={17} />
-                <span>Ghi chú & Review</span>
+                <FolderKanban size={17} />
+                <span>Workboard</span>
               </div>
-              <span className="nav-badge">{openCommentsTotalCount}</span>
             </button>
 
             {(currentUser.role === "ADMIN" || currentUser.role === "MANAGER") && (
@@ -2846,12 +3323,16 @@ function App() {
                 : activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
                 ? "Quản trị hệ thống • Users & Permissions"
                 : activeTabNav === "review"
-                  ? "Trao đổi tài liệu • Ghi chú & Review"
+                  ? "Project Workboard • Task, bug và tiến độ"
                   : `${selectedProject.code} / ${selectedProject.client}`}
             </p>
             <h1>
               {activeTabNav === "dashboard"
-                ? "Dashboard điều hành"
+                ? (() => {
+                    const h = new Date().getHours();
+                    const greeting = h < 12 ? "Chào buổi sáng" : h < 18 ? "Chào buổi chiều" : "Chào buổi tối";
+                    return `${greeting}, ${currentUser.name.split(" ").slice(-1)[0]}!`;
+                  })()
                 : activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
                 ? "Quản Lý User & Phân Quyền"
                 : activeTabNav === "review"
@@ -2868,7 +3349,7 @@ function App() {
                 </button>
               )}
               <button className="exec-action secondary" type="button" onClick={() => void loadRoleDashboard()}>
-                <BarChart2 size={15} /> Làm mới
+                <RefreshCw size={15} /> Làm mới
               </button>
             </div>
           )}
@@ -2974,18 +3455,20 @@ function App() {
 
         {activeTabNav === "dashboard" ? (
           <section className="role-dashboard-page executive-dashboard">
+            {/* ── KPI strip ── */}
             <div className="exec-kpi-grid">
               {[
-                ["Tổng Project", executiveDashboardData().projectCount, "Quy mô dự án"],
-                ["Project active", executiveDashboardData().activeProjects, "Còn phát sinh hoạt động"],
-                ["Tổng tài liệu", executiveDashboardData().totalDocuments, "Quy mô kho tài liệu"],
-                ["Mới tháng này", `+${executiveDashboardData().createdThisMonth}`, "Tài liệu vừa bổ sung"],
-                ["Cập nhật tháng này", executiveDashboardData().updatedThisMonth, "Mức độ duy trì"]
-              ].map(([label, value, note]) => (
-                <div className="exec-kpi-card" key={String(label)}>
+                { label: "Tổng Project",        value: executiveDashboardData().projectCount,        note: "Quy mô dự án",             color: "kpi-indigo",  Icon: FolderKanban },
+                { label: "Project active",       value: executiveDashboardData().activeProjects,       note: "Còn phát sinh hoạt động",   color: "kpi-emerald", Icon: TrendingUp    },
+                { label: "Tổng tài liệu",        value: executiveDashboardData().totalDocuments,       note: "Quy mô kho tài liệu",      color: "kpi-blue",    Icon: FileStack     },
+                { label: "Mới tháng này",        value: `+${executiveDashboardData().createdThisMonth}`, note: "Tài liệu vừa bổ sung",   color: "kpi-violet",  Icon: FilePlus      },
+                { label: "Cập nhật tháng này",   value: executiveDashboardData().updatedThisMonth,    note: "Mức độ duy trì",           color: "kpi-amber",   Icon: RefreshCw     },
+              ].map(({ label, value, note, color, Icon }) => (
+                <div className={`exec-kpi-card ${color}`} key={label}>
+                  <div className="kpi-icon-box"><Icon size={17} /></div>
                   <strong>{String(value)}</strong>
-                  <span>{String(label)}</span>
-                  <small>{String(note)}</small>
+                  <span>{label}</span>
+                  <small>{note}</small>
                 </div>
               ))}
             </div>
@@ -3120,13 +3603,31 @@ function App() {
                 <strong>{executiveDashboardData().recentActivity.length} hoạt động</strong>
               </div>
               <div className="exec-activity-feed">
-                {executiveDashboardData().recentActivity.map((log) => (
-                  <div className="exec-feed-row" key={log.id}>
-                    <time>{parseDashboardDate(log.createdAt)?.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</time>
-                    <strong>{activityDashboardText(log)}</strong>
-                    <span>{relativeDashboardTime(log.createdAt)}</span>
-                  </div>
-                ))}
+                {executiveDashboardData().recentActivity.map((log) => {
+                  const actionType = log.action?.toLowerCase() ?? "";
+                  const iconClass = actionType.includes("create") || actionType.includes("tao")
+                    ? "feed-icon create"
+                    : actionType.includes("delete") || actionType.includes("xoa")
+                    ? "feed-icon delete"
+                    : actionType.includes("resolve") || actionType.includes("close")
+                    ? "feed-icon resolve"
+                    : "feed-icon update";
+                  const FeedIcon = actionType.includes("create") || actionType.includes("tao")
+                    ? FilePlus
+                    : actionType.includes("delete") || actionType.includes("xoa")
+                    ? Eraser
+                    : actionType.includes("resolve") || actionType.includes("close")
+                    ? CheckCheck
+                    : PenLine;
+                  return (
+                    <div className="exec-feed-row" key={log.id}>
+                      <span className={iconClass}><FeedIcon size={13} /></span>
+                      <time>{parseDashboardDate(log.createdAt)?.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</time>
+                      <strong>{activityDashboardText(log)}</strong>
+                      <span>{relativeDashboardTime(log.createdAt)}</span>
+                    </div>
+                  );
+                })}
                 {executiveDashboardData().recentActivity.length === 0 && (
                   <div className="empty-collab-state">Chưa có hoạt động tài liệu gần đây.</div>
                 )}
@@ -3137,35 +3638,193 @@ function App() {
           <Suspense fallback={<div className="content-loading">Đang tải quản trị user...</div>}>
             <AdminPanel projects={projectsList} documents={documentsList} currentUser={currentUser} onToast={addToast} />
           </Suspense>
+        ) : activeTabNav === "review" ? (
+          <section className="project-workboard-page">
+            <div className="workboard-header">
+              <div>
+                <p className="eyebrow">Project Workboard</p>
+                <h2>{selectedProject.name}</h2>
+                <span>{selectedProject.code} • {selectedProject.client}</span>
+              </div>
+              <div className="workboard-header-actions">
+                <label className="workboard-project-switcher">
+                  <FolderKanban size={14} />
+                  <select
+                    value={selectedProject.id}
+                    onChange={(event) => {
+                      const projectId = event.target.value;
+                      setSelectedProjectId(projectId);
+                      const firstDoc = documentsList.find((doc) => doc.projectId === projectId);
+                      setSelectedDocumentId(firstDoc?.id ?? "empty-document");
+                      void loadProjectWorkItems(projectId);
+                    }}
+                    disabled={projectsList.length === 0}
+                  >
+                    {projectsList.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.code} - {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button className="btn-secondary" type="button" onClick={() => void loadProjectWorkItems(selectedProject.id)} disabled={!selectedProject.id || isLoadingWorkItems}>
+                  <RefreshCw size={14} /> {isLoadingWorkItems ? "Đang tải" : "Làm mới"}
+                </button>
+                <button className="btn-primary" type="button" onClick={() => openCreateWorkItemModal("BACKLOG")} disabled={!selectedProject.id}>
+                  <Plus size={15} /> Tạo ticket
+                </button>
+              </div>
+            </div>
+
+            <div className="workboard-metrics">
+              {[
+                { label: "Đang mở", value: workboardMetrics.openItems.length, Icon: Clock, tone: "indigo" },
+                { label: "Bug critical", value: workboardMetrics.criticalBugs.length, Icon: AlertTriangle, tone: "rose" },
+                { label: "Quá hạn", value: workboardMetrics.overdueItems.length, Icon: AlertTriangle, tone: "amber" },
+                { label: "Blocked", value: workboardMetrics.blockedItems.length, Icon: GitBranch, tone: "violet" },
+                { label: "Hoàn thành", value: `${workboardMetrics.completionRate}%`, Icon: CheckCheck, tone: "emerald" }
+              ].map(({ label, value, Icon, tone }) => (
+                <div className={`workboard-metric ${tone}`} key={label}>
+                  <span><Icon size={16} /></span>
+                  <strong>{value}</strong>
+                  <small>{label}</small>
+                </div>
+              ))}
+            </div>
+
+            <div className="workboard-controls">
+              <div className="workboard-filter-group">
+                <span>Loại</span>
+                {(["ALL", "TASK", "BUG", "REVIEW", "CHANGE_REQUEST", "QUESTION"] as const).map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    className={workboardTypeFilter === type ? "active" : ""}
+                    onClick={() => setWorkboardTypeFilter(type)}
+                  >
+                    {type === "ALL" ? "Tất cả" : WORK_ITEM_TYPE_LABEL[type]}
+                  </button>
+                ))}
+              </div>
+              <div className="workboard-filter-group">
+                <span>Priority</span>
+                {(["ALL", "LOW", "MEDIUM", "HIGH", "CRITICAL"] as const).map((priority) => (
+                  <button
+                    key={priority}
+                    type="button"
+                    className={workboardPriorityFilter === priority ? "active" : ""}
+                    onClick={() => setWorkboardPriorityFilter(priority)}
+                  >
+                    {priority === "ALL" ? "Tất cả" : WORK_ITEM_PRIORITY_LABEL[priority]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="workboard-kanban" aria-label="Project workboard">
+              {WORKBOARD_COLUMNS.map((column) => {
+                const columnItems = visibleWorkItems.filter((item) => item.status === column.id);
+                return (
+                  <section
+                    className={`workboard-column status-${column.id.toLowerCase()} ${draggingWorkItemId ? "drop-ready" : ""}`}
+                    key={column.id}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      void handleDropWorkItem(column.id);
+                    }}
+                  >
+                    <div className="workboard-column-header">
+                      <div>
+                        <strong>{column.label}</strong>
+                        <small>{column.hint}</small>
+                      </div>
+                      <div className="workboard-column-actions">
+                        <span className="count-badge">{columnItems.length}</span>
+                        <button
+                          type="button"
+                          title={`Tạo ticket ở ${column.label}`}
+                          onClick={() => openCreateWorkItemModal(column.id)}
+                          disabled={!selectedProject.id}
+                        >
+                          <Plus size={13} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="workboard-card-list">
+                      {columnItems.map((item) => (
+                        <article
+                          className={`workboard-card priority-${item.priority.toLowerCase()} ${draggingWorkItemId === item.id ? "dragging" : ""}`}
+                          key={item.id}
+                          draggable
+                          onDragStart={() => setDraggingWorkItemId(item.id)}
+                          onDragEnd={() => setDraggingWorkItemId(null)}
+                        >
+                          <button className="workboard-card-main" type="button" onClick={() => openViewWorkItemModal(item)}>
+                            <div className="workboard-card-badges">
+                              <span className={`workitem-type type-${item.type.toLowerCase()}`}>
+                                {workItemTypeIcon(item.type)} {WORK_ITEM_TYPE_LABEL[item.type]}
+                              </span>
+                              <span className={`workitem-priority priority-${item.priority.toLowerCase()}`}>
+                                {WORK_ITEM_PRIORITY_LABEL[item.priority]}
+                              </span>
+                            </div>
+                            <strong>{item.title}</strong>
+                            <span><UserCheck size={12} /> {item.assigneeName ?? item.assignee?.name ?? "Chưa giao"}</span>
+                            <span><Clock size={12} /> Tạo {formatWorkItemDate(item.createdAt)} · Hạn {formatWorkItemDate(item.dueDate)}</span>
+                          </button>
+                          <div className="workboard-card-actions">
+                            <button
+                              type="button"
+                              title="Sửa ticket"
+                              onClick={() => openEditWorkItemModal(item)}
+                            >
+                              <Pencil size={13} />
+                            </button>
+                            <button
+                              className="danger"
+                              type="button"
+                              title="Xóa ticket"
+                              onClick={() => requestDeleteWorkItem(item)}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                      {columnItems.length === 0 && (
+                        <div className="workboard-empty-column">Kéo ticket vào đây để đổi trạng thái.</div>
+                      )}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          </section>
         ) : (
         <section className={gridLayoutClass}>
+          {/* Panel 1: Document Library (Collapsible) */}
           {/* Panel 1: Document Library (Collapsible) */}
           {showLibraryPanel && (
             <div className="panel library">
               <div className="panel-header">
                 <div className="panel-title">
-                  <p className="eyebrow">
-                    {activeTabNav === "review"
-                      ? "Luồng trao đổi"
-                      : `Thư viện • ${selectedProject.code}`}
-                  </p>
-                  <h2>{activeTabNav === "review" ? "Luồng review" : "Tài liệu"} ({filteredDocuments.length})</h2>
+                  <p className="eyebrow">{`Thư viện • ${selectedProject.code}`}</p>
+                  <h2>Tài liệu ({filteredDocuments.length})</h2>
                 </div>
                 <div className="panel-action-group">
-                  {activeTabNav !== "review" && (
-                    <button
-                      className="btn-add-mini"
-                      type="button"
-                      title="Import tệp tài liệu vào dự án"
-                      disabled={!selectedProjectId}
-                      onClick={() => {
-                        setImportTargetProjectId(selectedProjectId);
-                        setIsImportModalOpen(true);
-                      }}
-                    >
-                      <UploadCloud size={12} /> Import File
-                    </button>
-                  )}
+                  <button
+                    className="btn-add-mini"
+                    type="button"
+                    title="Import tệp tài liệu vào dự án"
+                    disabled={!selectedProjectId}
+                    onClick={() => {
+                      setImportTargetProjectId(selectedProjectId);
+                      setIsImportModalOpen(true);
+                    }}
+                  >
+                    <UploadCloud size={12} /> Import File
+                  </button>
                   <button
                     className="panel-close-btn"
                     type="button"
@@ -3177,88 +3836,48 @@ function App() {
                 </div>
               </div>
 
-              {activeTabNav !== "review" && (
-                <div className="panel-mode-tabs">
-                  <button
-                    className={leftPanelMode === "docs" ? "mode-tab active" : "mode-tab"}
-                    type="button"
-                    onClick={() => setLeftPanelMode("docs")}
-                  >
-                    <FileText size={12} /> Tài liệu ({filteredDocuments.length})
-                  </button>
-                  <button
-                    className={leftPanelMode === "toc" ? "mode-tab active" : "mode-tab"}
-                    type="button"
-                    onClick={() => setLeftPanelMode("toc")}
-                  >
-                    <ListTree size={12} /> Mục lục ({selectedDocument.id === "empty-document" ? 0 : tocItems.length})
-                  </button>
-                </div>
-              )}
+              <div className="panel-mode-tabs">
+                <button
+                  className={leftPanelMode === "docs" ? "mode-tab active" : "mode-tab"}
+                  type="button"
+                  onClick={() => setLeftPanelMode("docs")}
+                >
+                  <FileText size={12} /> Tài liệu ({filteredDocuments.length})
+                </button>
+                <button
+                  className={leftPanelMode === "toc" ? "mode-tab active" : "mode-tab"}
+                  type="button"
+                  onClick={() => setLeftPanelMode("toc")}
+                >
+                  <ListTree size={12} /> Mục lục ({selectedDocument.id === "empty-document" ? 0 : tocItems.length})
+                </button>
+              </div>
 
-              {activeTabNav === "review" || leftPanelMode === "docs" ? (
+              {leftPanelMode === "docs" ? (
                 <>
-                  {activeTabNav === "review" ? (
-                    <div className="review-inbox-strip">
-                      <MessageSquareText size={13} />
-                      <span>Chỉ hiển thị tài liệu đang có trao đổi mở.</span>
-                    </div>
-                  ) : (
-                    <div className="library-filter-tabs">
-                      {(["All", "Draft", "Triển khai"] as const).map((tab) => (
-                        <button
-                          key={tab}
-                          className={statusFilter === tab ? "tab-btn active" : "tab-btn"}
-                          type="button"
-                          onClick={() => setStatusFilter(tab)}
-                        >
-                          {tab === "All" ? "Tất cả" : tab}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  <div className="library-filter-tabs">
+                    {(["All", "Draft", "Triển khai"] as const).map((tab) => (
+                      <button
+                        key={tab}
+                        className={statusFilter === tab ? "tab-btn active" : "tab-btn"}
+                        type="button"
+                        onClick={() => setStatusFilter(tab)}
+                      >
+                        {tab === "All" ? "Tất cả" : tab}
+                      </button>
+                    ))}
+                  </div>
 
                   {/* Documents List */}
                   <div className="document-table">
                     {filteredDocuments.length === 0 ? (
                       <div style={{ padding: 16, textAlign: "center", color: "var(--text-muted)", fontSize: "0.78rem" }}>
-                        {activeTabNav === "review"
-                          ? "Không có tài liệu nào đang có trao đổi mở."
-                          : "Không có tài liệu nào phù hợp."}
+                        Không có tài liệu nào phù hợp.
                       </div>
                     ) : (
                       filteredDocuments.map((doc) => {
                         const docCommentsCount = documentCommentCounts[doc.id] ?? doc.openCommentsCount ?? 0;
                         const fullTitle = normalizeVietnameseText(doc.title);
-                        const docProject = projectsList.find((project) => project.id === doc.projectId);
-                        if (activeTabNav === "review") {
-                          return (
-                            <button
-                              key={doc.id}
-                              className={doc.id === selectedDocumentId ? "review-thread-card selected" : "review-thread-card"}
-                              type="button"
-                              title={fullTitle}
-                              onClick={() => {
-                                if (doc.projectId) setSelectedProjectId(doc.projectId);
-                                setSelectedDocumentId(doc.id);
-                                setCommentFilter("all");
-                              }}
-                            >
-                              <div className="review-thread-head">
-                                <span className="review-thread-state">
-                                  <MessageSquareText size={12} /> Đang mở
-                                </span>
-                                <span className="review-thread-count">{docCommentsCount} trao đổi</span>
-                              </div>
-                              <strong>{fullTitle}</strong>
-                              <p>{getDocumentPreviewText(doc.contentHtml)}</p>
-                              <div className="review-thread-meta">
-                                <span>{docProject?.code ?? "Dự án"} • {doc.type}</span>
-                                <span>{doc.updatedAt}</span>
-                              </div>
-                            </button>
-                          );
-                        }
                         return (
                           <button
                             key={doc.id}
@@ -3400,20 +4019,31 @@ function App() {
                         </button>
                       )}
 
-                      <button
-                        type="button"
-                        className="menu-item"
-                        onClick={() => {
-                          setIsActionsDropdownOpen(false);
-                          if (selectedDocument.id === "empty-document") return;
-                          setExportType("pdf");
-                          setIsExportModalOpen(true);
-                        }}
-                      >
-                        <Download size={14} /> Xuất tài liệu
-                      </button>
+	                      <button
+	                        type="button"
+	                        className="menu-item"
+	                        onClick={() => {
+	                          setIsActionsDropdownOpen(false);
+	                          if (selectedDocument.id === "empty-document") return;
+	                          setExportType("pdf");
+	                          setIsExportModalOpen(true);
+	                        }}
+	                      >
+	                        <Download size={14} /> Xuất tài liệu
+	                      </button>
 
-                      <div className="doc-actions-divider" />
+	                      <button
+	                        type="button"
+	                        className="menu-item"
+	                        onClick={() => {
+	                          setIsActionsDropdownOpen(false);
+	                          void openVersionHistoryModal();
+	                        }}
+	                      >
+	                        <Layers size={14} /> Lịch sử phiên bản
+	                      </button>
+
+	                      <div className="doc-actions-divider" />
 
                       <button
                         type="button"
@@ -3459,24 +4089,6 @@ function App() {
                 </div>
               </div>
 
-              <div className="reader-controls-group">
-                <button
-                  className={isZenMode ? "font-size-btn active" : "font-size-btn"}
-                  type="button"
-                  title="Chế độ đọc tập trung (Nhấn ESC để thoát)"
-                  onClick={() => {
-                    const nextZen = !isZenMode;
-                    setIsZenMode(nextZen);
-                    if (nextZen) {
-                      setShowLibraryPanel(true);
-                      setShowCommentsPanel(true);
-                    }
-                  }}
-                >
-                  {isZenMode ? <Minimize2 size={13} style={{ display: "inline", marginRight: 4 }} /> : <Maximize2 size={13} style={{ display: "inline", marginRight: 4 }} />}
-                  <span>{isZenMode ? "Focus Mode" : "Tập Trung Đọc"}</span>
-                </button>
-              </div>
             </div>
 
             {/* Floating Right Toggle for Team Discussion Panel when collapsed */}
@@ -3965,6 +4577,79 @@ function App() {
         </div>
       )}
 
+      {isVersionModalOpen && (
+        <div className="modal-backdrop">
+          <div className="modal-content version-modal-content">
+            <div className="modal-header">
+              <div className="modal-title-with-icon">
+                <div className="modal-header-badge">
+                  <Layers size={20} />
+                </div>
+                <div>
+                  <h3>Lịch sử phiên bản</h3>
+                  <p className="modal-subtitle">{selectedDocument.title}</p>
+                </div>
+              </div>
+              <button
+                className="icon-btn"
+                type="button"
+                onClick={() => setIsVersionModalOpen(false)}
+                disabled={Boolean(restoringVersionId)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {isLoadingVersions ? (
+                <div className="version-empty-state">Đang tải lịch sử phiên bản...</div>
+              ) : documentVersions.length === 0 ? (
+                <div className="version-empty-state">Tài liệu chưa có phiên bản nào được lưu.</div>
+              ) : (
+                <div className="version-list">
+                  {documentVersions.map((version, index) => {
+                    const isCurrentVersion = version.version === selectedDocument.version;
+                    return (
+                      <div key={version.id} className={isCurrentVersion ? "version-row current" : "version-row"}>
+                        <div className="version-row-main">
+                          <div>
+                            <strong>{version.version}</strong>
+                            {isCurrentVersion && <span className="version-current-badge">Hiện tại</span>}
+                          </div>
+                          <p>{version.changeNote || (index === documentVersions.length - 1 ? "Phiên bản khởi tạo" : "Cập nhật tài liệu")}</p>
+                          <small>
+                            {version.createdBy || "Hệ thống"} • {new Date(version.createdAt).toLocaleString("vi-VN")}
+                          </small>
+                        </div>
+                        <button
+                          className="btn-secondary"
+                          type="button"
+                          disabled={isCurrentVersion || Boolean(restoringVersionId)}
+                          onClick={() => void handleRestoreVersion(version)}
+                        >
+                          {restoringVersionId === version.id ? "Đang khôi phục..." : "Khôi phục"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="modal-actions">
+              <button
+                className="btn-secondary"
+                type="button"
+                onClick={() => setIsVersionModalOpen(false)}
+                disabled={Boolean(restoringVersionId)}
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal 1: Create New Project */}
       {isCreateProjectModalOpen && (
         <div className="modal-backdrop">
@@ -4379,6 +5064,322 @@ function App() {
                   <LogOut size={15} /> Đăng xuất
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Work Item Detail Modal */}
+      {viewingWorkItem && (
+        <div className="modal-backdrop">
+          <div className="modal-content workitem-detail-modal">
+            <div className="modal-header">
+              <div className="modal-title-with-icon">
+                <div className="modal-header-badge">
+                  {workItemTypeIcon(viewingWorkItem.type)}
+                </div>
+                <div>
+                  <h3>{viewingWorkItem.title}</h3>
+                  <p className="modal-subtitle">
+                    {WORK_ITEM_TYPE_LABEL[viewingWorkItem.type]} • {WORKBOARD_COLUMNS.find((column) => column.id === viewingWorkItem.status)?.label ?? viewingWorkItem.status}
+                  </p>
+                </div>
+              </div>
+              <div className="modal-header-actions">
+                <button className="btn-secondary" type="button" onClick={() => openEditWorkItemModal(viewingWorkItem)}>
+                  <Pencil size={14} /> Sửa
+                </button>
+                <button className="icon-btn" type="button" onClick={() => setViewingWorkItemId(null)}>
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            <div className="modal-body">
+              <div className="workitem-detail-summary">
+                <div>
+                  <span>Priority</span>
+                  <strong>{WORK_ITEM_PRIORITY_LABEL[viewingWorkItem.priority]}</strong>
+                </div>
+                <div>
+                  <span>Người phụ trách</span>
+                  <strong>{viewingWorkItem.assigneeName ?? viewingWorkItem.assignee?.name ?? "Chưa giao"}</strong>
+                </div>
+                <div>
+                  <span>Ngày tạo</span>
+                  <strong>{formatWorkItemDate(viewingWorkItem.createdAt)}</strong>
+                </div>
+                <div>
+                  <span>Hạn xử lý</span>
+                  <strong>{formatWorkItemDate(viewingWorkItem.dueDate)}</strong>
+                </div>
+              </div>
+
+              <div className="workitem-detail-block">
+                <label>Mô tả</label>
+                <p>{viewingWorkItem.description || "Chưa có mô tả."}</p>
+              </div>
+
+              {viewingWorkItem.document && (
+                <div className="workitem-source-note">
+                  <FileText size={14} /> {viewingWorkItem.document.title}
+                </div>
+              )}
+
+              <div className="workitem-detail-block">
+                <label>Ảnh / Video đính kèm</label>
+                <div className="workitem-upload-row">
+                  <label className={`workitem-upload-btn ${isUploadingWorkItemAttachment ? "disabled" : ""}`}>
+                    <UploadCloud size={14} />
+                    {isUploadingWorkItemAttachment ? "Đang upload" : "Upload ảnh/video"}
+                    <input
+                      type="file"
+                      accept="image/*,video/mp4,video/webm,video/quicktime"
+                      disabled={isUploadingWorkItemAttachment}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        void handleUploadWorkItemAttachment(file);
+                      }}
+                    />
+                  </label>
+                  <small>Có thể preview ảnh và video mp4/webm/mov hoặc mở link ngoài.</small>
+                </div>
+                {(viewingWorkItem.attachments ?? []).length > 0 ? (
+                  <div className="workitem-attachment-grid">
+                    {(viewingWorkItem.attachments ?? []).map((attachment) => (
+                      <a
+                        className="workitem-attachment-preview"
+                        href={attachment.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        key={attachment.url}
+                        title={attachment.name ?? attachment.url}
+                      >
+                        {isImageAttachment(attachment) ? (
+                          <img src={attachment.url} alt={attachment.name ?? "Ticket attachment"} />
+                        ) : isVideoAttachment(attachment) ? (
+                          <video src={attachment.url} controls />
+                        ) : (
+                          <span>{attachment.name ?? "Mở link đính kèm"}</span>
+                        )}
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-collab-state">Chưa có ảnh hoặc video đính kèm.</div>
+                )}
+              </div>
+
+              <div className="workitem-comments-section">
+                <div className="section-subheader">
+                  <div>
+                    <h4>Comment & reply</h4>
+                    <p>Trao đổi xử lý ticket này.</p>
+                  </div>
+                </div>
+
+                <div className="workitem-comment-composer">
+                  <textarea
+                    rows={3}
+                    value={workItemCommentText}
+                    onChange={(event) => setWorkItemCommentText(event.target.value)}
+                    placeholder="Nhập comment..."
+                  />
+                  <button className="btn-primary" type="button" onClick={() => void handleAddWorkItemComment()}>
+                    <Send size={14} /> Gửi
+                  </button>
+                </div>
+
+                <div className="workitem-comment-list">
+                  {groupedWorkItemComments().map((comment) => (
+                    <div className="workitem-comment-card" key={comment.id}>
+                      <div className="workitem-comment-meta">
+                        <strong>{comment.createdByName ?? comment.createdBy?.name ?? "Người dùng"}</strong>
+                        <span>{relativeDashboardTime(comment.createdAt)}</span>
+                      </div>
+                      <p>{comment.content}</p>
+                      <div className="workitem-comment-actions">
+                        <button
+                          className="btn-secondary compact"
+                          type="button"
+                          onClick={() => {
+                            setReplyingWorkItemCommentId(comment.id);
+                            setWorkItemReplyText("");
+                          }}
+                        >
+                          <MessageSquarePlus size={13} /> Reply
+                        </button>
+                      </div>
+
+                      {comment.replies?.map((reply) => (
+                        <div className="workitem-reply-card" key={reply.id}>
+                          <div className="workitem-comment-meta">
+                            <strong>{reply.createdByName ?? reply.createdBy?.name ?? "Người dùng"}</strong>
+                            <span>{relativeDashboardTime(reply.createdAt)}</span>
+                          </div>
+                          <p>{reply.content}</p>
+                        </div>
+                      ))}
+
+                      {replyingWorkItemCommentId === comment.id && (
+                        <div className="workitem-reply-composer">
+                          <textarea
+                            rows={2}
+                            value={workItemReplyText}
+                            onChange={(event) => setWorkItemReplyText(event.target.value)}
+                            placeholder="Nhập reply..."
+                          />
+                          <button className="btn-primary" type="button" onClick={() => void handleAddWorkItemComment(comment.id)}>
+                            <Send size={13} /> Gửi
+                          </button>
+                          <button className="btn-secondary" type="button" onClick={() => setReplyingWorkItemCommentId(null)}>
+                            Hủy
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {groupedWorkItemComments().length === 0 && (
+                    <div className="empty-collab-state">Chưa có comment nào cho ticket này.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Work Item Create/Edit Modal */}
+      {isWorkItemModalOpen && workItemDraft && (
+        <div className="modal-backdrop">
+          <div className="modal-content workitem-modal-content">
+            <div className="modal-header">
+              <div className="modal-title-with-icon">
+                <div className="modal-header-badge">
+                  <FolderKanban size={20} />
+                </div>
+                <div>
+                  <h3>{workItemDraft.id ? "Cập nhật ticket" : "Tạo ticket mới"}</h3>
+                  <p className="modal-subtitle">{selectedProject.code} • Task, bug, review và thay đổi phát sinh</p>
+                </div>
+              </div>
+              <button className="icon-btn" type="button" onClick={() => setIsWorkItemModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group project-name-priority">
+                <label>Tiêu đề ticket</label>
+                <input
+                  className="form-input"
+                  value={workItemDraft.title}
+                  onChange={(event) => setWorkItemDraft({ ...workItemDraft, title: event.target.value })}
+                  placeholder="Ví dụ: Sửa validation ngày hết hạn"
+                />
+              </div>
+
+              <div className="document-property-grid">
+                <div className="form-group">
+                  <label>Loại item</label>
+                  <select
+                    className="form-select"
+                    value={workItemDraft.type}
+                    onChange={(event) => setWorkItemDraft({ ...workItemDraft, type: event.target.value as WorkItemType })}
+                  >
+                    {(["TASK", "BUG", "REVIEW", "CHANGE_REQUEST", "QUESTION"] as const).map((type) => (
+                      <option key={type} value={type}>{WORK_ITEM_TYPE_LABEL[type]}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Trạng thái</label>
+                  <select
+                    className="form-select"
+                    value={workItemDraft.status}
+                    onChange={(event) => setWorkItemDraft({ ...workItemDraft, status: event.target.value as WorkItemStatus })}
+                  >
+                    {WORKBOARD_COLUMNS.map((column) => (
+                      <option key={column.id} value={column.id}>{column.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Priority</label>
+                  <select
+                    className="form-select"
+                    value={workItemDraft.priority}
+                    onChange={(event) => setWorkItemDraft({ ...workItemDraft, priority: event.target.value as WorkItemPriority })}
+                  >
+                    {(["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const).map((priority) => (
+                      <option key={priority} value={priority}>{WORK_ITEM_PRIORITY_LABEL[priority]}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Hạn xử lý</label>
+                  <input
+                    className="form-input"
+                    type="date"
+                    value={workItemDraft.dueDate}
+                    onChange={(event) => setWorkItemDraft({ ...workItemDraft, dueDate: event.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Tài liệu liên quan</label>
+                  <select
+                    className="form-select"
+                    value={workItemDraft.documentId}
+                    onChange={(event) => setWorkItemDraft({ ...workItemDraft, documentId: event.target.value })}
+                  >
+                    <option value="">Không gắn tài liệu</option>
+                    {projectDocuments.map((document) => (
+                      <option key={document.id} value={document.id}>{document.title}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Người phụ trách</label>
+                  <input
+                    className="form-input"
+                    value={workItemDraft.assigneeName}
+                    onChange={(event) => setWorkItemDraft({ ...workItemDraft, assigneeName: event.target.value })}
+                    placeholder="Nhân viên 1"
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Mô tả</label>
+                <textarea
+                  className="form-textarea"
+                  rows={5}
+                  value={workItemDraft.description}
+                  onChange={(event) => setWorkItemDraft({ ...workItemDraft, description: event.target.value })}
+                  placeholder="Mô tả nội dung cần xử lý..."
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Ảnh / Video đính kèm</label>
+                <textarea
+                  className="form-textarea"
+                  rows={3}
+                  value={workItemDraft.attachmentsText}
+                  onChange={(event) => setWorkItemDraft({ ...workItemDraft, attachmentsText: event.target.value })}
+                  placeholder="Dán URL ảnh hoặc video, mỗi dòng một file..."
+                />
+                <small className="field-helper">Hỗ trợ preview ảnh .png/.jpg/.webp và video .mp4/.webm/.mov trong chi tiết ticket.</small>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" type="button" onClick={() => setIsWorkItemModalOpen(false)}>
+                Hủy
+              </button>
+              <button className="btn-primary" type="button" onClick={() => void handleSaveWorkItem()}>
+                <CheckCircle2 size={15} /> Lưu ticket
+              </button>
             </div>
           </div>
         </div>

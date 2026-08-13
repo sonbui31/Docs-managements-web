@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -45,11 +46,13 @@ export class ProjectsService {
   async create(dto: CreateProjectDto, user: AuthenticatedUser) {
     await this.permissions.assertCanCreateProject(user);
 
-    return this.prisma.$transaction(async (tx) => {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+      const projectCode = await this.generateUniqueProjectCode(tx, dto.code, dto.name);
       const project = await tx.project.create({
         data: {
           ...dto,
-          code: dto.code.trim().toUpperCase(),
+          code: projectCode,
           name: dto.name.trim(),
           client: dto.client?.trim(),
           description: dto.description?.trim(),
@@ -78,6 +81,12 @@ export class ProjectsService {
       });
       return project;
     });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        throw new BadRequestException("Mã dự án đã tồn tại, vui lòng thử mã khác");
+      }
+      throw error;
+    }
   }
 
   async update(id: string, dto: UpdateProjectDto, user: AuthenticatedUser) {
@@ -142,5 +151,40 @@ export class ProjectsService {
       await tx.project.delete({ where: { id } });
     });
     return { ok: true };
+  }
+
+  private async generateUniqueProjectCode(
+    tx: Prisma.TransactionClient,
+    requestedCode: string | undefined,
+    projectName: string
+  ) {
+    const base = this.normalizeProjectCode(requestedCode || projectName);
+    const existingCodes = await tx.project.findMany({
+      where: { code: { startsWith: base } },
+      select: { code: true }
+    });
+    const existing = new Set(existingCodes.map((project) => project.code.toUpperCase()));
+    if (!existing.has(base)) return base;
+
+    let suffix = 1;
+    let candidate = `${base}-${String(suffix).padStart(2, "0")}`;
+    while (existing.has(candidate)) {
+      suffix += 1;
+      candidate = `${base}-${String(suffix).padStart(2, "0")}`;
+    }
+    return candidate;
+  }
+
+  private normalizeProjectCode(value: string) {
+    const normalized = value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/đ/g, "d")
+      .replace(/Đ/g, "D")
+      .replace(/[^a-zA-Z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .toUpperCase()
+      .slice(0, 24);
+    return normalized || "PROJECT";
   }
 }

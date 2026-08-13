@@ -23,6 +23,20 @@ export class DocumentsController {
     return this.documentsService.findOne(id, user);
   }
 
+  @Get(":id/versions")
+  versions(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.documentsService.versions(id, user);
+  }
+
+  @Post(":id/versions/:versionId/restore")
+  restoreVersion(
+    @Param("id") id: string,
+    @Param("versionId") versionId: string,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.documentsService.restoreVersion(id, versionId, user);
+  }
+
   @Post()
   create(@Body() dto: CreateDocumentDto, @CurrentUser() user: AuthenticatedUser) {
     return this.documentsService.create(dto, user);
