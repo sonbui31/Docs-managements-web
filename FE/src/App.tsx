@@ -4,6 +4,7 @@ import {
   BarChart2,
   Bell,
   BookOpen,
+  Calendar,
   CheckCheck,
   CheckCircle2,
   ChevronDown,
@@ -21,9 +22,11 @@ import {
   FilePlus,
   FileStack,
   FileText,
+  Filter,
   FolderKanban,
   FolderPlus,
   GitBranch,
+  Kanban,
   Layers,
   LayoutDashboard,
   ListTree,
@@ -34,6 +37,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Paperclip,
   PenLine,
   Pencil,
   Plus,
@@ -41,6 +45,7 @@ import {
   Search,
   Send,
   Share2,
+  SlidersHorizontal,
   Sparkles,
   Tags,
   Trash2,
@@ -90,6 +95,7 @@ import {
   updateDocument,
   updateProject,
   updateWorkItem,
+  uploadMediaAsset,
   uploadWorkItemAttachment
 } from "./api";
 import { AuthPage } from "./AuthPage";
@@ -449,6 +455,7 @@ function App() {
   // Comments state
   const [commentsList, setCommentsList] = useState<CommentThread[]>([]);
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
+  const [dashboardWorkItems, setDashboardWorkItems] = useState<WorkItem[]>([]);
   const [isLoadingWorkItems, setIsLoadingWorkItems] = useState<boolean>(false);
   const [draggingWorkItemId, setDraggingWorkItemId] = useState<string | null>(null);
   const [workboardTypeFilter, setWorkboardTypeFilter] = useState<"ALL" | WorkItemType>("ALL");
@@ -676,6 +683,7 @@ function App() {
         setDocumentsList([]);
         setCommentsList([]);
         setWorkItems([]);
+        setDashboardWorkItems([]);
         setSelectedProjectId("");
         setSelectedDocumentId("empty-document");
         setIsBackendConnected(true);
@@ -684,6 +692,16 @@ function App() {
 
       const hydratedDocuments = (
         await Promise.all(backendProjects.map((project) => fetchDocumentsByProject(project.id)))
+      ).flat();
+      const hydratedWorkItems = (
+        await Promise.all(
+          backendProjects.map((project) =>
+            fetchProjectWorkItems(project.id).catch((error) => {
+              console.error(`Cannot load work items for project ${project.id}:`, error);
+              return [] as WorkItem[];
+            })
+          )
+        )
       ).flat();
       const projectsWithCounts = backendProjects.map((project) => ({
         ...project,
@@ -705,6 +723,8 @@ function App() {
       setDocumentCommentCounts(
         Object.fromEntries(hydratedDocuments.map((document) => [document.id, document.openCommentsCount ?? 0]))
       );
+      setDashboardWorkItems(hydratedWorkItems);
+      setWorkItems(hydratedWorkItems.filter((item) => item.projectId === finalProjectId));
       setSelectedProjectId(finalProjectId);
       setSelectedDocumentId(firstDocument?.id ?? "empty-document");
       setIsBackendConnected(true);
@@ -759,7 +779,12 @@ function App() {
     if (!projectId) return;
     setIsLoadingWorkItems(true);
     try {
-      setWorkItems(await fetchProjectWorkItems(projectId));
+      const nextItems = await fetchProjectWorkItems(projectId);
+      setWorkItems(nextItems);
+      setDashboardWorkItems((prev) => [
+        ...nextItems,
+        ...prev.filter((item) => item.projectId !== projectId)
+      ]);
     } catch (error) {
       console.error("Cannot load project work items:", error);
       setWorkItems([]);
@@ -1546,6 +1571,20 @@ function App() {
     return attachment.mimeType?.startsWith("image") || /\.(png|jpe?g|gif|webp|avif)(\?|$)/i.test(attachment.url);
   }
 
+  function isWorkItemOverdue(item: WorkItem) {
+    if (!item.dueDate || item.status === "DONE") return false;
+    const dueDate = new Date(item.dueDate);
+    return !Number.isNaN(dueDate.getTime()) && dueDate < new Date();
+  }
+
+  function openDashboardWorkItem(item: WorkItem) {
+    setSelectedProjectId(item.projectId);
+    setSelectedDocumentId(item.documentId ?? documentsList.find((document) => document.projectId === item.projectId)?.id ?? "empty-document");
+    setActiveTabNav("review");
+    openViewWorkItemModal(item);
+    void loadProjectWorkItems(item.projectId);
+  }
+
   async function handleDropWorkItem(status: WorkItemStatus) {
     if (!draggingWorkItemId) return;
     const item = workItems.find((workItem) => workItem.id === draggingWorkItemId);
@@ -1553,13 +1592,17 @@ function App() {
     if (!item || item.status === status) return;
 
     const previousItems = workItems;
+    const previousDashboardItems = dashboardWorkItems;
     setWorkItems((prev) => prev.map((workItem) => workItem.id === item.id ? { ...workItem, status } : workItem));
+    setDashboardWorkItems((prev) => prev.map((workItem) => workItem.id === item.id ? { ...workItem, status } : workItem));
     try {
       const updated = await updateWorkItem(item.id, { status });
       setWorkItems((prev) => prev.map((workItem) => workItem.id === updated.id ? updated : workItem));
+      setDashboardWorkItems((prev) => prev.map((workItem) => workItem.id === updated.id ? updated : workItem));
     } catch (error) {
       console.error("Drop work item error:", error);
       setWorkItems(previousItems);
+      setDashboardWorkItems(previousDashboardItems);
       addToast("error", "Không đổi được trạng thái", "BE chưa cập nhật trạng thái work item.");
     }
   }
@@ -1656,10 +1699,33 @@ function App() {
     try {
       const updated = await uploadWorkItemAttachment(viewingWorkItem.id, file);
       setWorkItems((prev) => prev.map((item) => item.id === updated.id ? updated : item));
+      setDashboardWorkItems((prev) => prev.map((item) => item.id === updated.id ? updated : item));
       addToast("success", "Đã tải file lên", "File đã được gắn vào ticket.");
     } catch (error) {
       console.error("Upload work item attachment error:", error);
       addToast("error", "Không upload được file", "Kiểm tra định dạng file hoặc quyền truy cập.");
+    } finally {
+      setIsUploadingWorkItemAttachment(false);
+    }
+  }
+
+  async function handleUploadDraftWorkItemAttachment(file?: File) {
+    if (!file || !workItemDraft || isUploadingWorkItemAttachment) return;
+    setIsUploadingWorkItemAttachment(true);
+    try {
+      const uploaded = await uploadMediaAsset({
+        projectId: workItemDraft.projectId,
+        documentId: workItemDraft.documentId || undefined,
+        file
+      });
+      const nextAttachmentsText = [workItemDraft.attachmentsText.trim(), uploaded.url]
+        .filter(Boolean)
+        .join("\n");
+      setWorkItemDraft({ ...workItemDraft, attachmentsText: nextAttachmentsText });
+      addToast("success", "Đã upload file", "URL file đã được thêm vào ticket.");
+    } catch (error) {
+      console.error("Upload draft work item attachment error:", error);
+      addToast("error", "Không upload được file", "Kiểm tra định dạng file hoặc quyền dự án/tài liệu.");
     } finally {
       setIsUploadingWorkItemAttachment(false);
     }
@@ -1689,6 +1755,7 @@ function App() {
         ? await updateWorkItem(workItemDraft.id, payload)
         : await createWorkItem({ ...payload, projectId: workItemDraft.projectId });
       setWorkItems((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)]);
+      setDashboardWorkItems((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)]);
       setIsWorkItemModalOpen(false);
       setWorkItemDraft(null);
       addToast("success", workItemDraft.id ? "Đã cập nhật ticket" : "Đã tạo ticket", `"${saved.title}" đã được lưu vào Workboard.`);
@@ -1713,6 +1780,7 @@ function App() {
     try {
       await deleteWorkItem(itemId);
       setWorkItems((prev) => prev.filter((workItem) => workItem.id !== itemId));
+      setDashboardWorkItems((prev) => prev.filter((workItem) => workItem.id !== itemId));
       addToast("info", "Đã xóa ticket", `"${item?.title ?? "Ticket"}" đã được xóa khỏi Workboard.`);
     } catch (error) {
       console.error("Delete work item error:", error);
@@ -3011,64 +3079,130 @@ function App() {
 
   function executiveDashboardData() {
     const totals = roleDashboard?.totals;
-    const projects = roleDashboard?.projectBreakdown ?? projectsList.map((project) => ({
-      id: project.id,
-      code: project.code,
-      name: project.name,
-      client: project.client,
-      documents: documentsList.filter((doc) => doc.projectId === project.id).length,
-      openComments: getProjectOpenCommentsCount(project.id),
-      tags: 0,
-      traces: 0,
-      members: 0,
-      updatedAt: ""
-    }));
+    const roleProjectsById = new Map((roleDashboard?.projectBreakdown ?? []).map((project) => [project.id, project]));
+    const dashboardItems = dashboardWorkItems.length > 0 ? dashboardWorkItems : workItems;
+    const projects = projectsList.map((project) => {
+      const roleProject = roleProjectsById.get(project.id);
+      return {
+        id: project.id,
+        code: project.code,
+        name: project.name,
+        client: project.client,
+        documents: roleProject?.documents ?? documentsList.filter((doc) => doc.projectId === project.id).length,
+        openComments: roleProject?.openComments ?? getProjectOpenCommentsCount(project.id),
+        tags: roleProject?.tags ?? 0,
+        traces: roleProject?.traces ?? 0,
+        members: roleProject?.members ?? 0,
+        updatedAt: roleProject?.updatedAt ?? ""
+      };
+    });
     const documents = dashboardDocumentsSource();
     const projectCount = totals?.projects ?? projects.length;
     const totalDocuments = totals?.documents ?? documentsList.length;
-    const activeProjects = projects.filter((project) => {
-      const updatedAt = parseDashboardDate(project.updatedAt);
-      return project.openComments > 0 || isSameMonth(updatedAt);
-    }).length;
-    const createdThisMonth = totals?.documentsCreatedThisMonth ?? documents.filter((document) => isSameMonth(parseDashboardDate(document.createdAt))).length;
-    const updatedThisMonth = totals?.documentsUpdatedThisMonth ?? documents.filter((document) => isSameMonth(parseDashboardDate(document.updatedAt))).length;
-    const maxProjectDocuments = Math.max(...projects.map((project) => project.documents), 1);
+    const openItems = dashboardItems.filter((item) => item.status !== "DONE");
+    const doneItems = dashboardItems.filter((item) => item.status === "DONE");
+    const criticalBugs = dashboardItems.filter((item) => item.type === "BUG" && item.priority === "CRITICAL" && item.status !== "DONE");
+    const blockedItems = dashboardItems.filter((item) => item.status === "BLOCKED");
+    const overdueItems = dashboardItems.filter(isWorkItemOverdue);
+    const completionRate = dashboardItems.length ? Math.round((doneItems.length / dashboardItems.length) * 100) : 0;
+    const activeProjects = projects.filter((project) =>
+      dashboardItems.some((item) => item.projectId === project.id && item.status !== "DONE") ||
+      project.openComments > 0
+    ).length;
 
     const projectRows = [...projects]
-      .sort((first, second) => second.documents - first.documents || new Date(String(second.updatedAt)).getTime() - new Date(String(first.updatedAt)).getTime())
       .map((project) => {
-        const updatedAt = parseDashboardDate(project.updatedAt);
+        const projectItems = dashboardItems.filter((item) => item.projectId === project.id);
+        const projectOpenItems = projectItems.filter((item) => item.status !== "DONE");
+        const projectDoneItems = projectItems.filter((item) => item.status === "DONE");
+        const projectCriticalBugs = projectItems.filter((item) => item.type === "BUG" && item.priority === "CRITICAL" && item.status !== "DONE");
+        const projectBlockedItems = projectItems.filter((item) => item.status === "BLOCKED");
+        const projectOverdueItems = projectItems.filter(isWorkItemOverdue);
+        const updatedCandidates = [
+          parseDashboardDate(project.updatedAt),
+          ...projectItems.map((item) => parseDashboardDate(item.updatedAt ?? item.createdAt)),
+          ...documents
+            .filter((document) => document.projectId === project.id)
+            .map((document) => parseDashboardDate(document.updatedAt))
+        ].filter(Boolean) as Date[];
+        const updatedAt = updatedCandidates.length
+          ? new Date(Math.max(...updatedCandidates.map((date) => date.getTime())))
+          : null;
         const inactiveDays = updatedAt ? Math.max(Math.floor((Date.now() - updatedAt.getTime()) / 86400000), 0) : null;
+        const riskScore = projectBlockedItems.length * 5 + projectCriticalBugs.length * 4 + projectOverdueItems.length * 3 + projectOpenItems.length;
         return {
           ...project,
+          items: projectItems.length,
+          openItems: projectOpenItems.length,
+          doneItems: projectDoneItems.length,
+          blockedItems: projectBlockedItems.length,
+          criticalBugs: projectCriticalBugs.length,
+          overdueItems: projectOverdueItems.length,
+          completionRate: projectItems.length ? Math.round((projectDoneItems.length / projectItems.length) * 100) : 0,
           inactiveDays,
-          width: Math.max((project.documents / maxProjectDocuments) * 100, project.documents > 0 ? 8 : 0)
+          riskScore,
+          updatedAt: updatedAt?.toISOString() ?? project.updatedAt,
+          width: 0
+        };
+      })
+      .sort((first, second) => second.openItems - first.openItems || second.riskScore - first.riskScore);
+    const maxProjectOpenItems = Math.max(...projectRows.map((project) => project.openItems), 1);
+    projectRows.forEach((project) => {
+      project.width = Math.max((project.openItems / maxProjectOpenItems) * 100, project.openItems > 0 ? 8 : 0);
+    });
+
+    const recentWorkItems = [...dashboardItems]
+      .sort((first, second) =>
+        (parseDashboardDate(second.updatedAt ?? second.createdAt)?.getTime() ?? 0) -
+        (parseDashboardDate(first.updatedAt ?? first.createdAt)?.getTime() ?? 0)
+      )
+      .slice(0, 6);
+    const riskItems = [...dashboardItems]
+      .filter((item) => item.status !== "DONE")
+      .sort((first, second) => {
+        const score = (item: WorkItem) =>
+          (item.status === "BLOCKED" ? 50 : 0) +
+          (isWorkItemOverdue(item) ? 30 : 0) +
+          (item.type === "BUG" && item.priority === "CRITICAL" ? 25 : 0) +
+          (item.priority === "HIGH" ? 10 : 0);
+        return score(second) - score(first);
+      })
+      .slice(0, 5);
+    const workboardFeed = [...dashboardItems]
+      .sort((first, second) =>
+        (parseDashboardDate(second.updatedAt ?? second.createdAt)?.getTime() ?? 0) -
+        (parseDashboardDate(first.updatedAt ?? first.createdAt)?.getTime() ?? 0)
+      )
+      .slice(0, 10)
+      .map((item) => {
+        const project = projectsList.find((project) => project.id === item.projectId);
+        const createdAt = parseDashboardDate(item.createdAt);
+        const updatedAt = parseDashboardDate(item.updatedAt);
+        const wasUpdated = Boolean(createdAt && updatedAt && Math.abs(updatedAt.getTime() - createdAt.getTime()) > 1000);
+        return {
+          id: item.id,
+          item,
+          project,
+          action: wasUpdated ? "Cập nhật ticket" : "Tạo ticket",
+          happenedAt: item.updatedAt ?? item.createdAt,
+          statusLabel: WORKBOARD_COLUMNS.find((column) => column.id === item.status)?.label ?? item.status
         };
       });
 
-    const recentDocuments = [...documents]
-      .sort((first, second) => (parseDashboardDate(second.updatedAt)?.getTime() ?? 0) - (parseDashboardDate(first.updatedAt)?.getTime() ?? 0))
-      .slice(0, 6);
-
-    const recentActivity = (roleDashboard?.recentActivity ?? []).slice(0, 8);
     const activitySeries = Array.from({ length: 7 }, (_, index) => {
       const date = new Date();
       date.setDate(date.getDate() - (6 - index));
       date.setHours(0, 0, 0, 0);
       const next = new Date(date);
       next.setDate(date.getDate() + 1);
-      const activityCount = recentActivity.filter((item) => {
-        const createdAt = parseDashboardDate(item.createdAt);
-        return createdAt ? createdAt >= date && createdAt < next : false;
-      }).length;
-      const documentCount = documents.filter((document) => {
-        const updatedAt = parseDashboardDate(document.updatedAt);
+      const workItemCount = dashboardItems.filter((item) => {
+        const updatedAt = parseDashboardDate(item.updatedAt ?? item.createdAt);
         return updatedAt ? updatedAt >= date && updatedAt < next : false;
       }).length;
 
       return {
         label: date.toLocaleDateString("vi-VN", { weekday: "short" }).replace("Th ", "T"),
-        value: activityCount + documentCount
+        value: workItemCount
       };
     });
     const maxActivity = Math.max(...activitySeries.map((item) => item.value), 1);
@@ -3077,11 +3211,15 @@ function App() {
       projectCount,
       activeProjects,
       totalDocuments,
-      createdThisMonth,
-      updatedThisMonth,
+      openItems: openItems.length,
+      criticalBugs: criticalBugs.length,
+      blockedItems: blockedItems.length,
+      overdueItems: overdueItems.length,
+      completionRate,
       projectRows,
-      recentDocuments,
-      recentActivity,
+      recentWorkItems,
+      riskItems,
+      workboardFeed,
       activitySeries,
       maxActivity
     };
@@ -3192,7 +3330,7 @@ function App() {
               onClick={() => setActiveTabNav("review")}
             >
               <div className="nav-item-content">
-                <FolderKanban size={17} />
+                <Kanban size={17} />
                 <span>Workboard</span>
               </div>
             </button>
@@ -3458,11 +3596,12 @@ function App() {
             {/* ── KPI strip ── */}
             <div className="exec-kpi-grid">
               {[
-                { label: "Tổng Project",        value: executiveDashboardData().projectCount,        note: "Quy mô dự án",             color: "kpi-indigo",  Icon: FolderKanban },
-                { label: "Project active",       value: executiveDashboardData().activeProjects,       note: "Còn phát sinh hoạt động",   color: "kpi-emerald", Icon: TrendingUp    },
-                { label: "Tổng tài liệu",        value: executiveDashboardData().totalDocuments,       note: "Quy mô kho tài liệu",      color: "kpi-blue",    Icon: FileStack     },
-                { label: "Mới tháng này",        value: `+${executiveDashboardData().createdThisMonth}`, note: "Tài liệu vừa bổ sung",   color: "kpi-violet",  Icon: FilePlus      },
-                { label: "Cập nhật tháng này",   value: executiveDashboardData().updatedThisMonth,    note: "Mức độ duy trì",           color: "kpi-amber",   Icon: RefreshCw     },
+                { label: "Project",        value: executiveDashboardData().projectCount,    note: `${executiveDashboardData().activeProjects} project còn việc`, color: "kpi-indigo",  Icon: FolderKanban },
+                { label: "Ticket mở",      value: executiveDashboardData().openItems,       note: "Chưa hoàn thành",                       color: "kpi-blue",    Icon: Clock         },
+                { label: "Bug critical",   value: executiveDashboardData().criticalBugs,    note: "Cần ưu tiên xử lý",                     color: "kpi-rose",    Icon: AlertTriangle },
+                { label: "Blocked",        value: executiveDashboardData().blockedItems,    note: "Luồng đang kẹt",                        color: "kpi-violet",  Icon: GitBranch     },
+                { label: "Quá hạn",        value: executiveDashboardData().overdueItems,    note: "Chưa xong trước deadline",              color: "kpi-amber",   Icon: AlertTriangle },
+                { label: "Hoàn thành",     value: `${executiveDashboardData().completionRate}%`, note: "Tỷ lệ done toàn workboard",      color: "kpi-emerald", Icon: CheckCheck     },
               ].map(({ label, value, note, color, Icon }) => (
                 <div className={`exec-kpi-card ${color}`} key={label}>
                   <div className="kpi-icon-box"><Icon size={17} /></div>
@@ -3478,21 +3617,29 @@ function App() {
                 <div className="exec-panel-header">
                   <div>
                     <span>Theo Project</span>
-                    <h3>Tài liệu theo Project</h3>
+                    <h3>Ticket mở theo Project</h3>
                   </div>
                   <strong>{executiveDashboardData().projectRows.length} project</strong>
                 </div>
                 <div className="exec-project-bars">
                   {executiveDashboardData().projectRows.slice(0, 8).map((project) => (
-                    <button className="exec-project-bar-row" type="button" key={project.id} onClick={() => handleSelectProject(project.id)}>
+                    <button
+                      className="exec-project-bar-row"
+                      type="button"
+                      key={project.id}
+                      onClick={() => {
+                        setSelectedProjectId(project.id);
+                        setActiveTabNav("review");
+                      }}
+                    >
                       <div className="project-bar-label">
                         <strong>{project.name}</strong>
-                        <small>{project.members} thành viên · {relativeDashboardTime(project.updatedAt)}</small>
+                        <small>{project.doneItems} done · {project.blockedItems} blocked · {relativeDashboardTime(project.updatedAt)}</small>
                       </div>
                       <div className="project-bar-track">
                         <span style={{ width: `${project.width}%` }}></span>
                       </div>
-                      <b>{project.documents}</b>
+                      <b>{project.openItems}</b>
                     </button>
                   ))}
                 </div>
@@ -3502,7 +3649,7 @@ function App() {
                 <div className="exec-panel-header">
                   <div>
                     <span>Hoạt động</span>
-                    <h3>Hoạt động tài liệu theo thời gian</h3>
+                    <h3>Biến động Workboard 7 ngày</h3>
                   </div>
                   <strong>7 ngày</strong>
                 </div>
@@ -3524,20 +3671,27 @@ function App() {
               <section className="exec-panel recent-projects">
                 <div className="exec-panel-header">
                   <div>
-                    <span>Project</span>
-                    <h3>Project gần đây</h3>
+                    <span>Ưu tiên</span>
+                    <h3>Project cần chú ý</h3>
                   </div>
-                  <strong>Cập nhật</strong>
+                  <strong>Risk</strong>
                 </div>
                 <div className="exec-compact-list">
                   {executiveDashboardData().projectRows
-                    .sort((first, second) => (parseDashboardDate(second.updatedAt)?.getTime() ?? 0) - (parseDashboardDate(first.updatedAt)?.getTime() ?? 0))
+                    .sort((first, second) => second.riskScore - first.riskScore || second.openItems - first.openItems)
                     .slice(0, 5)
                     .map((project) => (
-                      <button type="button" key={project.id} onClick={() => handleSelectProject(project.id)}>
+                      <button
+                        type="button"
+                        key={project.id}
+                        onClick={() => {
+                          setSelectedProjectId(project.id);
+                          setActiveTabNav("review");
+                        }}
+                      >
                         <span className="ops-code-chip">{project.code}</span>
                         <strong>{project.name}</strong>
-                        <small>{relativeDashboardTime(project.updatedAt)}</small>
+                        <small>{project.openItems} mở · {project.overdueItems} quá hạn</small>
                       </button>
                     ))}
                 </div>
@@ -3546,50 +3700,55 @@ function App() {
               <section className="exec-panel recent-docs">
                 <div className="exec-panel-header">
                   <div>
-                    <span>Tài liệu</span>
-                    <h3>Tài liệu gần đây</h3>
+                    <span>Ticket</span>
+                    <h3>Ticket gần đây</h3>
                   </div>
-                  <strong>{executiveDashboardData().recentDocuments.length} file</strong>
+                  <strong>{executiveDashboardData().recentWorkItems.length} item</strong>
                 </div>
                 <div className="exec-compact-list docs">
-                  {executiveDashboardData().recentDocuments.map((document) => (
+                  {executiveDashboardData().recentWorkItems.map((item) => {
+                    const project = projectsList.find((project) => project.id === item.projectId);
+                    return (
                     <button
                       type="button"
-                      key={document.id}
-                      onClick={() => {
-                        setSelectedProjectId(document.projectId);
-                        setSelectedDocumentId(document.id);
-                        setActiveTabNav("projects");
-                      }}
+                      key={item.id}
+                      onClick={() => openDashboardWorkItem(item)}
                     >
-                      <FileText size={14} />
-                      <strong>{document.title}</strong>
-                      <small>{document.projectCode} · {relativeDashboardTime(document.updatedAt)}</small>
+                      {workItemTypeIcon(item.type)}
+                      <strong>{item.title}</strong>
+                      <small>{project?.code ?? "Project"} · {WORKBOARD_COLUMNS.find((column) => column.id === item.status)?.label ?? item.status}</small>
                     </button>
-                  ))}
+                    );
+                  })}
+                  {executiveDashboardData().recentWorkItems.length === 0 && (
+                    <div className="empty-collab-state">Chưa có ticket nào trên Workboard.</div>
+                  )}
                 </div>
               </section>
 
               <section className="exec-panel quiet-projects">
                 <div className="exec-panel-header">
                   <div>
-                    <span>Theo dõi</span>
-                    <h3>Project ít hoạt động</h3>
+                    <span>Cảnh báo</span>
+                    <h3>Rủi ro Workboard</h3>
                   </div>
-                  <strong>Không phải rủi ro</strong>
+                  <strong>{executiveDashboardData().riskItems.length} item</strong>
                 </div>
                 <div className="exec-compact-list quiet">
-                  {executiveDashboardData().projectRows
-                    .filter((project) => project.inactiveDays !== null)
-                    .sort((first, second) => (second.inactiveDays ?? 0) - (first.inactiveDays ?? 0))
-                    .slice(0, 4)
-                    .map((project) => (
-                      <button type="button" key={project.id} onClick={() => handleSelectProject(project.id)}>
-                        <span className={(project.inactiveDays ?? 0) >= 30 ? "quiet-dot high" : "quiet-dot"}></span>
-                        <strong>{project.name}</strong>
-                        <small>{project.inactiveDays} ngày không cập nhật</small>
+                  {executiveDashboardData().riskItems.map((item) => {
+                    const project = projectsList.find((project) => project.id === item.projectId);
+                    const isHighRisk = item.status === "BLOCKED" || item.priority === "CRITICAL";
+                    return (
+                      <button type="button" key={item.id} onClick={() => openDashboardWorkItem(item)}>
+                        <span className={isHighRisk ? "quiet-dot high" : "quiet-dot"}></span>
+                        <strong>{item.title}</strong>
+                        <small>{project?.code ?? "Project"} · {item.status === "BLOCKED" ? "Blocked" : isWorkItemOverdue(item) ? "Quá hạn" : WORK_ITEM_PRIORITY_LABEL[item.priority]}</small>
                       </button>
-                    ))}
+                    );
+                  })}
+                  {executiveDashboardData().riskItems.length === 0 && (
+                    <div className="empty-collab-state">Không có ticket rủi ro.</div>
+                  )}
                 </div>
               </section>
             </div>
@@ -3598,38 +3757,37 @@ function App() {
               <div className="exec-panel-header">
                 <div>
                   <span>Activity Feed</span>
-                  <h3>Hoạt động gần đây</h3>
+                  <h3>Hoạt động Workboard gần đây</h3>
                 </div>
-                <strong>{executiveDashboardData().recentActivity.length} hoạt động</strong>
+                <strong>{executiveDashboardData().workboardFeed.length} ticket</strong>
               </div>
               <div className="exec-activity-feed">
-                {executiveDashboardData().recentActivity.map((log) => {
-                  const actionType = log.action?.toLowerCase() ?? "";
-                  const iconClass = actionType.includes("create") || actionType.includes("tao")
-                    ? "feed-icon create"
-                    : actionType.includes("delete") || actionType.includes("xoa")
-                    ? "feed-icon delete"
-                    : actionType.includes("resolve") || actionType.includes("close")
+                {executiveDashboardData().workboardFeed.map((feed) => {
+                  const iconClass = feed.item.status === "DONE"
                     ? "feed-icon resolve"
+                    : feed.item.status === "BLOCKED" || feed.item.priority === "CRITICAL"
+                    ? "feed-icon delete"
+                    : feed.action === "Tạo ticket"
+                    ? "feed-icon create"
                     : "feed-icon update";
-                  const FeedIcon = actionType.includes("create") || actionType.includes("tao")
-                    ? FilePlus
-                    : actionType.includes("delete") || actionType.includes("xoa")
-                    ? Eraser
-                    : actionType.includes("resolve") || actionType.includes("close")
+                  const FeedIcon = feed.item.status === "DONE"
                     ? CheckCheck
+                    : feed.item.status === "BLOCKED" || feed.item.priority === "CRITICAL"
+                    ? AlertTriangle
+                    : feed.action === "Tạo ticket"
+                    ? FilePlus
                     : PenLine;
                   return (
-                    <div className="exec-feed-row" key={log.id}>
+                    <button className="exec-feed-row" type="button" key={feed.id} onClick={() => openDashboardWorkItem(feed.item)}>
                       <span className={iconClass}><FeedIcon size={13} /></span>
-                      <time>{parseDashboardDate(log.createdAt)?.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</time>
-                      <strong>{activityDashboardText(log)}</strong>
-                      <span>{relativeDashboardTime(log.createdAt)}</span>
-                    </div>
+                      <time>{parseDashboardDate(feed.happenedAt)?.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</time>
+                      <strong>{feed.action}: {feed.item.title}</strong>
+                      <span>{feed.project?.code ?? "Project"} · {feed.statusLabel} · {WORK_ITEM_PRIORITY_LABEL[feed.item.priority]}</span>
+                    </button>
                   );
                 })}
-                {executiveDashboardData().recentActivity.length === 0 && (
-                  <div className="empty-collab-state">Chưa có hoạt động tài liệu gần đây.</div>
+                {executiveDashboardData().workboardFeed.length === 0 && (
+                  <div className="empty-collab-state">Chưa có hoạt động Workboard gần đây.</div>
                 )}
               </div>
             </section>
@@ -3693,31 +3851,61 @@ function App() {
             </div>
 
             <div className="workboard-controls">
-              <div className="workboard-filter-group">
-                <span>Loại</span>
-                {(["ALL", "TASK", "BUG", "REVIEW", "CHANGE_REQUEST", "QUESTION"] as const).map((type) => (
-                  <button
-                    key={type}
-                    type="button"
-                    className={workboardTypeFilter === type ? "active" : ""}
-                    onClick={() => setWorkboardTypeFilter(type)}
+              <div className="workboard-filter-menu-bar">
+                <div className="filter-bar-label">
+                  <SlidersHorizontal size={14} />
+                  <span>Bộ lọc:</span>
+                </div>
+
+                <label className="filter-select-wrapper">
+                  <span className="select-label">Loại:</span>
+                  <select
+                    value={workboardTypeFilter}
+                    onChange={(event) => setWorkboardTypeFilter(event.target.value as any)}
                   >
-                    {type === "ALL" ? "Tất cả" : WORK_ITEM_TYPE_LABEL[type]}
+                    <option value="ALL">Tất cả loại ({workItems.length})</option>
+                    {(["TASK", "BUG", "REVIEW", "CHANGE_REQUEST", "QUESTION"] as const).map((type) => (
+                      <option key={type} value={type}>
+                        {WORK_ITEM_TYPE_LABEL[type]}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={13} className="select-arrow" />
+                </label>
+
+                <label className="filter-select-wrapper">
+                  <span className="select-label">Priority:</span>
+                  <select
+                    value={workboardPriorityFilter}
+                    onChange={(event) => setWorkboardPriorityFilter(event.target.value as any)}
+                  >
+                    <option value="ALL">Tất cả độ ưu tiên</option>
+                    {(["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const).map((priority) => (
+                      <option key={priority} value={priority}>
+                        {WORK_ITEM_PRIORITY_LABEL[priority]}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={13} className="select-arrow" />
+                </label>
+
+                {(workboardTypeFilter !== "ALL" || workboardPriorityFilter !== "ALL") && (
+                  <button
+                    className="btn-reset-filters"
+                    type="button"
+                    title="Xóa tất cả bộ lọc"
+                    onClick={() => {
+                      setWorkboardTypeFilter("ALL");
+                      setWorkboardPriorityFilter("ALL");
+                    }}
+                  >
+                    <X size={12} /> Reset
                   </button>
-                ))}
+                )}
               </div>
-              <div className="workboard-filter-group">
-                <span>Priority</span>
-                {(["ALL", "LOW", "MEDIUM", "HIGH", "CRITICAL"] as const).map((priority) => (
-                  <button
-                    key={priority}
-                    type="button"
-                    className={workboardPriorityFilter === priority ? "active" : ""}
-                    onClick={() => setWorkboardPriorityFilter(priority)}
-                  >
-                    {priority === "ALL" ? "Tất cả" : WORK_ITEM_PRIORITY_LABEL[priority]}
-                  </button>
-                ))}
+
+              <div className="workboard-filter-summary">
+                <span>Hiển thị <strong>{visibleWorkItems.length}</strong> / {workItems.length} công việc</span>
               </div>
             </div>
 
@@ -5270,19 +5458,24 @@ function App() {
               </button>
             </div>
             <div className="modal-body">
-              <div className="form-group project-name-priority">
-                <label>Tiêu đề ticket</label>
+              {/* Primary Title Field */}
+              <div className="workitem-title-field">
+                <label>
+                  <PenLine size={13} /> Tiêu đề ticket <span style={{ color: "#ef4444" }}>*</span>
+                </label>
                 <input
                   className="form-input"
                   value={workItemDraft.title}
                   onChange={(event) => setWorkItemDraft({ ...workItemDraft, title: event.target.value })}
                   placeholder="Ví dụ: Sửa validation ngày hết hạn"
+                  autoFocus
                 />
               </div>
 
-              <div className="document-property-grid">
+              {/* 2-Column Property Grid */}
+              <div className="workitem-form-grid">
                 <div className="form-group">
-                  <label>Loại item</label>
+                  <label><Tags size={13} /> Loại item</label>
                   <select
                     className="form-select"
                     value={workItemDraft.type}
@@ -5293,8 +5486,9 @@ function App() {
                     ))}
                   </select>
                 </div>
+
                 <div className="form-group">
-                  <label>Trạng thái</label>
+                  <label><FolderKanban size={13} /> Trạng thái</label>
                   <select
                     className="form-select"
                     value={workItemDraft.status}
@@ -5305,8 +5499,9 @@ function App() {
                     ))}
                   </select>
                 </div>
+
                 <div className="form-group">
-                  <label>Priority</label>
+                  <label><AlertTriangle size={13} /> Priority</label>
                   <select
                     className="form-select"
                     value={workItemDraft.priority}
@@ -5317,8 +5512,9 @@ function App() {
                     ))}
                   </select>
                 </div>
+
                 <div className="form-group">
-                  <label>Hạn xử lý</label>
+                  <label><Calendar size={13} /> Hạn xử lý</label>
                   <input
                     className="form-input"
                     type="date"
@@ -5326,8 +5522,9 @@ function App() {
                     onChange={(event) => setWorkItemDraft({ ...workItemDraft, dueDate: event.target.value })}
                   />
                 </div>
+
                 <div className="form-group">
-                  <label>Tài liệu liên quan</label>
+                  <label><FileText size={13} /> Tài liệu liên quan</label>
                   <select
                     className="form-select"
                     value={workItemDraft.documentId}
@@ -5339,38 +5536,62 @@ function App() {
                     ))}
                   </select>
                 </div>
+
                 <div className="form-group">
-                  <label>Người phụ trách</label>
+                  <label><UserCheck size={13} /> Người phụ trách</label>
                   <input
                     className="form-input"
                     value={workItemDraft.assigneeName}
                     onChange={(event) => setWorkItemDraft({ ...workItemDraft, assigneeName: event.target.value })}
-                    placeholder="Nhân viên 1"
+                    placeholder="Nhập tên người xử lý..."
                   />
                 </div>
               </div>
 
+              {/* Description */}
               <div className="form-group">
-                <label>Mô tả</label>
+                <label style={{ fontSize: "0.72rem", fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <FileText size={13} /> Mô tả công việc
+                </label>
                 <textarea
                   className="form-textarea"
-                  rows={5}
+                  rows={4}
                   value={workItemDraft.description}
                   onChange={(event) => setWorkItemDraft({ ...workItemDraft, description: event.target.value })}
-                  placeholder="Mô tả nội dung cần xử lý..."
+                  placeholder="Mô tả chi tiết nội dung cần xử lý..."
                 />
               </div>
 
-              <div className="form-group">
-                <label>Ảnh / Video đính kèm</label>
+              {/* Attachments Section Box */}
+              <div className="workitem-attachments-box">
+                <label style={{ fontSize: "0.72rem", fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "flex", alignItems: "center", gap: 6 }}>
+                  <Paperclip size={13} /> Ảnh / Video đính kèm
+                </label>
+                <div className="workitem-upload-row" style={{ margin: 0 }}>
+                  <label className={`workitem-upload-btn ${isUploadingWorkItemAttachment ? "disabled" : ""}`}>
+                    <UploadCloud size={14} />
+                    {isUploadingWorkItemAttachment ? "Đang upload..." : "Upload tệp đính kèm"}
+                    <input
+                      type="file"
+                      accept="image/*,video/mp4,video/webm,video/quicktime"
+                      disabled={isUploadingWorkItemAttachment}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        void handleUploadDraftWorkItemAttachment(file);
+                      }}
+                    />
+                  </label>
+                  <small style={{ color: "#64748b", fontSize: "0.72rem" }}>URL sau khi upload sẽ tự động chèn bên dưới.</small>
+                </div>
                 <textarea
                   className="form-textarea"
-                  rows={3}
+                  rows={2}
                   value={workItemDraft.attachmentsText}
                   onChange={(event) => setWorkItemDraft({ ...workItemDraft, attachmentsText: event.target.value })}
                   placeholder="Dán URL ảnh hoặc video, mỗi dòng một file..."
                 />
-                <small className="field-helper">Hỗ trợ preview ảnh .png/.jpg/.webp và video .mp4/.webm/.mov trong chi tiết ticket.</small>
+                <small className="field-helper" style={{ color: "#94a3b8", fontSize: "0.7rem", margin: 0 }}>Hỗ trợ preview ảnh (.png, .jpg, .webp) và video (.mp4, .webm, .mov).</small>
               </div>
             </div>
             <div className="modal-footer">
@@ -5378,7 +5599,7 @@ function App() {
                 Hủy
               </button>
               <button className="btn-primary" type="button" onClick={() => void handleSaveWorkItem()}>
-                <CheckCircle2 size={15} /> Lưu ticket
+                <CheckCircle2 size={15} /> {workItemDraft.id ? "Cập nhật ticket" : "Lưu ticket"}
               </button>
             </div>
           </div>

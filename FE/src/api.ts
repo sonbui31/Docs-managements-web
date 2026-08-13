@@ -74,6 +74,17 @@ type BackendComment = {
 
 type BackendWorkItem = WorkItem;
 
+type MediaAsset = {
+  id: string;
+  projectId: string;
+  documentId?: string | null;
+  url: string;
+  mimeType?: string | null;
+  size?: number | null;
+  width?: number | null;
+  height?: number | null;
+};
+
 export async function apiFetch<T>(path: string, options?: RequestInit, retry = true): Promise<T> {
   const token = getAccessToken();
   const response = await fetch(`${API_BASE}${path}`, {
@@ -442,6 +453,17 @@ export async function uploadWorkItemAttachment(workItemId: string, file: File) {
   const body = new FormData();
   body.append("file", file);
   return apiFetch<BackendWorkItem>(`/work-items/${workItemId}/attachments`, {
+    method: "POST",
+    body
+  });
+}
+
+export async function uploadMediaAsset(payload: { projectId: string; documentId?: string; file: File }) {
+  const body = new FormData();
+  body.append("file", payload.file);
+  body.append("projectId", payload.projectId);
+  if (payload.documentId) body.append("documentId", payload.documentId);
+  return apiFetch<MediaAsset>("/media/upload", {
     method: "POST",
     body
   });
