@@ -8,6 +8,7 @@ import type {
   Project,
   ProjectDashboard,
   ProjectDocument,
+  ProjectMemberOption,
   RequirementTag,
   RoleDashboard,
   SearchResult,
@@ -385,6 +386,10 @@ export async function resolveComment(commentId: string) {
 
 export async function fetchProjectWorkItems(projectId: string) {
   return apiFetch<BackendWorkItem[]>(`/work-items/project/${projectId}`);
+}
+
+export async function fetchProjectMembers(projectId: string) {
+  return apiFetch<ProjectMemberOption[]>(`/projects/${projectId}/members`);
 }
 
 export async function createWorkItem(payload: {

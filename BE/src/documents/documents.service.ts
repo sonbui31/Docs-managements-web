@@ -15,10 +15,10 @@ export class DocumentsService {
   ) {}
 
   async findByProject(projectId: string, user: AuthenticatedUser) {
-    await this.permissions.assertProjectRole(user, projectId, ["VIEWER"]);
+    await this.permissions.assertProjectVisible(user, projectId);
 
     return this.prisma.document.findMany({
-      where: { projectId },
+      where: this.permissions.documentVisibilityWhere(user, projectId, ["VIEWER"]),
       orderBy: { updatedAt: "desc" },
       include: { _count: { select: { comments: { where: { status: "OPEN", parentId: null } }, versions: true } } }
     });

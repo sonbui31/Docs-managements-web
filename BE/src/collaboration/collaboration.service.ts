@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { Prisma, ProjectRole } from "@prisma/client";
 import sanitizeHtml = require("sanitize-html");
 import { AuthenticatedUser } from "../auth/auth.types";
 import { DocumentsService } from "../documents/documents.service";
@@ -27,6 +27,7 @@ export class CollaborationService {
       orderBy: { updatedAt: "desc" },
       include: {
         documents: {
+          where: this.permissions.documentVisibilityWhere(user, undefined, ["VIEWER"]),
           orderBy: { updatedAt: "desc" },
           select: {
             id: true,
@@ -54,6 +55,8 @@ export class CollaborationService {
       recentActivity,
       tags,
       traces,
+      tagsByProject,
+      traceLinks,
       latestImportJob
     ] = await Promise.all([
       this.prisma.comment.count({ where: { documentId: { in: documentIds }, status: "OPEN", parentId: null } }),
@@ -86,8 +89,31 @@ export class CollaborationService {
         orderBy: { createdAt: "desc" },
         take: 12
       }),
-      this.prisma.requirementTag.count({ where: { projectId: { in: projectIds } } }),
-      this.prisma.traceLink.count({ where: { projectId: { in: projectIds } } }),
+      this.prisma.requirementTag.count({ where: { documentId: { in: documentIds } } }),
+      this.prisma.traceLink.count({
+        where: {
+          projectId: { in: projectIds },
+          OR: [
+            { sourceDocumentId: { in: documentIds } },
+            { targetDocumentId: { in: documentIds } }
+          ]
+        }
+      }),
+      this.prisma.requirementTag.groupBy({
+        by: ["projectId"],
+        where: { documentId: { in: documentIds } },
+        _count: { _all: true }
+      }),
+      this.prisma.traceLink.findMany({
+        where: {
+          projectId: { in: projectIds },
+          OR: [
+            { sourceDocumentId: { in: documentIds } },
+            { targetDocumentId: { in: documentIds } }
+          ]
+        },
+        select: { projectId: true }
+      }),
       this.prisma.importJob.findFirst({
         where: { projectId: { in: projectIds }, status: "COMPLETED" },
         orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }],
@@ -103,6 +129,11 @@ export class CollaborationService {
         projectName: project.name
       }))
     );
+    const tagCountByProject = new Map(tagsByProject.map((group) => [group.projectId, group._count._all]));
+    const traceCountByProject = traceLinks.reduce((counts, trace) => {
+      counts.set(trace.projectId, (counts.get(trace.projectId) ?? 0) + 1);
+      return counts;
+    }, new Map<string, number>());
     const draftDocuments = documents.filter((document) => document.status !== "DEPLOYED").length;
     const deployedDocuments = documents.filter((document) => document.status === "DEPLOYED").length;
     const projectsWithOpenComments = projects.filter((project) => {
@@ -148,8 +179,8 @@ export class CollaborationService {
         client: project.client,
         documents: project.documents.length,
         openComments: project.documents.reduce((total, document) => total + (document._count?.comments ?? 0), 0),
-        tags: project._count.requirementTags,
-        traces: project._count.traceLinks,
+        tags: tagCountByProject.get(project.id) ?? 0,
+        traces: traceCountByProject.get(project.id) ?? 0,
         members: project.members.length,
         updatedAt: project.updatedAt
       })),
@@ -161,11 +192,12 @@ export class CollaborationService {
   }
 
   async dashboard(projectId: string, user: AuthenticatedUser) {
-    await this.permissions.assertProjectRole(user, projectId, ["VIEWER"]);
+    await this.permissions.assertProjectVisible(user, projectId);
+    const documentWhere = this.permissions.documentVisibilityWhere(user, projectId, ["VIEWER"]);
 
     const [documents, openComments, resolvedComments, tags, traces, recentActivity] = await Promise.all([
       this.prisma.document.findMany({
-        where: { projectId },
+        where: documentWhere,
         orderBy: { updatedAt: "desc" },
         select: {
           id: true,
@@ -177,10 +209,18 @@ export class CollaborationService {
           _count: { select: { comments: { where: { status: "OPEN", parentId: null } }, versions: true } }
         }
       }),
-      this.prisma.comment.count({ where: { document: { projectId }, status: "OPEN", parentId: null } }),
-      this.prisma.comment.count({ where: { document: { projectId }, status: "RESOLVED", parentId: null } }),
-      this.prisma.requirementTag.count({ where: { projectId } }),
-      this.prisma.traceLink.count({ where: { projectId } }),
+      this.prisma.comment.count({ where: { document: documentWhere, status: "OPEN", parentId: null } }),
+      this.prisma.comment.count({ where: { document: documentWhere, status: "RESOLVED", parentId: null } }),
+      this.prisma.requirementTag.count({ where: { document: documentWhere } }),
+      this.prisma.traceLink.count({
+        where: {
+          projectId,
+          OR: [
+            { sourceDocument: documentWhere },
+            { targetDocument: documentWhere }
+          ]
+        }
+      }),
       this.activity(projectId, user, 6)
     ]);
 
@@ -203,19 +243,24 @@ export class CollaborationService {
   }
 
   async search(projectId: string, query: string, user: AuthenticatedUser) {
-    await this.permissions.assertProjectRole(user, projectId, ["VIEWER"]);
+    await this.permissions.assertProjectVisible(user, projectId);
     const q = query.trim();
     if (!q) return { documents: [], comments: [], tags: [] };
+    const documentWhere = this.permissions.documentVisibilityWhere(user, projectId, ["VIEWER"]);
 
     const [documents, comments, tags] = await Promise.all([
       this.prisma.document.findMany({
         where: {
-          projectId,
-          OR: [
-            { title: { contains: q, mode: "insensitive" } },
-            { type: { contains: q, mode: "insensitive" } },
-            { htmlContent: { contains: q, mode: "insensitive" } },
-            { sourceFileName: { contains: q, mode: "insensitive" } }
+          AND: [
+            documentWhere,
+            {
+              OR: [
+                { title: { contains: q, mode: "insensitive" } },
+                { type: { contains: q, mode: "insensitive" } },
+                { htmlContent: { contains: q, mode: "insensitive" } },
+                { sourceFileName: { contains: q, mode: "insensitive" } }
+              ]
+            }
           ]
         },
         orderBy: { updatedAt: "desc" },
@@ -224,7 +269,7 @@ export class CollaborationService {
       }),
       this.prisma.comment.findMany({
         where: {
-          document: { projectId },
+          document: documentWhere,
           OR: [
             { content: { contains: q, mode: "insensitive" } },
             { selectedText: { contains: q, mode: "insensitive" } },
@@ -237,11 +282,15 @@ export class CollaborationService {
       }),
       this.prisma.requirementTag.findMany({
         where: {
-          projectId,
-          OR: [
-            { code: { contains: q, mode: "insensitive" } },
-            { label: { contains: q, mode: "insensitive" } },
-            { selectedText: { contains: q, mode: "insensitive" } }
+          AND: [
+            { document: documentWhere },
+            {
+              OR: [
+                { code: { contains: q, mode: "insensitive" } },
+                { label: { contains: q, mode: "insensitive" } },
+                { selectedText: { contains: q, mode: "insensitive" } }
+              ]
+            }
           ]
         },
         orderBy: { updatedAt: "desc" },
@@ -343,9 +392,16 @@ export class CollaborationService {
   }
 
   async traceLinks(projectId: string, user: AuthenticatedUser) {
-    await this.permissions.assertProjectRole(user, projectId, ["VIEWER"]);
+    await this.permissions.assertProjectVisible(user, projectId);
+    const documentWhere = this.permissions.documentVisibilityWhere(user, projectId, ["VIEWER"]);
     return this.prisma.traceLink.findMany({
-      where: { projectId },
+      where: {
+        projectId,
+        OR: [
+          { sourceDocument: documentWhere },
+          { targetDocument: documentWhere }
+        ]
+      },
       orderBy: { createdAt: "desc" },
       include: {
         sourceDocument: { select: { title: true } },
@@ -401,16 +457,26 @@ export class CollaborationService {
   }
 
   async activity(projectId: string, user: AuthenticatedUser, take = 30) {
-    await this.permissions.assertProjectRole(user, projectId, ["VIEWER"]);
-    const documents = await this.prisma.document.findMany({ where: { projectId }, select: { id: true } });
+    const canViewProjectActivity = await this.canUseProjectRole(user, projectId, ["VIEWER"]);
+    if (!canViewProjectActivity) {
+      await this.permissions.assertProjectVisible(user, projectId);
+    }
+    const documents = await this.prisma.document.findMany({
+      where: this.permissions.documentVisibilityWhere(user, projectId, ["VIEWER"]),
+      select: { id: true }
+    });
     const documentIds = documents.map((document) => document.id);
     return this.prisma.auditLog.findMany({
       where: {
-        OR: [
-          { entityType: "Project", entityId: projectId },
-          { entityType: "Document", entityId: { in: documentIds } },
-          { metadata: { path: ["projectId"], equals: projectId } }
-        ]
+        OR: canViewProjectActivity
+          ? [
+              { entityType: "Project", entityId: projectId },
+              { entityType: "Document", entityId: { in: documentIds } },
+              { metadata: { path: ["projectId"], equals: projectId } }
+            ]
+          : [
+              { entityType: "Document", entityId: { in: documentIds } }
+            ]
       },
       include: { actor: { select: { name: true, email: true } } },
       orderBy: { createdAt: "desc" },
@@ -627,5 +693,14 @@ export class CollaborationService {
         }
       ]
     });
+  }
+
+  private async canUseProjectRole(user: AuthenticatedUser, projectId: string, allowedRoles: ProjectRole[]) {
+    try {
+      await this.permissions.assertProjectRole(user, projectId, allowedRoles);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

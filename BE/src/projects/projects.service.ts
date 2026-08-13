@@ -19,19 +19,25 @@ export class ProjectsService {
       orderBy: { updatedAt: "desc" },
       include: {
         _count: {
-          select: { documents: true, importJobs: true }
+          select: {
+            documents: { where: this.permissions.documentVisibilityWhere(user, undefined, ["VIEWER"]) },
+            importJobs: true
+          }
         }
       }
     });
   }
 
   async findOne(id: string, user: AuthenticatedUser) {
-    await this.permissions.assertProjectRole(user, id, ["VIEWER"]);
+    await this.permissions.assertProjectVisible(user, id);
 
     const project = await this.prisma.project.findUnique({
       where: { id },
       include: {
-        documents: { orderBy: { updatedAt: "desc" } },
+        documents: {
+          where: this.permissions.documentVisibilityWhere(user, id, ["VIEWER"]),
+          orderBy: { updatedAt: "desc" }
+        },
         mediaAssets: { orderBy: { createdAt: "desc" }, take: 20 }
       }
     });
@@ -41,6 +47,37 @@ export class ProjectsService {
     }
 
     return project;
+  }
+
+  async findMembers(id: string, user: AuthenticatedUser) {
+    await this.permissions.assertProjectVisible(user, id);
+
+    const members = await this.prisma.projectMember.findMany({
+      where: { projectId: id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            globalRole: true,
+            status: true
+          }
+        }
+      },
+      orderBy: { createdAt: "asc" }
+    });
+
+    return members
+      .filter((member) => member.user.status === "ACTIVE")
+      .map((member) => ({
+        id: member.user.id,
+        name: member.user.name,
+        email: member.user.email,
+        role: member.user.globalRole,
+        projectRole: member.role,
+        projectRoles: member.roles
+      }));
   }
 
   async create(dto: CreateProjectDto, user: AuthenticatedUser) {

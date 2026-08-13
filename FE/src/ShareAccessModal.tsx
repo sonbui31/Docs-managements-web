@@ -3,7 +3,7 @@ import { Check, ChevronDown, Copy, FileText, FolderKanban, Search, Send, ShieldC
 import {
   assignUserToDocument,
   assignUserToProject,
-  fetchUsers,
+  fetchShareUsers,
   type ManagedUser,
   removeUserFromDocument,
   removeUserFromProject
@@ -57,15 +57,22 @@ export function ShareAccessModal({
     setSelectedUserIds([]);
     setIsUserDropdownOpen(false);
     setQuery("");
-    void loadUsers();
+    void loadUsers(initialScope);
   }, [isOpen, initialScope]);
 
-  async function loadUsers() {
+  async function loadUsers(nextScope: ShareScope = scope) {
+    const nextTargetId = nextScope === "document" ? documentId : projectId;
+    if (!nextTargetId || nextTargetId === "empty-document") {
+      setUsers([]);
+      return;
+    }
+
     setLoading(true);
     try {
-      setUsers(await fetchUsers());
+      setUsers(await fetchShareUsers(nextScope, nextTargetId));
     } catch (error: any) {
       onToast("error", "Không tải được danh sách người dùng", error?.message || "Vui lòng thử lại.");
+      setUsers([]);
     } finally {
       setLoading(false);
     }
@@ -219,6 +226,7 @@ export function ShareAccessModal({
               onClick={() => {
                 setScope("document");
                 setSelectedUserIds([]);
+                void loadUsers("document");
               }}
               disabled={!documentId || documentId === "empty-document"}
             >
@@ -231,6 +239,7 @@ export function ShareAccessModal({
               onClick={() => {
                 setScope("project");
                 setSelectedUserIds([]);
+                void loadUsers("project");
               }}
               disabled={!projectId}
             >

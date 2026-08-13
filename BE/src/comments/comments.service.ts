@@ -89,6 +89,7 @@ export class CommentsService {
 
   async update(id: string, dto: UpdateCommentDto, user: AuthenticatedUser) {
     await this.permissions.assertCommentRole(user, id, ["REVIEWER", "EDITOR", "MANAGER"]);
+    await this.assertCommentOwner(id, user, "Bạn chỉ có thể sửa comment do chính mình tạo");
     if (Object.keys(dto).length === 0) {
       throw new BadRequestException("No comment fields to update");
     }
@@ -113,6 +114,8 @@ export class CommentsService {
 
   async remove(id: string, user: AuthenticatedUser) {
     await this.permissions.assertCommentRole(user, id, ["REVIEWER", "EDITOR", "MANAGER"]);
+    await this.assertCommentOwner(id, user, "Bạn chỉ có thể xóa comment do chính mình tạo");
+    await this.assertNoOtherUserReplies(id, user);
 
     const comment = await this.prisma.comment.findUnique({ where: { id }, select: { documentId: true } });
     await this.prisma.comment.deleteMany({
@@ -131,6 +134,36 @@ export class CommentsService {
     }
 
     return { ok: true };
+  }
+
+  private async assertCommentOwner(id: string, user: AuthenticatedUser, message: string) {
+    const comment = await this.prisma.comment.findUnique({
+      where: { id },
+      select: { createdBy: true, createdByEmail: true }
+    });
+    const isOwner =
+      comment?.createdByEmail === user.email ||
+      comment?.createdBy === user.email ||
+      comment?.createdBy === user.name;
+    if (!isOwner) throw new BadRequestException(message);
+  }
+
+  private async assertNoOtherUserReplies(parentId: string, user: AuthenticatedUser) {
+    const otherUserReplies = await this.prisma.comment.count({
+      where: {
+        parentId,
+        NOT: {
+          OR: [
+            { createdByEmail: user.email },
+            { createdBy: user.email },
+            { createdBy: user.name }
+          ]
+        }
+      }
+    });
+    if (otherUserReplies > 0) {
+      throw new BadRequestException("Không thể xóa comment này vì đang có reply của người khác");
+    }
   }
 
   private async projectIdForDocument(documentId: string) {

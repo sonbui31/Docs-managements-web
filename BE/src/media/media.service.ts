@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { ProjectRole } from "@prisma/client";
 import { v2 as cloudinary } from "cloudinary";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { PermissionsService } from "../permissions/permissions.service";
@@ -26,7 +27,10 @@ export class MediaService {
     }
 
     if (dto.documentId) {
-      await this.permissions.assertDocumentRole(user, dto.documentId, ["REVIEWER", "EDITOR", "MANAGER"]);
+      const document = await this.permissions.assertDocumentRole(user, dto.documentId, ["REVIEWER", "EDITOR", "MANAGER"]);
+      if (document.projectId !== dto.projectId) {
+        throw new BadRequestException("Document does not belong to project");
+      }
     } else {
       await this.permissions.assertProjectRole(user, dto.projectId, ["REVIEWER", "EDITOR", "MANAGER"]);
     }
@@ -71,10 +75,18 @@ export class MediaService {
   }
 
   async findByProject(projectId: string, user: AuthenticatedUser) {
-    await this.permissions.assertProjectRole(user, projectId, ["VIEWER"]);
+    const canViewProjectMedia = await this.canUseProjectRole(user, projectId, ["VIEWER"]);
+    if (!canViewProjectMedia) {
+      await this.permissions.assertProjectVisible(user, projectId);
+    }
 
     return this.prisma.mediaAsset.findMany({
-      where: { projectId },
+      where: canViewProjectMedia
+        ? { projectId }
+        : {
+            projectId,
+            document: this.permissions.documentVisibilityWhere(user, projectId, ["VIEWER"])
+          },
       orderBy: { createdAt: "desc" }
     });
   }
@@ -112,5 +124,14 @@ export class MediaService {
     await cloudinary.uploader.destroy(asset.cloudinaryPublicId, { resource_type: "image" }).catch(() => undefined);
     await this.prisma.mediaAsset.delete({ where: { id } });
     return { ok: true };
+  }
+
+  private async canUseProjectRole(user: AuthenticatedUser, projectId: string, allowedRoles: ProjectRole[]) {
+    try {
+      await this.permissions.assertProjectRole(user, projectId, allowedRoles);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

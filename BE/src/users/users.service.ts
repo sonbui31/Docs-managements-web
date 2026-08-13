@@ -40,6 +40,18 @@ export class UsersService {
     return this.findStoredManagedUsers(actor);
   }
 
+  async findShareCandidates(scope: string, targetId: string, actor: AuthenticatedUser) {
+    if (scope === "project") {
+      await this.permissions.assertProjectRole(actor, targetId, ["MANAGER"]);
+    } else if (scope === "document") {
+      await this.permissions.assertDocumentRole(actor, targetId, ["MANAGER"]);
+    } else {
+      throw new BadRequestException("Share scope không hợp lệ");
+    }
+
+    return this.findStoredManagedUsers(actor);
+  }
+
   private async findStoredManagedUsers(actor: AuthenticatedUser, ids?: string[]) {
     const users = await this.prisma.user.findMany({
       where: {
@@ -232,7 +244,9 @@ export class UsersService {
   }
 
   async removeProject(userId: string, projectId: string, actor: AuthenticatedUser) {
-    this.assertAdminOrManager(actor);
+    if (actor.role !== "ADMIN") {
+      await this.permissions.assertProjectRole(actor, projectId, ["MANAGER"]);
+    }
     await this.prisma.projectMember.deleteMany({ where: { userId, projectId } });
     return { ok: true };
   }
@@ -247,7 +261,7 @@ export class UsersService {
     if (!document) throw new NotFoundException("Document not found");
 
     if (actor.role !== "ADMIN") {
-      await this.permissions.assertProjectRole(actor, document.projectId, ["MANAGER"]);
+      await this.permissions.assertDocumentRole(actor, dto.documentId, ["MANAGER"]);
     }
 
     const user = await this.prisma.user.findFirst({ where: { id: userId, deletedAt: null } });
@@ -292,8 +306,7 @@ export class UsersService {
     if (documents.length !== documentIds.length) throw new NotFoundException("Một hoặc nhiều tài liệu không tồn tại");
 
     if (actor.role !== "ADMIN") {
-      const projectIds = this.uniqueIds(documents.map((document) => document.projectId));
-      await Promise.all(projectIds.map((projectId) => this.permissions.assertProjectRole(actor, projectId, ["MANAGER"])));
+      await Promise.all(documentIds.map((documentId) => this.permissions.assertDocumentRole(actor, documentId, ["MANAGER"])));
     }
 
     const documentProjectMap = new Map(documents.map((document) => [document.id, document.projectId]));
@@ -331,7 +344,7 @@ export class UsersService {
     if (!document) throw new NotFoundException("Document not found");
 
     if (actor.role !== "ADMIN") {
-      await this.permissions.assertProjectRole(actor, document.projectId, ["MANAGER"]);
+      await this.permissions.assertDocumentRole(actor, documentId, ["MANAGER"]);
     }
 
     await this.prisma.documentPermission.deleteMany({ where: { userId, documentId } });

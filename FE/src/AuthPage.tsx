@@ -67,7 +67,7 @@ export function saveRecentAccount(account: RecentAccount) {
 
 export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuccess }) => {
   const [mode, setMode] = useState<"login" | "register" | "forgot" | "reset">(initialMode);
-  
+
   // Login Form state
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -88,11 +88,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   // Helper to format backend / network error messages nicely
   const formatAuthErrorMessage = (error: any): string => {
     const rawMessage = typeof error === "string" ? error : error?.message || error?.toString() || "";
-    
+
     if (rawMessage.includes("Failed to fetch") || rawMessage.includes("NetworkError") || rawMessage.includes("ECONNREFUSED")) {
       return "Không thể kết nối đến Backend Server (NestJS Port 3000). Vui lòng kiểm tra lại dịch vụ!";
     }
@@ -109,6 +110,16 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
       return "Tài khoản của bạn tạm thời bị khóa hoặc không có quyền truy cập!";
     }
     return rawMessage || "Đăng nhập thất bại. Vui lòng thử lại!";
+  };
+
+  // Clear single field error when user types
+  const clearFieldError = (fieldName: string) => {
+    if (fieldErrors[fieldName]) {
+      setFieldErrors((prev) => ({ ...prev, [fieldName]: "" }));
+    }
+    if (errorMsg) {
+      setErrorMsg(null);
+    }
   };
 
   // Compute password strength score (0 to 100)
@@ -136,29 +147,31 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFieldErrors({});
+    setErrorMsg(null);
+
     const cleanEmail = loginEmail.trim();
     const cleanPass = loginPassword.trim();
+    const errors: Record<string, string> = {};
 
-    if (!cleanEmail && !cleanPass) {
-      setErrorMsg("Vui lòng nhập Địa chỉ Email và Mật khẩu!");
-      return;
-    }
     if (!cleanEmail) {
-      setErrorMsg("Vui lòng nhập Địa chỉ Email của bạn!");
-      return;
+      errors.loginEmail = "Vui lòng nhập địa chỉ Email của bạn";
+    } else {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(cleanEmail)) {
+        errors.loginEmail = "Định dạng Email không hợp lệ (ví dụ: admin@docs.vn)";
+      }
     }
+
     if (!cleanPass) {
-      setErrorMsg("Vui lòng nhập Mật khẩu đăng nhập!");
+      errors.loginPassword = "Vui lòng nhập Mật khẩu đăng nhập";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
       return;
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(cleanEmail)) {
-      setErrorMsg("Định dạng Email không đúng! (Ví dụ chuẩn: admin@docs.vn)");
-      return;
-    }
-
-    setErrorMsg(null);
     setLoading(true);
     try {
       const user = await login(cleanEmail, cleanPass);
@@ -174,32 +187,44 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFieldErrors({});
+    setErrorMsg(null);
+
     const cleanName = regName.trim();
     const cleanEmail = regEmail.trim();
     const cleanPass = regPassword.trim();
+    const cleanConfirm = regConfirmPassword.trim();
+    const errors: Record<string, string> = {};
 
-    if (!cleanName || !cleanEmail || !cleanPass) {
-      setErrorMsg("Vui lòng điền đầy đủ tất cả các thông tin bắt buộc!");
+    if (!cleanName) {
+      errors.regName = "Vui lòng nhập Họ và Tên";
+    }
+    if (!cleanEmail) {
+      errors.regEmail = "Vui lòng nhập địa chỉ Email đăng ký";
+    } else {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(cleanEmail)) {
+        errors.regEmail = "Định dạng Email không hợp lệ (ví dụ: name@company.com)";
+      }
+    }
+
+    if (!cleanPass) {
+      errors.regPassword = "Vui lòng nhập Mật khẩu";
+    } else if (cleanPass.length < 8) {
+      errors.regPassword = "Mật khẩu phải có độ dài tối thiểu 8 ký tự";
+    }
+
+    if (!cleanConfirm) {
+      errors.regConfirmPassword = "Vui lòng xác nhận lại Mật khẩu";
+    } else if (cleanPass && cleanPass !== cleanConfirm) {
+      errors.regConfirmPassword = "Mật khẩu xác nhận không trùng khớp với mật khẩu đã nhập";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
       return;
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(cleanEmail)) {
-      setErrorMsg("Định dạng Email đăng ký không hợp lệ!");
-      return;
-    }
-
-    if (cleanPass.length < 8) {
-      setErrorMsg("Mật khẩu phải có độ dài tối thiểu 8 ký tự!");
-      return;
-    }
-
-    if (cleanPass !== regConfirmPassword.trim()) {
-      setErrorMsg("Mật khẩu xác nhận không trùng khớp với mật khẩu đã nhập!");
-      return;
-    }
-
-    setErrorMsg(null);
     setLoading(true);
     try {
       await register({
@@ -218,18 +243,20 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
   const handleForgotSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFieldErrors({});
+    setErrorMsg(null);
+
     const cleanEmail = forgotEmail.trim();
     if (!cleanEmail) {
-      setErrorMsg("Vui lòng nhập địa chỉ Email của bạn!");
+      setFieldErrors({ forgotEmail: "Vui lòng nhập địa chỉ Email của bạn" });
       return;
     }
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(cleanEmail)) {
-      setErrorMsg("Định dạng Email không hợp lệ!");
+      setFieldErrors({ forgotEmail: "Định dạng Email không hợp lệ (ví dụ: name@company.com)" });
       return;
     }
 
-    setErrorMsg(null);
     setLoading(true);
     try {
       const result = await forgotPassword(cleanEmail);
@@ -244,20 +271,24 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
   const handleResetSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFieldErrors({});
+    setErrorMsg(null);
+
+    const errors: Record<string, string> = {};
     if (!resetToken.trim()) {
-      setErrorMsg("Vui lòng nhập Mã Token khôi phục!");
-      return;
+      errors.resetToken = "Vui lòng nhập mã Reset Token";
     }
     if (!resetPasswordValue.trim()) {
-      setErrorMsg("Vui lòng nhập Mật khẩu mới!");
-      return;
+      errors.resetPasswordValue = "Vui lòng nhập mật khẩu mới";
+    } else if (resetPasswordValue.trim().length < 8) {
+      errors.resetPasswordValue = "Mật khẩu mới phải có ít nhất 8 ký tự";
     }
-    if (resetPasswordValue.trim().length < 8) {
-      setErrorMsg("Mật khẩu mới phải có ít nhất 8 ký tự!");
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
       return;
     }
 
-    setErrorMsg(null);
     setLoading(true);
     try {
       await resetPassword(resetToken.trim(), resetPasswordValue.trim());
@@ -300,7 +331,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
             <div className="hero-brand-details">
               <h1 className="hero-brand-name">DocSpace</h1>
-              <p className="hero-brand-subtitle">Nền tảng Quản lý Tài liệu Nghiệp vụ</p>
+              <p className="hero-brand-subtitle">Nền tảng quản lý dự án</p>
               <div className="hero-status-badge">
                 <span className="pulse-dot"></span> System Operational
               </div>
@@ -355,7 +386,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
             {/* LOGIN FORM */}
             {mode === "login" ? (
-              <form onSubmit={handleLoginSubmit} className="auth-form">
+              <form onSubmit={handleLoginSubmit} className="auth-form" noValidate>
                 <div className="form-header">
                   <h3>Chào mừng trở lại!</h3>
                   <p>Đăng nhập bằng tài khoản hệ thống của bạn.</p>
@@ -378,7 +409,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
                             className="chip-select-btn"
                             onClick={() => {
                               setLoginEmail(acc.email);
-                              setErrorMsg(null);
+                              clearFieldError("loginEmail");
                             }}
                             title={`Click để điền ${acc.email}`}
                           >
@@ -404,16 +435,23 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
                 <div className="form-group">
                   <label>Địa chỉ Email</label>
-                  <div className="input-with-icon">
+                  <div className={`input-with-icon ${fieldErrors.loginEmail ? "has-error" : ""}`}>
                     <Mail className="input-icon" size={18} />
                     <input
                       type="email"
                       placeholder="Email"
                       value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      required
+                      onChange={(e) => {
+                        setLoginEmail(e.target.value);
+                        clearFieldError("loginEmail");
+                      }}
                     />
                   </div>
+                  {fieldErrors.loginEmail && (
+                    <small className="field-error-msg">
+                      <AlertCircle size={13} /> {fieldErrors.loginEmail}
+                    </small>
+                  )}
                 </div>
 
                 <div className="form-group">
@@ -425,6 +463,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
                         e.preventDefault();
                         setForgotEmail(loginEmail);
                         setErrorMsg(null);
+                        setFieldErrors({});
                         setMode("forgot");
                       }}
                       className="forgot-link"
@@ -432,14 +471,16 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
                       Quên mật khẩu?
                     </a>
                   </div>
-                  <div className="input-with-icon">
+                  <div className={`input-with-icon ${fieldErrors.loginPassword ? "has-error" : ""}`}>
                     <Lock className="input-icon" size={18} />
                     <input
                       type={showPassword ? "text" : "password"}
                       placeholder="Nhập mật khẩu"
                       value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      required
+                      onChange={(e) => {
+                        setLoginPassword(e.target.value);
+                        clearFieldError("loginPassword");
+                      }}
                     />
                     <button
                       type="button"
@@ -449,10 +490,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
                       {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
                   </div>
+                  {fieldErrors.loginPassword && (
+                    <small className="field-error-msg">
+                      <AlertCircle size={13} /> {fieldErrors.loginPassword}
+                    </small>
+                  )}
                 </div>
 
                 <button type="submit" className="submit-btn primary" disabled={loading}>
-
                   {loading ? (
                     <span className="spinner">Đang xác thực...</span>
                   ) : (
@@ -464,7 +509,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
                 </button>
               </form>
             ) : mode === "forgot" ? (
-              <form onSubmit={handleForgotSubmit} className="auth-form">
+              <form onSubmit={handleForgotSubmit} className="auth-form" noValidate>
                 <div className="form-header">
                   <h3>Khôi phục mật khẩu</h3>
                   <p>Nhập email tài khoản để tạo yêu cầu đặt lại mật khẩu.</p>
@@ -472,28 +517,43 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
                 <div className="form-group">
                   <label>Địa chỉ Email</label>
-                  <div className="input-with-icon">
+                  <div className={`input-with-icon ${fieldErrors.forgotEmail ? "has-error" : ""}`}>
                     <Mail className="input-icon" size={18} />
                     <input
                       type="email"
                       placeholder="you@company.com"
                       value={forgotEmail}
-                      onChange={(e) => setForgotEmail(e.target.value)}
-                      required
+                      onChange={(e) => {
+                        setForgotEmail(e.target.value);
+                        clearFieldError("forgotEmail");
+                      }}
                     />
                   </div>
+                  {fieldErrors.forgotEmail && (
+                    <small className="field-error-msg">
+                      <AlertCircle size={13} /> {fieldErrors.forgotEmail}
+                    </small>
+                  )}
                 </div>
 
                 <button type="submit" className="submit-btn primary" disabled={loading}>
                   <span>{loading ? "Đang tạo token..." : "Tiếp tục"}</span>
                   <ArrowRight size={18} />
                 </button>
-                <button type="button" className="auth-link-button" onClick={() => setMode("login")}>
+                <button
+                  type="button"
+                  className="auth-link-button"
+                  onClick={() => {
+                    setMode("login");
+                    setErrorMsg(null);
+                    setFieldErrors({});
+                  }}
+                >
                   Quay lại đăng nhập
                 </button>
               </form>
             ) : mode === "reset" ? (
-              <form onSubmit={handleResetSubmit} className="auth-form">
+              <form onSubmit={handleResetSubmit} className="auth-form" noValidate>
                 <div className="form-header">
                   <h3>Đặt lại mật khẩu</h3>
                   <p>Nhập token reset và mật khẩu mới cho tài khoản.</p>
@@ -507,43 +567,65 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
                 <div className="form-group">
                   <label>Reset token</label>
-                  <div className="input-with-icon">
+                  <div className={`input-with-icon ${fieldErrors.resetToken ? "has-error" : ""}`}>
                     <KeyRound className="input-icon" size={18} />
                     <input
                       type="text"
                       placeholder="Dán token reset"
                       value={resetToken}
-                      onChange={(e) => setResetToken(e.target.value)}
-                      required
+                      onChange={(e) => {
+                        setResetToken(e.target.value);
+                        clearFieldError("resetToken");
+                      }}
                     />
                   </div>
+                  {fieldErrors.resetToken && (
+                    <small className="field-error-msg">
+                      <AlertCircle size={13} /> {fieldErrors.resetToken}
+                    </small>
+                  )}
                 </div>
 
                 <div className="form-group">
                   <label>Mật khẩu mới</label>
-                  <div className="input-with-icon">
+                  <div className={`input-with-icon ${fieldErrors.resetPasswordValue ? "has-error" : ""}`}>
                     <Lock className="input-icon" size={18} />
                     <input
                       type={showPassword ? "text" : "password"}
                       placeholder="Tối thiểu 8 ký tự"
                       value={resetPasswordValue}
-                      onChange={(e) => setResetPasswordValue(e.target.value)}
-                      required
+                      onChange={(e) => {
+                        setResetPasswordValue(e.target.value);
+                        clearFieldError("resetPasswordValue");
+                      }}
                     />
                   </div>
+                  {fieldErrors.resetPasswordValue && (
+                    <small className="field-error-msg">
+                      <AlertCircle size={13} /> {fieldErrors.resetPasswordValue}
+                    </small>
+                  )}
                 </div>
 
                 <button type="submit" className="submit-btn primary" disabled={loading}>
                   <span>{loading ? "Đang lưu..." : "Đặt lại mật khẩu"}</span>
                   <ArrowRight size={18} />
                 </button>
-                <button type="button" className="auth-link-button" onClick={() => setMode("login")}>
+                <button
+                  type="button"
+                  className="auth-link-button"
+                  onClick={() => {
+                    setMode("login");
+                    setErrorMsg(null);
+                    setFieldErrors({});
+                  }}
+                >
                   Quay lại đăng nhập
                 </button>
               </form>
             ) : (
               /* REGISTER FORM */
-              <form onSubmit={handleRegisterSubmit} className="auth-form">
+              <form onSubmit={handleRegisterSubmit} className="auth-form" noValidate>
                 <div className="form-header">
                   <h3>Tạo tài khoản mới</h3>
                   <p>Trải nghiệm đầy đủ tính năng quản lý tài liệu BA.</p>
@@ -551,30 +633,44 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
                 <div className="form-group">
                   <label>Họ và Tên <span className="req-star">*</span></label>
-                  <div className="input-with-icon">
+                  <div className={`input-with-icon ${fieldErrors.regName ? "has-error" : ""}`}>
                     <UserIcon className="input-icon" size={18} />
                     <input
                       type="text"
                       placeholder="Nguyễn Văn A"
                       value={regName}
-                      onChange={(e) => setRegName(e.target.value)}
-                      required
+                      onChange={(e) => {
+                        setRegName(e.target.value);
+                        clearFieldError("regName");
+                      }}
                     />
                   </div>
+                  {fieldErrors.regName && (
+                    <small className="field-error-msg">
+                      <AlertCircle size={13} /> {fieldErrors.regName}
+                    </small>
+                  )}
                 </div>
 
                 <div className="form-group">
                   <label>Địa chỉ Email <span className="req-star">*</span></label>
-                  <div className="input-with-icon">
+                  <div className={`input-with-icon ${fieldErrors.regEmail ? "has-error" : ""}`}>
                     <Mail className="input-icon" size={18} />
                     <input
                       type="email"
                       placeholder="nguyenvana@company.com"
                       value={regEmail}
-                      onChange={(e) => setRegEmail(e.target.value)}
-                      required
+                      onChange={(e) => {
+                        setRegEmail(e.target.value);
+                        clearFieldError("regEmail");
+                      }}
                     />
                   </div>
+                  {fieldErrors.regEmail && (
+                    <small className="field-error-msg">
+                      <AlertCircle size={13} /> {fieldErrors.regEmail}
+                    </small>
+                  )}
                 </div>
 
                 <div className="form-row">
@@ -602,14 +698,16 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
                 <div className="form-group">
                   <label>Mật khẩu <span className="req-star">*</span></label>
-                  <div className="input-with-icon">
+                  <div className={`input-with-icon ${fieldErrors.regPassword ? "has-error" : ""}`}>
                     <Lock className="input-icon" size={18} />
                     <input
                       type={showPassword ? "text" : "password"}
                       placeholder="Nhập mật khẩu (tối thiểu 8 ký tự)"
                       value={regPassword}
-                      onChange={(e) => setRegPassword(e.target.value)}
-                      required
+                      onChange={(e) => {
+                        setRegPassword(e.target.value);
+                        clearFieldError("regPassword");
+                      }}
                     />
                     <button
                       type="button"
@@ -619,6 +717,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
                       {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
                   </div>
+                  {fieldErrors.regPassword && (
+                    <small className="field-error-msg">
+                      <AlertCircle size={13} /> {fieldErrors.regPassword}
+                    </small>
+                  )}
                   {/* Realtime Password Strength Bar */}
                   {regPassword && (
                     <div className="password-strength-container">
@@ -641,16 +744,23 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
 
                 <div className="form-group">
                   <label>Xác nhận Mật khẩu <span className="req-star">*</span></label>
-                  <div className="input-with-icon">
+                  <div className={`input-with-icon ${fieldErrors.regConfirmPassword ? "has-error" : ""}`}>
                     <KeyRound className="input-icon" size={18} />
                     <input
                       type={showPassword ? "text" : "password"}
                       placeholder="Nhập lại mật khẩu"
                       value={regConfirmPassword}
-                      onChange={(e) => setRegConfirmPassword(e.target.value)}
-                      required
+                      onChange={(e) => {
+                        setRegConfirmPassword(e.target.value);
+                        clearFieldError("regConfirmPassword");
+                      }}
                     />
                   </div>
+                  {fieldErrors.regConfirmPassword && (
+                    <small className="field-error-msg">
+                      <AlertCircle size={13} /> {fieldErrors.regConfirmPassword}
+                    </small>
+                  )}
                 </div>
 
                 <button type="submit" className="submit-btn primary" disabled={loading}>

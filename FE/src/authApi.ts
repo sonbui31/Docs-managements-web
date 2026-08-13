@@ -130,6 +130,10 @@ export async function fetchUsers() {
   return authFetch<ManagedUser[]>("/users");
 }
 
+export async function fetchShareUsers(scope: "document" | "project", targetId: string) {
+  return authFetch<ManagedUser[]>(`/users/share-candidates/${scope}/${targetId}`);
+}
+
 export async function createUser(payload: { name: string; email: string; password: string; role: UserRole }) {
   return authFetch<User>("/users", {
     method: "POST",

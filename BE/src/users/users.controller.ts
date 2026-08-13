@@ -22,6 +22,15 @@ export class UsersController {
     return this.usersService.findAll(user);
   }
 
+  @Get("share-candidates/:scope/:id")
+  findShareCandidates(
+    @Param("scope") scope: string,
+    @Param("id") id: string,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.usersService.findShareCandidates(scope, id, user);
+  }
+
   @Post()
   create(@Body() dto: CreateUserDto, @CurrentUser() user: AuthenticatedUser) {
     return this.usersService.create(dto, user);

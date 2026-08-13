@@ -57,6 +57,15 @@ export type WorkItemType = "TASK" | "BUG" | "REVIEW" | "CHANGE_REQUEST" | "QUEST
 export type WorkItemStatus = "BACKLOG" | "TODO" | "IN_PROGRESS" | "REVIEW" | "BLOCKED" | "DONE";
 export type WorkItemPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
+export type ProjectMemberOption = {
+  id: string;
+  name: string;
+  email: string;
+  role?: string;
+  projectRole?: string;
+  projectRoles?: string[];
+};
+
 export type WorkItem = {
   id: string;
   projectId: string;
@@ -93,6 +102,11 @@ export type WorkItem = {
     status: "OPEN" | "RESOLVED";
   } | null;
   assignee?: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
+  createdBy?: {
     id: string;
     name: string;
     email: string;

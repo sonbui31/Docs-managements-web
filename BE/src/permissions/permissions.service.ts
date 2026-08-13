@@ -19,32 +19,100 @@ export class PermissionsService {
 
     if (!user.externalCompanyId) {
       if (user.role === "ADMIN") return {};
-      return { members: { some: { userId: user.id } } };
+      return {
+        OR: [
+          { members: { some: { userId: user.id } } },
+          { documentPermissions: { some: { userId: user.id } } }
+        ]
+      };
     }
 
     if (user.role === "ADMIN") {
       return {
         OR: [
           { externalCompanyId: user.externalCompanyId },
-          { members: { some: { userId: user.id } } }
+          { members: { some: { userId: user.id } } },
+          { documentPermissions: { some: { userId: user.id } } }
         ]
       };
     }
 
-    const scopedProjects: Prisma.ProjectWhereInput = {
-      externalCompanyId: user.externalCompanyId,
-      OR: [
-        { externalDepartmentId: null },
-        ...(user.externalDepartmentId ? [{ externalDepartmentId: user.externalDepartmentId }] : [])
-      ]
-    };
+    const assignedProjects: Prisma.ProjectWhereInput[] = [
+      { members: { some: { userId: user.id } } },
+      { documentPermissions: { some: { userId: user.id } } }
+    ];
+
+    if (user.role !== "MANAGER") {
+      return { OR: assignedProjects };
+    }
 
     return {
       OR: [
-        scopedProjects,
-        { members: { some: { userId: user.id } } }
+        {
+          externalCompanyId: user.externalCompanyId,
+          OR: [
+            { externalDepartmentId: null },
+            ...(user.externalDepartmentId ? [{ externalDepartmentId: user.externalDepartmentId }] : [])
+          ]
+        },
+        ...assignedProjects
       ]
     };
+  }
+
+  documentVisibilityWhere(
+    user: AuthenticatedUser,
+    projectId?: string,
+    allowedRoles: ProjectRole[] = ["VIEWER"]
+  ): Prisma.DocumentWhereInput {
+    const projectScope = projectId ? { projectId } : {};
+    if (this.isExternalSuperAdmin(user)) return projectScope;
+
+    const acceptedRoles = this.rolesAtLeast(allowedRoles);
+    const directAccess: Prisma.DocumentWhereInput[] = [
+      {
+        permissions: {
+          some: {
+            userId: user.id,
+            OR: [
+              { role: { in: acceptedRoles } },
+              { roles: { hasSome: acceptedRoles } }
+            ]
+          }
+        }
+      },
+      {
+        project: {
+          members: {
+            some: {
+              userId: user.id,
+              OR: [
+                { role: { in: acceptedRoles } },
+                { roles: { hasSome: acceptedRoles } }
+              ]
+            }
+          }
+        }
+      }
+    ];
+    const scopedAccess = this.documentScopedAccessWhere(user, allowedRoles);
+    if (scopedAccess) directAccess.push(scopedAccess);
+
+    return {
+      ...projectScope,
+      OR: directAccess
+    };
+  }
+
+  async assertProjectVisible(user: AuthenticatedUser, projectId: string) {
+    const project = await this.prisma.project.findFirst({
+      where: {
+        id: projectId,
+        ...this.projectVisibilityWhere(user)
+      },
+      select: { id: true }
+    });
+    if (!project) throw new ForbiddenException("Bạn không có quyền xem dự án này");
   }
 
   async assertCanCreateProject(user: AuthenticatedUser) {
@@ -150,6 +218,11 @@ export class PermissionsService {
     return actualRoles.some((role) => this.roleAllowed(role, allowedRoles));
   }
 
+  private rolesAtLeast(allowedRoles: ProjectRole[]) {
+    const minimumRank = Math.min(...allowedRoles.map((role) => roleRank[role]));
+    return (Object.keys(roleRank) as ProjectRole[]).filter((role) => roleRank[role] >= minimumRank);
+  }
+
   private isExternalSuperAdmin(user: AuthenticatedUser) {
     return user.externalRole === "sadmin";
   }
@@ -169,7 +242,26 @@ export class PermissionsService {
       (Boolean(user.externalDepartmentId) && scope.externalDepartmentId === user.externalDepartmentId);
     if (!sameDepartment) return null;
     if (user.role === "MANAGER") return "MANAGER";
-    return "VIEWER";
+    return null;
+  }
+
+  private documentScopedAccessWhere(user: AuthenticatedUser, allowedRoles: ProjectRole[]): Prisma.DocumentWhereInput | null {
+    if (!user.externalCompanyId) {
+      return user.role === "ADMIN" ? {} : null;
+    }
+    if (user.role === "ADMIN") {
+      return { externalCompanyId: user.externalCompanyId };
+    }
+    if (user.role === "MANAGER") {
+      return {
+        externalCompanyId: user.externalCompanyId,
+        OR: [
+          { externalDepartmentId: null },
+          ...(user.externalDepartmentId ? [{ externalDepartmentId: user.externalDepartmentId }] : [])
+        ]
+      };
+    }
+    return null;
   }
 
   private highestRole(left?: ProjectRole | null, right?: ProjectRole | null) {

@@ -51,7 +51,9 @@ import {
   Trash2,
   TrendingUp,
   UploadCloud,
+  User as UserIcon,
   UserCheck,
+  ShieldCheck,
   Users,
   X
 } from "lucide-react";
@@ -71,6 +73,7 @@ import {
   deleteRequirementTag,
   deleteTraceLink,
   deleteWorkItem,
+  deleteWorkItemComment,
   downloadExport,
   fetchComments,
   fetchDocumentDiff,
@@ -81,6 +84,7 @@ import {
   fetchNotifications,
   fetchProjectActivity,
   fetchProjectDashboard,
+  fetchProjectMembers,
   fetchProjectWorkItems,
   fetchWorkItemComments,
   fetchProjects,
@@ -95,6 +99,7 @@ import {
   updateDocument,
   updateProject,
   updateWorkItem,
+  updateWorkItemComment,
   uploadMediaAsset,
   uploadWorkItemAttachment
 } from "./api";
@@ -110,6 +115,7 @@ import type {
   Project,
   ProjectDashboard,
   ProjectDocument,
+  ProjectMemberOption,
   RequirementTag,
   RoleDashboard,
   SearchResult,
@@ -372,12 +378,24 @@ type WorkItemDraft = {
   attachmentsText: string;
 };
 
+function splitAssigneeNames(value?: string | null) {
+  return (value ?? "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
+function joinAssigneeNames(names: string[]) {
+  return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean))).join(", ");
+}
+
 function App() {
   // Authentication State
   const [currentUser, setCurrentUser] = useState<User | null>(() => getStoredUser());
 
   // State for dynamic projects & documents lists
   const [projectsList, setProjectsList] = useState<Project[]>([]);
+  const [projectMembersByProject, setProjectMembersByProject] = useState<Record<string, ProjectMemberOption[]>>({});
 
   const [documentsList, setDocumentsList] = useState<ProjectDocument[]>([]);
   const [documentCommentCounts, setDocumentCommentCounts] = useState<Record<string, number>>({});
@@ -462,11 +480,14 @@ function App() {
   const [workboardPriorityFilter, setWorkboardPriorityFilter] = useState<"ALL" | WorkItemPriority>("ALL");
   const [isWorkItemModalOpen, setIsWorkItemModalOpen] = useState<boolean>(false);
   const [workItemDraft, setWorkItemDraft] = useState<WorkItemDraft | null>(null);
+  const [isAssigneeMenuOpen, setIsAssigneeMenuOpen] = useState<boolean>(false);
   const [viewingWorkItemId, setViewingWorkItemId] = useState<string | null>(null);
   const [workItemComments, setWorkItemComments] = useState<WorkItemComment[]>([]);
   const [workItemCommentText, setWorkItemCommentText] = useState<string>("");
   const [replyingWorkItemCommentId, setReplyingWorkItemCommentId] = useState<string | null>(null);
   const [workItemReplyText, setWorkItemReplyText] = useState<string>("");
+  const [editingWorkItemCommentId, setEditingWorkItemCommentId] = useState<string | null>(null);
+  const [editingWorkItemCommentText, setEditingWorkItemCommentText] = useState<string>("");
   const [isUploadingWorkItemAttachment, setIsUploadingWorkItemAttachment] = useState<boolean>(false);
   const [commentFilter, setCommentFilter] = useState<"all" | "open" | "resolved" | "mine">("all");
   const [collabPanelTab, setCollabPanelTab] = useState<"comments" | "diff" | "tags" | "trace" | "activity" | "notifications">("comments");
@@ -512,6 +533,7 @@ function App() {
   const [documentVersions, setDocumentVersions] = useState<DocumentVersion[]>([]);
   const [isLoadingVersions, setIsLoadingVersions] = useState<boolean>(false);
   const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
+  const [isRefreshingDashboard, setIsRefreshingDashboard] = useState<boolean>(false);
 
   // Create Project Modal state
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState<boolean>(false);
@@ -547,8 +569,9 @@ function App() {
   // Confirmation Delete Popup Modal state
   const [confirmDeleteModal, setConfirmDeleteModal] = useState<{
     isOpen: boolean;
-    type: "project" | "document" | "comment" | "workItem" | null;
+    type: "project" | "document" | "comment" | "workItem" | "workItemComment" | null;
     id: string | null;
+    parentId?: string | null;
     title: string;
     message: string;
   }>({
@@ -608,6 +631,7 @@ function App() {
     if (!currentUser) {
       setIsBackendConnected(false);
       setIsLoadingBackend(false);
+      setProjectMembersByProject({});
       return;
     }
 
@@ -642,7 +666,13 @@ function App() {
   }, [activeTabNav, documentsList, selectedDocumentId, selectedProjectId]);
 
   useEffect(() => {
-    if (!isBackendConnected || !selectedDocumentId || selectedDocumentId === "empty-document") return;
+    if (!isBackendConnected || !selectedDocumentId || selectedDocumentId === "empty-document") {
+      setCommentsList((prev) => prev.filter((comment) => !comment.documentId));
+      setSavedTags([]);
+      setInferredTags([]);
+      setDocumentDiff(null);
+      return;
+    }
     setSelectedCommentTarget(null);
     setActiveBlockId(null);
     void loadCommentsForDocument(selectedDocumentId);
@@ -703,6 +733,18 @@ function App() {
           )
         )
       ).flat();
+      const hydratedProjectMembers = Object.fromEntries(
+        await Promise.all(
+          backendProjects.map(async (project) => {
+            try {
+              return [project.id, await fetchProjectMembers(project.id)] as const;
+            } catch (error) {
+              console.error(`Cannot load project members for project ${project.id}:`, error);
+              return [project.id, [] as ProjectMemberOption[]] as const;
+            }
+          })
+        )
+      );
       const projectsWithCounts = backendProjects.map((project) => ({
         ...project,
         documents: hydratedDocuments.filter((document) => document.projectId === project.id).length,
@@ -720,6 +762,7 @@ function App() {
 
       setProjectsList(projectsWithCounts);
       setDocumentsList(hydratedDocuments);
+      setProjectMembersByProject(hydratedProjectMembers);
       setDocumentCommentCounts(
         Object.fromEntries(hydratedDocuments.map((document) => [document.id, document.openCommentsCount ?? 0]))
       );
@@ -793,11 +836,24 @@ function App() {
     }
   }
 
+  async function loadProjectMembers(projectId: string) {
+    if (!projectId) return;
+    try {
+      const members = await fetchProjectMembers(projectId);
+      setProjectMembersByProject((prev) => ({ ...prev, [projectId]: members }));
+    } catch (error) {
+      console.error("Cannot load project members:", error);
+    }
+  }
+
   async function loadRoleDashboard() {
+    setIsRefreshingDashboard(true);
     try {
       setRoleDashboard(await fetchRoleDashboard());
     } catch (error) {
       console.error("Cannot load role dashboard:", error);
+    } finally {
+      setIsRefreshingDashboard(false);
     }
   }
 
@@ -1427,6 +1483,47 @@ function App() {
     return documentsList.filter((doc) => doc.projectId === selectedProjectId);
   }, [documentsList, selectedProjectId]);
 
+  const selectedWorkItemAssignees = useMemo(
+    () => splitAssigneeNames(workItemDraft?.assigneeName),
+    [workItemDraft?.assigneeName]
+  );
+
+  const workItemAssigneeOptions = useMemo(() => {
+    const targetProjectId = workItemDraft?.projectId || selectedProjectId;
+    const options = new Map<string, ProjectMemberOption>();
+    const projectMembers = projectMembersByProject[targetProjectId] ?? [];
+
+    projectMembers.forEach((member) => {
+      const key = member.email?.toLowerCase() || member.id || member.name.toLowerCase();
+      options.set(key, member);
+    });
+
+    if (currentUser) {
+      const currentUserKey = currentUser.email?.toLowerCase() || currentUser.id;
+      if (!options.has(currentUserKey)) {
+        options.set(currentUserKey, {
+          id: currentUser.id,
+          name: currentUser.name,
+          email: currentUser.email,
+          role: currentUser.role
+        });
+      }
+    }
+
+    selectedWorkItemAssignees.forEach((name) => {
+      const exists = Array.from(options.values()).some((member) => member.name === name);
+      if (!exists) {
+        options.set(`legacy-${name}`, {
+          id: `legacy-${name}`,
+          name,
+          email: "Đã gán trước đó"
+        });
+      }
+    });
+
+    return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }, [currentUser, projectMembersByProject, selectedProjectId, selectedWorkItemAssignees, workItemDraft?.projectId]);
+
   // Handle project change: auto select first document of new project
   const handleSelectProject = (projectId: string) => {
     setSelectedProjectId(projectId);
@@ -1446,14 +1543,14 @@ function App() {
   }
 
   const selectedDocument = useMemo(() => {
-    const selected = documentsList.find((doc) => doc.id === selectedDocumentId);
-    const doc = selected ?? projectDocuments[0] ?? documentsList[0] ?? EMPTY_DOCUMENT;
+    const selected = projectDocuments.find((doc) => doc.id === selectedDocumentId);
+    const doc = selected ?? projectDocuments[0] ?? EMPTY_DOCUMENT;
     return {
       ...doc,
       title: normalizeVietnameseText(doc.title),
       contentHtml: normalizeVietnameseText(doc.contentHtml || "")
     };
-  }, [documentsList, selectedDocumentId, projectDocuments]);
+  }, [selectedDocumentId, projectDocuments]);
 
   const importTargetDocuments = useMemo(
     () => documentsList.filter((doc) => doc.projectId === importTargetProjectId),
@@ -1514,11 +1611,7 @@ function App() {
     const openItems = workItems.filter((item) => item.status !== "DONE");
     const criticalBugs = workItems.filter((item) => item.type === "BUG" && item.priority === "CRITICAL" && item.status !== "DONE");
     const blockedItems = workItems.filter((item) => item.status === "BLOCKED");
-    const overdueItems = workItems.filter((item) => {
-      if (!item.dueDate || item.status === "DONE") return false;
-      const dueDate = new Date(item.dueDate);
-      return !Number.isNaN(dueDate.getTime()) && dueDate < new Date();
-    });
+    const overdueItems = workItems.filter(isWorkItemOverdue);
     const doneItems = workItems.filter((item) => item.status === "DONE");
     const completionRate = workItems.length ? Math.round((doneItems.length / workItems.length) * 100) : 0;
     return { openItems, criticalBugs, blockedItems, overdueItems, doneItems, completionRate };
@@ -1542,6 +1635,19 @@ function App() {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "Chưa có hạn";
     return date.toLocaleDateString("vi-VN");
+  }
+
+  function getWorkItemDueEndOfDay(value?: string | null) {
+    if (!value) return null;
+    const datePart = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (datePart) {
+      const [, year, month, day] = datePart;
+      return new Date(Number(year), Number(month) - 1, Number(day), 23, 59, 59, 999);
+    }
+    const dueDate = new Date(value);
+    if (Number.isNaN(dueDate.getTime())) return null;
+    dueDate.setHours(23, 59, 59, 999);
+    return dueDate;
   }
 
   function parseWorkItemAttachments(value: string) {
@@ -1571,10 +1677,34 @@ function App() {
     return attachment.mimeType?.startsWith("image") || /\.(png|jpe?g|gif|webp|avif)(\?|$)/i.test(attachment.url);
   }
 
+  function isCurrentUserEmail(email?: string | null) {
+    return Boolean(email && currentUser?.email && email.trim().toLowerCase() === currentUser.email.trim().toLowerCase());
+  }
+
+  function isCurrentUserName(name?: string | null) {
+    return Boolean(name && currentUser?.name && name.trim() === currentUser.name.trim());
+  }
+
+  function isOwnDocumentComment(comment: CommentThread) {
+    return isCurrentUserEmail(comment.authorEmail) || isCurrentUserEmail(comment.author) || isCurrentUserName(comment.author);
+  }
+
+  function isOwnWorkItem(item: WorkItem) {
+    return item.createdBy?.id === currentUser?.id || isCurrentUserEmail(item.createdByEmail) || isCurrentUserName(item.createdByName);
+  }
+
+  function getWorkItemCreatorName(item: WorkItem) {
+    return item.createdByName ?? item.createdBy?.name ?? item.createdByEmail ?? "Không rõ";
+  }
+
+  function isOwnWorkItemComment(comment: WorkItemComment) {
+    return comment.createdBy?.id === currentUser?.id || isCurrentUserEmail(comment.createdByEmail);
+  }
+
   function isWorkItemOverdue(item: WorkItem) {
     if (!item.dueDate || item.status === "DONE") return false;
-    const dueDate = new Date(item.dueDate);
-    return !Number.isNaN(dueDate.getTime()) && dueDate < new Date();
+    const dueDate = getWorkItemDueEndOfDay(item.dueDate);
+    return Boolean(dueDate && dueDate.getTime() < Date.now());
   }
 
   function openDashboardWorkItem(item: WorkItem) {
@@ -1625,6 +1755,8 @@ function App() {
 
   function openCreateWorkItemModal(status: WorkItemStatus = "BACKLOG") {
     setWorkItemDraft(buildWorkItemDraft({ status }));
+    setIsAssigneeMenuOpen(false);
+    void loadProjectMembers(selectedProject.id);
     setIsWorkItemModalOpen(true);
   }
 
@@ -1642,7 +1774,18 @@ function App() {
       dueDate: item.dueDate ? item.dueDate.slice(0, 10) : "",
       attachmentsText: (item.attachments ?? []).map((attachment) => attachment.url).join("\n")
     });
+    setIsAssigneeMenuOpen(false);
+    void loadProjectMembers(item.projectId);
     setIsWorkItemModalOpen(true);
+  }
+
+  function toggleWorkItemAssignee(name: string) {
+    if (!workItemDraft) return;
+    const current = splitAssigneeNames(workItemDraft.assigneeName);
+    const next = current.includes(name)
+      ? current.filter((assignee) => assignee !== name)
+      : [...current, name];
+    setWorkItemDraft({ ...workItemDraft, assigneeName: joinAssigneeNames(next) });
   }
 
   function openViewWorkItemModal(item: WorkItem) {
@@ -1651,6 +1794,8 @@ function App() {
     setWorkItemCommentText("");
     setReplyingWorkItemCommentId(null);
     setWorkItemReplyText("");
+    setEditingWorkItemCommentId(null);
+    setEditingWorkItemCommentText("");
     void loadWorkItemComments(item.id);
   }
 
@@ -1690,6 +1835,48 @@ function App() {
     } catch (error) {
       console.error("Create work item comment error:", error);
       addToast("error", "Không gửi được comment", "BE chưa lưu được trao đổi ticket.");
+    }
+  }
+
+  function openEditWorkItemComment(comment: WorkItemComment) {
+    setReplyingWorkItemCommentId(null);
+    setEditingWorkItemCommentId(comment.id);
+    setEditingWorkItemCommentText(comment.content);
+  }
+
+  async function handleSaveWorkItemComment(commentId: string) {
+    if (!viewingWorkItem?.id || !editingWorkItemCommentText.trim()) return;
+    try {
+      await updateWorkItemComment(viewingWorkItem.id, commentId, { content: editingWorkItemCommentText.trim() });
+      setEditingWorkItemCommentId(null);
+      setEditingWorkItemCommentText("");
+      await loadWorkItemComments(viewingWorkItem.id);
+      addToast("success", "Đã cập nhật comment", "Nội dung trao đổi ticket đã được lưu.");
+    } catch (error) {
+      console.error("Update work item comment error:", error);
+      addToast("error", "Không sửa được comment", "Bạn chỉ có thể sửa comment do chính mình tạo.");
+    }
+  }
+
+  function requestDeleteWorkItemComment(comment: WorkItemComment) {
+    setConfirmDeleteModal({
+      isOpen: true,
+      type: "workItemComment",
+      id: comment.id,
+      parentId: comment.workItemId,
+      title: "Xác nhận xóa comment",
+      message: "Bạn có chắc chắn muốn xóa comment này khỏi ticket?"
+    });
+  }
+
+  async function handleDeleteWorkItemComment(workItemId: string, commentId: string) {
+    try {
+      await deleteWorkItemComment(workItemId, commentId);
+      await loadWorkItemComments(workItemId);
+      addToast("info", "Đã xóa comment", "Comment ticket đã được xóa.");
+    } catch (error) {
+      console.error("Delete work item comment error:", error);
+      addToast("error", "Không xóa được comment", "Bạn chỉ có thể xóa comment do chính mình tạo.");
     }
   }
 
@@ -1756,12 +1943,40 @@ function App() {
         : await createWorkItem({ ...payload, projectId: workItemDraft.projectId });
       setWorkItems((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)]);
       setDashboardWorkItems((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)]);
+      setIsAssigneeMenuOpen(false);
       setIsWorkItemModalOpen(false);
       setWorkItemDraft(null);
       addToast("success", workItemDraft.id ? "Đã cập nhật ticket" : "Đã tạo ticket", `"${saved.title}" đã được lưu vào Workboard.`);
     } catch (error) {
       console.error("Save work item error:", error);
       addToast("error", "Không lưu được ticket", "BE chưa lưu được thay đổi này.");
+    }
+  }
+
+  async function handleDuplicateWorkItem(item: WorkItem) {
+    try {
+      const duplicated = await createWorkItem({
+        projectId: item.projectId,
+        documentId: item.documentId ?? undefined,
+        type: item.type,
+        status: item.status,
+        priority: item.priority,
+        title: `${item.title} (Copy)`,
+        description: item.description ?? undefined,
+        attachments: (item.attachments ?? []).map((attachment) => ({
+          url: attachment.url,
+          name: attachment.name ?? undefined,
+          mimeType: attachment.mimeType ?? undefined
+        })),
+        assigneeName: item.assigneeName ?? item.assignee?.name ?? undefined,
+        dueDate: item.dueDate ? item.dueDate.slice(0, 10) : undefined
+      });
+      setWorkItems((prev) => duplicated.projectId === selectedProjectId ? [duplicated, ...prev] : prev);
+      setDashboardWorkItems((prev) => [duplicated, ...prev]);
+      addToast("success", "Đã duplicate ticket", `"${duplicated.title}" đã được tạo.`);
+    } catch (error) {
+      console.error("Duplicate work item error:", error);
+      addToast("error", "Không duplicate được ticket", "BE chưa tạo được bản sao ticket này.");
     }
   }
 
@@ -2104,6 +2319,8 @@ function App() {
       await handleDeleteComment(id);
     } else if (type === "workItem") {
       await handleDeleteWorkItem(id);
+    } else if (type === "workItemComment" && confirmDeleteModal.parentId) {
+      await handleDeleteWorkItemComment(confirmDeleteModal.parentId, id);
     }
 
     setConfirmDeleteModal({ isOpen: false, type: null, id: null, title: "", message: "" });
@@ -3152,13 +3369,27 @@ function App() {
     });
 
     const recentWorkItems = [...dashboardItems]
+      .filter((item) =>
+        item.status !== "BLOCKED" &&
+        !isWorkItemOverdue(item) &&
+        !(item.type === "BUG" && item.priority === "CRITICAL")
+      )
       .sort((first, second) =>
         (parseDashboardDate(second.updatedAt ?? second.createdAt)?.getTime() ?? 0) -
         (parseDashboardDate(first.updatedAt ?? first.createdAt)?.getTime() ?? 0)
       )
       .slice(0, 6);
     const riskItems = [...dashboardItems]
-      .filter((item) => item.status !== "DONE")
+      .filter((item) =>
+        item.status !== "DONE" &&
+        (
+          item.status === "BLOCKED" ||
+          isWorkItemOverdue(item) ||
+          (item.type === "BUG" && item.priority === "CRITICAL") ||
+          item.priority === "HIGH" ||
+          item.priority === "CRITICAL"
+        )
+      )
       .sort((first, second) => {
         const score = (item: WorkItem) =>
           (item.status === "BLOCKED" ? 50 : 0) +
@@ -3183,9 +3414,11 @@ function App() {
           id: item.id,
           item,
           project,
-          action: wasUpdated ? "Cập nhật ticket" : "Tạo ticket",
+          action: wasUpdated ? "Cập nhật" : "Tạo mới",
           happenedAt: item.updatedAt ?? item.createdAt,
-          statusLabel: WORKBOARD_COLUMNS.find((column) => column.id === item.status)?.label ?? item.status
+          statusLabel: WORKBOARD_COLUMNS.find((column) => column.id === item.status)?.label ?? item.status,
+          summary: `${WORK_ITEM_TYPE_LABEL[item.type]} ${wasUpdated ? "được cập nhật" : "được tạo"} trong ${WORKBOARD_COLUMNS.find((column) => column.id === item.status)?.label ?? item.status}`,
+          detail: `${WORK_ITEM_PRIORITY_LABEL[item.priority]} · ${item.assigneeName ?? item.assignee?.name ?? "Chưa giao"}`
         };
       });
 
@@ -3256,6 +3489,8 @@ function App() {
     );
   }
 
+  const executiveData = executiveDashboardData();
+
   return (
     <main className={`${isZenMode ? "app-shell zen-mode" : "app-shell"} ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
 
@@ -3304,9 +3539,6 @@ function App() {
                 <LayoutDashboard size={17} />
                 <span>Dashboard</span>
               </div>
-              {roleDashboard?.totals.unreadNotifications ? (
-                <span className="nav-badge">{roleDashboard.totals.unreadNotifications}</span>
-              ) : null}
             </button>
 
             <button
@@ -3486,8 +3718,17 @@ function App() {
                   <Plus size={15} /> Tạo dự án mới
                 </button>
               )}
-              <button className="exec-action secondary" type="button" onClick={() => void loadRoleDashboard()}>
-                <RefreshCw size={15} /> Làm mới
+              <button
+                className="exec-action secondary"
+                type="button"
+                disabled={isRefreshingDashboard}
+                onClick={async () => {
+                  await loadRoleDashboard();
+                  addToast("success", "Đã làm mới dữ liệu", "Cập nhật dữ liệu Dashboard thành công.");
+                }}
+              >
+                <RefreshCw size={14} className={isRefreshingDashboard ? "animate-spin" : ""} />
+                <span>{isRefreshingDashboard ? "Đang làm mới..." : "Làm mới"}</span>
               </button>
             </div>
           )}
@@ -3596,12 +3837,12 @@ function App() {
             {/* ── KPI strip ── */}
             <div className="exec-kpi-grid">
               {[
-                { label: "Project",        value: executiveDashboardData().projectCount,    note: `${executiveDashboardData().activeProjects} project còn việc`, color: "kpi-indigo",  Icon: FolderKanban },
-                { label: "Ticket mở",      value: executiveDashboardData().openItems,       note: "Chưa hoàn thành",                       color: "kpi-blue",    Icon: Clock         },
-                { label: "Bug critical",   value: executiveDashboardData().criticalBugs,    note: "Cần ưu tiên xử lý",                     color: "kpi-rose",    Icon: AlertTriangle },
-                { label: "Blocked",        value: executiveDashboardData().blockedItems,    note: "Luồng đang kẹt",                        color: "kpi-violet",  Icon: GitBranch     },
-                { label: "Quá hạn",        value: executiveDashboardData().overdueItems,    note: "Chưa xong trước deadline",              color: "kpi-amber",   Icon: AlertTriangle },
-                { label: "Hoàn thành",     value: `${executiveDashboardData().completionRate}%`, note: "Tỷ lệ done toàn workboard",      color: "kpi-emerald", Icon: CheckCheck     },
+                { label: "Project",        value: executiveData.projectCount,    note: `${executiveData.activeProjects} project còn việc`, color: "kpi-indigo",  Icon: FolderKanban },
+                { label: "Ticket mở",      value: executiveData.openItems,       note: "Chưa hoàn thành",                       color: "kpi-blue",    Icon: Clock         },
+                { label: "Bug critical",   value: executiveData.criticalBugs,    note: "Cần ưu tiên xử lý",                     color: "kpi-rose",    Icon: AlertTriangle },
+                { label: "Blocked",        value: executiveData.blockedItems,    note: "Luồng đang kẹt",                        color: "kpi-violet",  Icon: GitBranch     },
+                { label: "Quá hạn",        value: executiveData.overdueItems,    note: "Chưa xong trước deadline",              color: "kpi-amber",   Icon: AlertTriangle },
+                { label: "Hoàn thành",     value: `${executiveData.completionRate}%`, note: "Tỷ lệ done toàn workboard",      color: "kpi-emerald", Icon: CheckCheck     },
               ].map(({ label, value, note, color, Icon }) => (
                 <div className={`exec-kpi-card ${color}`} key={label}>
                   <div className="kpi-icon-box"><Icon size={17} /></div>
@@ -3619,10 +3860,10 @@ function App() {
                     <span>Theo Project</span>
                     <h3>Ticket mở theo Project</h3>
                   </div>
-                  <strong>{executiveDashboardData().projectRows.length} project</strong>
+                  <strong>{executiveData.projectRows.length} project</strong>
                 </div>
                 <div className="exec-project-bars">
-                  {executiveDashboardData().projectRows.slice(0, 8).map((project) => (
+                  {executiveData.projectRows.slice(0, 8).map((project) => (
                     <button
                       className="exec-project-bar-row"
                       type="button"
@@ -3634,7 +3875,7 @@ function App() {
                     >
                       <div className="project-bar-label">
                         <strong>{project.name}</strong>
-                        <small>{project.doneItems} done · {project.blockedItems} blocked · {relativeDashboardTime(project.updatedAt)}</small>
+                        <small>{project.completionRate}% done · {project.overdueItems} quá hạn · {relativeDashboardTime(project.updatedAt)}</small>
                       </div>
                       <div className="project-bar-track">
                         <span style={{ width: `${project.width}%` }}></span>
@@ -3654,10 +3895,10 @@ function App() {
                   <strong>7 ngày</strong>
                 </div>
                 <div className="exec-activity-bars">
-                  {executiveDashboardData().activitySeries.map((item) => (
+                  {executiveData.activitySeries.map((item) => (
                     <div className="activity-bar-column" key={item.label}>
                       <div className="activity-bar-track">
-                        <span style={{ height: `${Math.max((item.value / executiveDashboardData().maxActivity) * 100, item.value > 0 ? 8 : 0)}%` }}></span>
+                        <span style={{ height: `${Math.max((item.value / executiveData.maxActivity) * 100, item.value > 0 ? 8 : 0)}%` }}></span>
                       </div>
                       <strong>{item.value}</strong>
                       <small>{item.label}</small>
@@ -3677,7 +3918,8 @@ function App() {
                   <strong>Risk</strong>
                 </div>
                 <div className="exec-compact-list">
-                  {executiveDashboardData().projectRows
+                  {executiveData.projectRows
+                    .filter((project) => project.riskScore > 0)
                     .sort((first, second) => second.riskScore - first.riskScore || second.openItems - first.openItems)
                     .slice(0, 5)
                     .map((project) => (
@@ -3691,9 +3933,16 @@ function App() {
                       >
                         <span className="ops-code-chip">{project.code}</span>
                         <strong>{project.name}</strong>
-                        <small>{project.openItems} mở · {project.overdueItems} quá hạn</small>
+                        <small>{[
+                          project.blockedItems ? `${project.blockedItems} blocked` : "",
+                          project.overdueItems ? `${project.overdueItems} quá hạn` : "",
+                          project.criticalBugs ? `${project.criticalBugs} critical bug` : ""
+                        ].filter(Boolean).join(" · ")}</small>
                       </button>
                     ))}
+                  {executiveData.projectRows.filter((project) => project.riskScore > 0).length === 0 && (
+                    <div className="empty-collab-state">Không có project cần cảnh báo.</div>
+                  )}
                 </div>
               </section>
 
@@ -3703,10 +3952,10 @@ function App() {
                     <span>Ticket</span>
                     <h3>Ticket gần đây</h3>
                   </div>
-                  <strong>{executiveDashboardData().recentWorkItems.length} item</strong>
+                  <strong>{executiveData.recentWorkItems.length} item</strong>
                 </div>
                 <div className="exec-compact-list docs">
-                  {executiveDashboardData().recentWorkItems.map((item) => {
+                  {executiveData.recentWorkItems.map((item) => {
                     const project = projectsList.find((project) => project.id === item.projectId);
                     return (
                     <button
@@ -3716,12 +3965,12 @@ function App() {
                     >
                       {workItemTypeIcon(item.type)}
                       <strong>{item.title}</strong>
-                      <small>{project?.code ?? "Project"} · {WORKBOARD_COLUMNS.find((column) => column.id === item.status)?.label ?? item.status}</small>
+                      <small>{project?.code ?? "Project"} · {WORKBOARD_COLUMNS.find((column) => column.id === item.status)?.label ?? item.status} · {relativeDashboardTime(item.updatedAt ?? item.createdAt)}</small>
                     </button>
                     );
                   })}
-                  {executiveDashboardData().recentWorkItems.length === 0 && (
-                    <div className="empty-collab-state">Chưa có ticket nào trên Workboard.</div>
+                  {executiveData.recentWorkItems.length === 0 && (
+                    <div className="empty-collab-state">Không có ticket thường mới. Ticket cần xử lý nằm ở khối rủi ro.</div>
                   )}
                 </div>
               </section>
@@ -3732,21 +3981,28 @@ function App() {
                     <span>Cảnh báo</span>
                     <h3>Rủi ro Workboard</h3>
                   </div>
-                  <strong>{executiveDashboardData().riskItems.length} item</strong>
+                  <strong>{executiveData.riskItems.length} item</strong>
                 </div>
                 <div className="exec-compact-list quiet">
-                  {executiveDashboardData().riskItems.map((item) => {
+                  {executiveData.riskItems.map((item) => {
                     const project = projectsList.find((project) => project.id === item.projectId);
-                    const isHighRisk = item.status === "BLOCKED" || item.priority === "CRITICAL";
+                    const riskReason = item.status === "BLOCKED"
+                      ? "Blocked"
+                      : isWorkItemOverdue(item)
+                      ? "Quá hạn"
+                      : item.type === "BUG" && item.priority === "CRITICAL"
+                      ? "Critical bug"
+                      : `${WORK_ITEM_PRIORITY_LABEL[item.priority]} priority`;
+                    const isHighRisk = item.status === "BLOCKED" || item.priority === "CRITICAL" || isWorkItemOverdue(item);
                     return (
                       <button type="button" key={item.id} onClick={() => openDashboardWorkItem(item)}>
                         <span className={isHighRisk ? "quiet-dot high" : "quiet-dot"}></span>
                         <strong>{item.title}</strong>
-                        <small>{project?.code ?? "Project"} · {item.status === "BLOCKED" ? "Blocked" : isWorkItemOverdue(item) ? "Quá hạn" : WORK_ITEM_PRIORITY_LABEL[item.priority]}</small>
+                        <small>{project?.code ?? "Project"} · {riskReason} · Hạn {formatWorkItemDate(item.dueDate)}</small>
                       </button>
                     );
                   })}
-                  {executiveDashboardData().riskItems.length === 0 && (
+                  {executiveData.riskItems.length === 0 && (
                     <div className="empty-collab-state">Không có ticket rủi ro.</div>
                   )}
                 </div>
@@ -3759,10 +4015,10 @@ function App() {
                   <span>Activity Feed</span>
                   <h3>Hoạt động Workboard gần đây</h3>
                 </div>
-                <strong>{executiveDashboardData().workboardFeed.length} ticket</strong>
+                <strong>{executiveData.workboardFeed.length} hoạt động</strong>
               </div>
               <div className="exec-activity-feed">
-                {executiveDashboardData().workboardFeed.map((feed) => {
+                {executiveData.workboardFeed.map((feed) => {
                   const iconClass = feed.item.status === "DONE"
                     ? "feed-icon resolve"
                     : feed.item.status === "BLOCKED" || feed.item.priority === "CRITICAL"
@@ -3781,12 +4037,12 @@ function App() {
                     <button className="exec-feed-row" type="button" key={feed.id} onClick={() => openDashboardWorkItem(feed.item)}>
                       <span className={iconClass}><FeedIcon size={13} /></span>
                       <time>{parseDashboardDate(feed.happenedAt)?.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</time>
-                      <strong>{feed.action}: {feed.item.title}</strong>
-                      <span>{feed.project?.code ?? "Project"} · {feed.statusLabel} · {WORK_ITEM_PRIORITY_LABEL[feed.item.priority]}</span>
+                      <strong>{feed.summary}</strong>
+                      <span>{feed.project?.code ?? "Project"} · {feed.detail}</span>
                     </button>
                   );
                 })}
-                {executiveDashboardData().workboardFeed.length === 0 && (
+                {executiveData.workboardFeed.length === 0 && (
                   <div className="empty-collab-state">Chưa có hoạt động Workboard gần đây.</div>
                 )}
               </div>
@@ -3958,25 +4214,37 @@ function App() {
                               </span>
                             </div>
                             <strong>{item.title}</strong>
-                            <span><UserCheck size={12} /> {item.assigneeName ?? item.assignee?.name ?? "Chưa giao"}</span>
+                            <span><Users size={12} /> Tạo bởi: {getWorkItemCreatorName(item)}</span>
+                            <span><UserCheck size={12} /> Giao: {item.assigneeName ?? item.assignee?.name ?? "Chưa giao"}</span>
                             <span><Clock size={12} /> Tạo {formatWorkItemDate(item.createdAt)} · Hạn {formatWorkItemDate(item.dueDate)}</span>
                           </button>
                           <div className="workboard-card-actions">
                             <button
                               type="button"
-                              title="Sửa ticket"
-                              onClick={() => openEditWorkItemModal(item)}
+                              title="Duplicate ticket"
+                              onClick={() => void handleDuplicateWorkItem(item)}
                             >
-                              <Pencil size={13} />
+                              <Copy size={13} />
                             </button>
-                            <button
-                              className="danger"
-                              type="button"
-                              title="Xóa ticket"
-                              onClick={() => requestDeleteWorkItem(item)}
-                            >
-                              <Trash2 size={13} />
-                            </button>
+                            {isOwnWorkItem(item) && (
+                              <>
+                                <button
+                                  type="button"
+                                  title="Sửa ticket"
+                                  onClick={() => openEditWorkItemModal(item)}
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                                <button
+                                  className="danger"
+                                  type="button"
+                                  title="Xóa ticket"
+                                  onClick={() => requestDeleteWorkItem(item)}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </>
+                            )}
                           </div>
                         </article>
                       ))}
@@ -4523,7 +4791,7 @@ function App() {
                                 <MessageSquarePlus size={11} /> Trả lời
                               </button>
                             )}
-                            {comment.status === "open" && (
+                            {comment.status === "open" && isOwnDocumentComment(comment) && (
                               <button
                                 className="btn-comment-action"
                                 type="button"
@@ -4537,17 +4805,19 @@ function App() {
                                 <Pencil size={11} /> Sửa
                               </button>
                             )}
-                            <button
-                              className="btn-comment-action danger"
-                              type="button"
-                              title="Xóa nhận xét này"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                requestDeleteComment(comment.id);
-                              }}
-                            >
-                              <Trash2 size={11} /> Xóa
-                            </button>
+                            {isOwnDocumentComment(comment) && (
+                              <button
+                                className="btn-comment-action danger"
+                                type="button"
+                                title="Xóa nhận xét này"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  requestDeleteComment(comment.id);
+                                }}
+                              >
+                                <Trash2 size={11} /> Xóa
+                              </button>
+                            )}
                           </div>
                         </div>
                       </>
@@ -4603,7 +4873,7 @@ function App() {
                               <>
                                 <p>{reply.text}</p>
                                 <div className="reply-card-actions">
-                                  {reply.status === "open" && (
+                                  {reply.status === "open" && isOwnDocumentComment(reply) && (
                                     <button
                                       className="btn-comment-action"
                                       type="button"
@@ -4617,14 +4887,16 @@ function App() {
                                       <Pencil size={11} /> Sửa
                                     </button>
                                   )}
-                                  <button
-                                    className="btn-comment-action danger"
-                                    type="button"
-                                    title="Xóa phản hồi"
-                                    onClick={() => requestDeleteComment(reply.id)}
-                                  >
-                                    <Trash2 size={11} /> Xóa
-                                  </button>
+                                  {isOwnDocumentComment(reply) && (
+                                    <button
+                                      className="btn-comment-action danger"
+                                      type="button"
+                                      title="Xóa phản hồi"
+                                      onClick={() => requestDeleteComment(reply.id)}
+                                    >
+                                      <Trash2 size={11} /> Xóa
+                                    </button>
+                                  )}
                                 </div>
                               </>
                             )}
@@ -5274,9 +5546,14 @@ function App() {
                 </div>
               </div>
               <div className="modal-header-actions">
-                <button className="btn-secondary" type="button" onClick={() => openEditWorkItemModal(viewingWorkItem)}>
-                  <Pencil size={14} /> Sửa
+                <button className="btn-secondary" type="button" onClick={() => void handleDuplicateWorkItem(viewingWorkItem)}>
+                  <Copy size={14} /> Nhân bản
                 </button>
+                {isOwnWorkItem(viewingWorkItem) && (
+                  <button className="btn-secondary" type="button" onClick={() => openEditWorkItemModal(viewingWorkItem)}>
+                    <Pencil size={14} /> Sửa
+                  </button>
+                )}
                 <button className="icon-btn" type="button" onClick={() => setViewingWorkItemId(null)}>
                   <X size={18} />
                 </button>
@@ -5285,54 +5562,64 @@ function App() {
 
             <div className="modal-body">
               <div className="workitem-detail-summary">
-                <div>
-                  <span>Priority</span>
-                  <strong>{WORK_ITEM_PRIORITY_LABEL[viewingWorkItem.priority]}</strong>
+                <div className={`summary-card priority-${viewingWorkItem.priority.toLowerCase()}`}>
+                  <span className="summary-label"><AlertTriangle size={12} /> Priority</span>
+                  <strong className="summary-value priority-badge">{WORK_ITEM_PRIORITY_LABEL[viewingWorkItem.priority]}</strong>
                 </div>
-                <div>
-                  <span>Người phụ trách</span>
-                  <strong>{viewingWorkItem.assigneeName ?? viewingWorkItem.assignee?.name ?? "Chưa giao"}</strong>
+                <div className="summary-card">
+                  <span className="summary-label"><UserIcon size={12} /> Người phụ trách</span>
+                  <strong className="summary-value">{viewingWorkItem.assigneeName ?? viewingWorkItem.assignee?.name ?? "Chưa giao"}</strong>
                 </div>
-                <div>
-                  <span>Ngày tạo</span>
-                  <strong>{formatWorkItemDate(viewingWorkItem.createdAt)}</strong>
+                <div className="summary-card">
+                  <span className="summary-label"><ShieldCheck size={12} /> Người tạo</span>
+                  <strong className="summary-value">{viewingWorkItem.createdByName ?? viewingWorkItem.createdBy?.name ?? viewingWorkItem.createdByEmail ?? "Không rõ"}</strong>
                 </div>
-                <div>
-                  <span>Hạn xử lý</span>
-                  <strong>{formatWorkItemDate(viewingWorkItem.dueDate)}</strong>
+                <div className="summary-card">
+                  <span className="summary-label"><Calendar size={12} /> Ngày tạo</span>
+                  <strong className="summary-value">{formatWorkItemDate(viewingWorkItem.createdAt)}</strong>
+                </div>
+                <div className="summary-card">
+                  <span className="summary-label"><Clock size={12} /> Hạn xử lý</span>
+                  <strong className="summary-value">{formatWorkItemDate(viewingWorkItem.dueDate)}</strong>
                 </div>
               </div>
 
               <div className="workitem-detail-block">
-                <label>Mô tả</label>
-                <p>{viewingWorkItem.description || "Chưa có mô tả."}</p>
+                <label className="block-label"><FileText size={13} /> Mô tả công việc</label>
+                <div className="description-content">{viewingWorkItem.description || "Chưa có mô tả."}</div>
               </div>
 
               {viewingWorkItem.document && (
                 <div className="workitem-source-note">
-                  <FileText size={14} /> {viewingWorkItem.document.title}
+                  <BookOpen size={15} />
+                  <div>
+                    <span>Tài liệu đính kèm liên quan:</span>
+                    <strong>{viewingWorkItem.document.title}</strong>
+                  </div>
                 </div>
               )}
 
               <div className="workitem-detail-block">
                 <label>Ảnh / Video đính kèm</label>
-                <div className="workitem-upload-row">
-                  <label className={`workitem-upload-btn ${isUploadingWorkItemAttachment ? "disabled" : ""}`}>
-                    <UploadCloud size={14} />
-                    {isUploadingWorkItemAttachment ? "Đang upload" : "Upload ảnh/video"}
-                    <input
-                      type="file"
-                      accept="image/*,video/mp4,video/webm,video/quicktime"
-                      disabled={isUploadingWorkItemAttachment}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        event.target.value = "";
-                        void handleUploadWorkItemAttachment(file);
-                      }}
-                    />
-                  </label>
-                  <small>Có thể preview ảnh và video mp4/webm/mov hoặc mở link ngoài.</small>
-                </div>
+                {isOwnWorkItem(viewingWorkItem) && (
+                  <div className="workitem-upload-row">
+                    <label className={`workitem-upload-btn ${isUploadingWorkItemAttachment ? "disabled" : ""}`}>
+                      <UploadCloud size={14} />
+                      {isUploadingWorkItemAttachment ? "Đang upload" : "Upload ảnh/video"}
+                      <input
+                        type="file"
+                        accept="image/*,video/mp4,video/webm,video/quicktime"
+                        disabled={isUploadingWorkItemAttachment}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          event.target.value = "";
+                          void handleUploadWorkItemAttachment(file);
+                        }}
+                      />
+                    </label>
+                    <small>Có thể preview ảnh và video mp4/webm/mov hoặc mở link ngoài.</small>
+                  </div>
+                )}
                 {(viewingWorkItem.attachments ?? []).length > 0 ? (
                   <div className="workitem-attachment-grid">
                     {(viewingWorkItem.attachments ?? []).map((attachment) => (
@@ -5386,19 +5673,56 @@ function App() {
                         <strong>{comment.createdByName ?? comment.createdBy?.name ?? "Người dùng"}</strong>
                         <span>{relativeDashboardTime(comment.createdAt)}</span>
                       </div>
-                      <p>{comment.content}</p>
-                      <div className="workitem-comment-actions">
-                        <button
-                          className="btn-secondary compact"
-                          type="button"
-                          onClick={() => {
-                            setReplyingWorkItemCommentId(comment.id);
-                            setWorkItemReplyText("");
-                          }}
-                        >
-                          <MessageSquarePlus size={13} /> Reply
-                        </button>
-                      </div>
+                      {editingWorkItemCommentId === comment.id ? (
+                        <div className="workitem-reply-composer">
+                          <textarea
+                            rows={2}
+                            value={editingWorkItemCommentText}
+                            onChange={(event) => setEditingWorkItemCommentText(event.target.value)}
+                            placeholder="Sửa comment..."
+                          />
+                          <button className="btn-primary" type="button" onClick={() => void handleSaveWorkItemComment(comment.id)}>
+                            <CheckCircle2 size={13} /> Lưu
+                          </button>
+                          <button
+                            className="btn-secondary"
+                            type="button"
+                            onClick={() => {
+                              setEditingWorkItemCommentId(null);
+                              setEditingWorkItemCommentText("");
+                            }}
+                          >
+                            Hủy
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <p>{comment.content}</p>
+                          <div className="workitem-comment-actions">
+                            <button
+                              className="btn-secondary compact"
+                              type="button"
+                              onClick={() => {
+                                setEditingWorkItemCommentId(null);
+                                setReplyingWorkItemCommentId(comment.id);
+                                setWorkItemReplyText("");
+                              }}
+                            >
+                              <MessageSquarePlus size={13} /> Reply
+                            </button>
+                            {isOwnWorkItemComment(comment) && (
+                              <>
+                                <button className="btn-secondary compact" type="button" onClick={() => openEditWorkItemComment(comment)}>
+                                  <Pencil size={13} /> Sửa
+                                </button>
+                                <button className="btn-secondary compact danger" type="button" onClick={() => requestDeleteWorkItemComment(comment)}>
+                                  <Trash2 size={13} /> Xóa
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </>
+                      )}
 
                       {comment.replies?.map((reply) => (
                         <div className="workitem-reply-card" key={reply.id}>
@@ -5406,7 +5730,43 @@ function App() {
                             <strong>{reply.createdByName ?? reply.createdBy?.name ?? "Người dùng"}</strong>
                             <span>{relativeDashboardTime(reply.createdAt)}</span>
                           </div>
-                          <p>{reply.content}</p>
+                          {editingWorkItemCommentId === reply.id ? (
+                            <div className="workitem-reply-composer">
+                              <textarea
+                                rows={2}
+                                value={editingWorkItemCommentText}
+                                onChange={(event) => setEditingWorkItemCommentText(event.target.value)}
+                                placeholder="Sửa reply..."
+                              />
+                              <button className="btn-primary" type="button" onClick={() => void handleSaveWorkItemComment(reply.id)}>
+                                <CheckCircle2 size={13} /> Lưu
+                              </button>
+                              <button
+                                className="btn-secondary"
+                                type="button"
+                                onClick={() => {
+                                  setEditingWorkItemCommentId(null);
+                                  setEditingWorkItemCommentText("");
+                                }}
+                              >
+                                Hủy
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <p>{reply.content}</p>
+                              {isOwnWorkItemComment(reply) && (
+                                <div className="workitem-comment-actions">
+                                  <button className="btn-secondary compact" type="button" onClick={() => openEditWorkItemComment(reply)}>
+                                    <Pencil size={13} /> Sửa
+                                  </button>
+                                  <button className="btn-secondary compact danger" type="button" onClick={() => requestDeleteWorkItemComment(reply)}>
+                                    <Trash2 size={13} /> Xóa
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          )}
                         </div>
                       ))}
 
@@ -5453,7 +5813,10 @@ function App() {
                   <p className="modal-subtitle">{selectedProject.code} • Task, bug, review và thay đổi phát sinh</p>
                 </div>
               </div>
-              <button className="icon-btn" type="button" onClick={() => setIsWorkItemModalOpen(false)}>
+              <button className="icon-btn" type="button" onClick={() => {
+                setIsAssigneeMenuOpen(false);
+                setIsWorkItemModalOpen(false);
+              }}>
                 <X size={18} />
               </button>
             </div>
@@ -5539,12 +5902,43 @@ function App() {
 
                 <div className="form-group">
                   <label><UserCheck size={13} /> Người phụ trách</label>
-                  <input
-                    className="form-input"
-                    value={workItemDraft.assigneeName}
-                    onChange={(event) => setWorkItemDraft({ ...workItemDraft, assigneeName: event.target.value })}
-                    placeholder="Nhập tên người xử lý..."
-                  />
+                  <div className="workitem-assignee-select">
+                    <button
+                      className="workitem-assignee-summary"
+                      type="button"
+                      onClick={() => setIsAssigneeMenuOpen((open) => !open)}
+                    >
+                      <span>
+                        {selectedWorkItemAssignees.length > 0
+                          ? selectedWorkItemAssignees.join(", ")
+                          : "Chọn người phụ trách"}
+                      </span>
+                      <ChevronDown size={15} />
+                    </button>
+                    {isAssigneeMenuOpen && (
+                      <div className="workitem-assignee-menu">
+                        {workItemAssigneeOptions.map((member) => {
+                          const checked = selectedWorkItemAssignees.includes(member.name);
+                          return (
+                            <label className="workitem-assignee-option" key={member.email || member.id || member.name}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleWorkItemAssignee(member.name)}
+                              />
+                              <span>
+                                <strong>{member.name}</strong>
+                                <small>{member.email}</small>
+                              </span>
+                            </label>
+                          );
+                        })}
+                        {workItemAssigneeOptions.length === 0 && (
+                          <div className="workitem-assignee-empty">Dự án chưa có thành viên có thể gán.</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -5595,7 +5989,10 @@ function App() {
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn-secondary" type="button" onClick={() => setIsWorkItemModalOpen(false)}>
+              <button className="btn-secondary" type="button" onClick={() => {
+                setIsAssigneeMenuOpen(false);
+                setIsWorkItemModalOpen(false);
+              }}>
                 Hủy
               </button>
               <button className="btn-primary" type="button" onClick={() => void handleSaveWorkItem()}>

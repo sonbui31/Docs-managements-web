@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { Prisma, WorkItemPriority, WorkItemStatus, WorkItemType } from "@prisma/client";
+import { Prisma, ProjectRole, WorkItemPriority, WorkItemStatus, WorkItemType } from "@prisma/client";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { CollaborationService } from "../collaboration/collaboration.service";
 import { MediaService } from "../media/media.service";
@@ -20,17 +20,29 @@ export class WorkItemsService {
   ) {}
 
   async findByProject(projectId: string, user: AuthenticatedUser) {
-    await this.permissions.assertProjectRole(user, projectId, ["VIEWER"]);
+    const canViewProjectBoard = await this.canUseProjectRole(user, projectId, ["VIEWER"]);
+    if (!canViewProjectBoard) {
+      await this.permissions.assertProjectVisible(user, projectId);
+    }
 
     return this.prisma.workItem.findMany({
-      where: { projectId },
+      where: canViewProjectBoard
+        ? { projectId }
+        : {
+            projectId,
+            document: this.permissions.documentVisibilityWhere(user, projectId, ["VIEWER"])
+          },
       include: this.includeRelations(),
       orderBy: [{ status: "asc" }, { priority: "desc" }, { updatedAt: "desc" }]
     });
   }
 
   async create(dto: CreateWorkItemDto, user: AuthenticatedUser) {
-    await this.permissions.assertProjectRole(user, dto.projectId, ["REVIEWER", "EDITOR", "MANAGER"]);
+    if (dto.documentId) {
+      await this.permissions.assertDocumentRole(user, dto.documentId, ["REVIEWER", "EDITOR", "MANAGER"]);
+    } else {
+      await this.permissions.assertProjectRole(user, dto.projectId, ["REVIEWER", "EDITOR", "MANAGER"]);
+    }
     await this.assertLinkedEntitiesBelongToProject(dto.projectId, dto.documentId, dto.sourceCommentId);
 
     const item = await this.prisma.workItem.create({
@@ -91,12 +103,19 @@ export class WorkItemsService {
     const existing = await this.prisma.workItem.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException("Work item not found");
 
-    await this.permissions.assertProjectRole(user, existing.projectId, ["REVIEWER", "EDITOR", "MANAGER"]);
+    await this.assertWorkItemRole(existing, user, ["REVIEWER", "EDITOR", "MANAGER"]);
+    const onlyStatusChange = this.isOnlyStatusChange(dto);
+    if (!onlyStatusChange) {
+      this.assertOwnedByCurrentUser(existing, user, "Bạn chỉ có thể sửa ticket do chính mình tạo");
+    }
     await this.assertLinkedEntitiesBelongToProject(
       existing.projectId,
       dto.documentId === undefined ? existing.documentId ?? undefined : dto.documentId ?? undefined,
       dto.sourceCommentId === undefined ? existing.sourceCommentId ?? undefined : dto.sourceCommentId ?? undefined
     );
+    if (dto.documentId !== undefined && dto.documentId) {
+      await this.permissions.assertDocumentRole(user, dto.documentId, ["REVIEWER", "EDITOR", "MANAGER"]);
+    }
 
     const data: Prisma.WorkItemUpdateInput = {};
     if (dto.documentId !== undefined) data.document = dto.documentId ? { connect: { id: dto.documentId } } : { disconnect: true };
@@ -129,7 +148,8 @@ export class WorkItemsService {
   async uploadAttachment(id: string, file: Express.Multer.File | undefined, user: AuthenticatedUser) {
     const item = await this.prisma.workItem.findUnique({ where: { id } });
     if (!item) throw new NotFoundException("Work item not found");
-    await this.permissions.assertProjectRole(user, item.projectId, ["REVIEWER", "EDITOR", "MANAGER"]);
+    await this.assertWorkItemRole(item, user, ["REVIEWER", "EDITOR", "MANAGER"]);
+    this.assertOwnedByCurrentUser(item, user, "Bạn chỉ có thể upload file vào ticket do chính mình tạo");
 
     const media = await this.media.upload(file, { projectId: item.projectId, documentId: item.documentId ?? undefined }, user);
     const nextAttachments = [
@@ -145,9 +165,9 @@ export class WorkItemsService {
   }
 
   async comments(id: string, user: AuthenticatedUser) {
-    const item = await this.prisma.workItem.findUnique({ where: { id }, select: { projectId: true } });
+    const item = await this.prisma.workItem.findUnique({ where: { id }, select: { projectId: true, documentId: true } });
     if (!item) throw new NotFoundException("Work item not found");
-    await this.permissions.assertProjectRole(user, item.projectId, ["VIEWER"]);
+    await this.assertWorkItemRole(item, user, ["VIEWER"]);
 
     return this.prisma.workItemComment.findMany({
       where: { workItemId: id },
@@ -157,9 +177,9 @@ export class WorkItemsService {
   }
 
   async createComment(id: string, dto: CreateWorkItemCommentDto, user: AuthenticatedUser) {
-    const item = await this.prisma.workItem.findUnique({ where: { id }, select: { projectId: true } });
+    const item = await this.prisma.workItem.findUnique({ where: { id }, select: { projectId: true, documentId: true } });
     if (!item) throw new NotFoundException("Work item not found");
-    await this.permissions.assertProjectRole(user, item.projectId, ["REVIEWER", "EDITOR", "MANAGER"]);
+    await this.assertWorkItemRole(item, user, ["REVIEWER", "EDITOR", "MANAGER"]);
 
     if (dto.parentId) {
       const parent = await this.prisma.workItemComment.findUnique({ where: { id: dto.parentId }, select: { workItemId: true } });
@@ -191,6 +211,7 @@ export class WorkItemsService {
 
   async removeComment(workItemId: string, commentId: string, user: AuthenticatedUser) {
     await this.assertCanChangeWorkItemComment(workItemId, commentId, user);
+    await this.assertNoOtherUserWorkItemReplies(commentId, user);
 
     await this.prisma.workItemComment.delete({ where: { id: commentId } });
     return { ok: true };
@@ -200,7 +221,8 @@ export class WorkItemsService {
     const existing = await this.prisma.workItem.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException("Work item not found");
 
-    await this.permissions.assertProjectRole(user, existing.projectId, ["REVIEWER", "EDITOR", "MANAGER"]);
+    await this.assertWorkItemRole(existing, user, ["REVIEWER", "EDITOR", "MANAGER"]);
+    this.assertOwnedByCurrentUser(existing, user, "Bạn chỉ có thể xóa ticket do chính mình tạo");
     await this.prisma.workItem.delete({ where: { id } });
     await this.collaboration.log(user, "WORK_ITEM_DELETED", "Project", existing.projectId, { workItemId: id });
     return { ok: true };
@@ -239,12 +261,37 @@ export class WorkItemsService {
     });
     if (!comment || comment.workItemId !== workItemId) throw new NotFoundException("Work item comment not found");
 
-    await this.permissions.assertProjectRole(user, comment.workItem.projectId, ["REVIEWER", "EDITOR", "MANAGER"]);
+    await this.assertWorkItemRole(comment.workItem, user, ["REVIEWER", "EDITOR", "MANAGER"]);
     const isOwner = comment.createdById === user.id || comment.createdByEmail === user.email;
-    const isManager = user.role === "ADMIN" || user.role === "MANAGER";
-    if (!isOwner && !isManager) {
+    if (!isOwner) {
       throw new BadRequestException("Bạn chỉ có thể sửa hoặc xóa comment của chính mình");
     }
+  }
+
+  private async assertNoOtherUserWorkItemReplies(parentId: string, user: AuthenticatedUser) {
+    const otherUserReplies = await this.prisma.workItemComment.count({
+      where: {
+        parentId,
+        NOT: {
+          OR: [
+            { createdById: user.id },
+            { createdByEmail: user.email }
+          ]
+        }
+      }
+    });
+    if (otherUserReplies > 0) {
+      throw new BadRequestException("Không thể xóa comment này vì đang có reply của người khác");
+    }
+  }
+
+  private assertOwnedByCurrentUser(
+    entity: { createdById?: string | null; createdByEmail?: string | null },
+    user: AuthenticatedUser,
+    message: string
+  ) {
+    const isOwner = entity.createdById === user.id || entity.createdByEmail === user.email;
+    if (!isOwner) throw new BadRequestException(message);
   }
 
   private normalizeAttachments(attachments?: Array<{ url: string; name?: string; mimeType?: string }> | null) {
@@ -256,6 +303,44 @@ export class WorkItemsService {
         mimeType: attachment.mimeType?.trim() || null
       }))
       .filter((attachment) => attachment.url);
+  }
+
+  private async assertWorkItemRole(
+    item: { projectId: string; documentId?: string | null },
+    user: AuthenticatedUser,
+    allowedRoles: ProjectRole[]
+  ) {
+    if (item.documentId) {
+      return this.permissions.assertDocumentRole(user, item.documentId, allowedRoles);
+    }
+    return this.permissions.assertProjectRole(user, item.projectId, allowedRoles);
+  }
+
+  private isOnlyStatusChange(dto: UpdateWorkItemDto) {
+    return dto.status !== undefined &&
+      dto.documentId === undefined &&
+      dto.sourceCommentId === undefined &&
+      dto.type === undefined &&
+      dto.priority === undefined &&
+      dto.title === undefined &&
+      dto.description === undefined &&
+      dto.attachments === undefined &&
+      dto.assigneeId === undefined &&
+      dto.assigneeName === undefined &&
+      dto.dueDate === undefined;
+  }
+
+  private async canUseProjectRole(
+    user: AuthenticatedUser,
+    projectId: string,
+    allowedRoles: ProjectRole[]
+  ) {
+    try {
+      await this.permissions.assertProjectRole(user, projectId, allowedRoles);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private readAttachments(value: Prisma.JsonValue | null | undefined) {
