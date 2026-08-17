@@ -11368,6 +11368,7 @@ button {
   border-radius: 12px;
   overflow: hidden;
   transition: border-color 0.18s ease, background 0.18s ease;
+  border-top: 3px solid var(--column-color, #94a3b8);
 }
 
 .workboard-column.drop-ready {
@@ -12075,6 +12076,460 @@ button {
 .workitem-modal-content .modal-footer .btn-secondary:disabled {
   cursor: not-allowed;
   opacity: 0.72;
+  transform: none;
+}
+
+/* ── Workboard Config Modal ─────────────────────────────── */
+.workboard-config-modal {
+  max-width: 820px;
+  width: 92vw;
+  position: relative;
+}
+
+.workboard-config-modal .modal-body {
+  padding: 20px 24px;
+  max-height: calc(82vh - 125px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.wbcfg-columns {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── Column Card ── */
+.wbcfg-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #ffffff;
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.wbcfg-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+}
+
+/* ── Card Header ── */
+.wbcfg-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.wbcfg-card-handle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.wbcfg-grip-icon {
+  color: #94a3b8;
+  flex-shrink: 0;
+  transition: color 0.12s ease;
+}
+
+.wbcfg-card:hover .wbcfg-grip-icon {
+  color: #64748b;
+}
+
+.wbcfg-order-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: #e2e8f0;
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.wbcfg-color-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  border: 1.5px solid rgba(0, 0, 0, 0.08);
+}
+
+.wbcfg-card-title {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wbcfg-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.wbcfg-move-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #64748b;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.wbcfg-move-btn:hover:not(:disabled) {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+.wbcfg-move-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.wbcfg-delete-btn {
+  color: #94a3b8;
+}
+
+.wbcfg-delete-btn:hover:not(:disabled) {
+  background: #fef2f2;
+  color: #ef4444;
+  border-color: #fecaca;
+}
+
+/* ── Drag & Drop Visual Feedback ── */
+.wbcfg-card.wbcfg-dragging {
+  opacity: 0.4;
+  box-shadow: 0 8px 25px rgba(15, 23, 42, 0.12);
+  border-color: #4f46e5;
+  transform: scale(0.98);
+}
+
+.wbcfg-card.wbcfg-drag-over {
+  border-color: #4f46e5;
+  border-style: dashed;
+  background: #eef2ff;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+}
+
+.wbcfg-card.wbcfg-drag-over .wbcfg-card-header {
+  background: #e0e7ff;
+}
+
+/* ── Card Body (Form Fields) ── */
+.wbcfg-card-body {
+  display: grid;
+  grid-template-columns: 1fr 60px 1fr auto;
+  gap: 12px;
+  padding: 14px;
+  align-items: end;
+}
+
+.wbcfg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.wbcfg-field > label {
+  font-size: 0.65rem;
+  font-weight: 800;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.wbcfg-field .form-input,
+.wbcfg-field .form-select {
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 9px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 0.82rem;
+  font-weight: 700;
+  transition: all 0.12s ease;
+}
+
+.wbcfg-field .form-input:focus,
+.wbcfg-field .form-select:focus {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+  outline: none;
+}
+
+/* ── Color Picker ── */
+.wbcfg-color-wrapper {
+  width: 100%;
+  height: 38px;
+  border-radius: 9px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  overflow: hidden;
+  position: relative;
+  cursor: pointer;
+}
+
+.wbcfg-color-wrapper input[type="color"] {
+  position: absolute;
+  inset: -6px;
+  width: calc(100% + 12px);
+  height: calc(100% + 12px);
+  border: none;
+  cursor: pointer;
+  background: transparent;
+}
+
+/* ── Flag Pills ── */
+.wbcfg-field-flags {
+  flex-direction: row !important;
+  align-items: flex-end !important;
+  gap: 6px !important;
+}
+
+.wbcfg-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 9px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.wbcfg-pill:hover {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+}
+
+.wbcfg-pill.active {
+  background: #eef2ff;
+  border-color: rgba(79, 70, 229, 0.3);
+  color: #4338ca;
+}
+
+.wbcfg-pill input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #4f46e5;
+}
+
+/* ── Add Column Button ── */
+.wbcfg-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 42px;
+  width: 100%;
+  border-radius: 11px;
+  border: 1.5px dashed #cbd5e1;
+  background: transparent;
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.wbcfg-add-btn:hover {
+  border-color: #4f46e5;
+  color: #4f46e5;
+  background: #eef2ff;
+}
+
+/* ── Delete Confirmation Overlay ── */
+.wbcfg-confirm-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  animation: wbcfg-fade-in 0.15s ease;
+}
+
+@keyframes wbcfg-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.wbcfg-confirm-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.16);
+  padding: 28px 32px;
+  max-width: 380px;
+  width: 90%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.wbcfg-confirm-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: #fef2f2;
+  color: #ef4444;
+  display: grid;
+  place-items: center;
+  border: 1px solid #fecaca;
+}
+
+.wbcfg-confirm-card h4 {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 0;
+}
+
+.wbcfg-confirm-card p {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #64748b;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.wbcfg-confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  width: 100%;
+}
+
+.wbcfg-confirm-actions .btn-secondary {
+  flex: 1;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  font-weight: 700;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.wbcfg-confirm-actions .btn-secondary:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+.wbcfg-confirm-delete-btn {
+  flex: 1;
+  height: 40px;
+  border-radius: 10px;
+  border: none;
+  background: #ef4444;
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 0.82rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25);
+}
+
+.wbcfg-confirm-delete-btn:hover {
+  background: #dc2626;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(239, 68, 68, 0.35);
+}
+
+/* ── Footer overrides for config modal ── */
+.workboard-config-modal .modal-footer {
+  padding: 16px 24px;
+  background: #ffffff;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.workboard-config-modal .modal-footer .btn-secondary {
+  height: 42px;
+  padding: 0 22px;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.workboard-config-modal .modal-footer .btn-secondary:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+.workboard-config-modal .modal-footer .btn-primary {
+  height: 42px;
+  padding: 0 24px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 0.85rem;
+  border: none;
+  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.3);
+  cursor: pointer;
+  transition: all 0.18s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workboard-config-modal .modal-footer .btn-primary:hover {
+  background: linear-gradient(135deg, #4338ca 0%, #3730a3 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(79, 70, 229, 0.4);
+}
+
+.workboard-config-modal .modal-footer .btn-primary:disabled,
+.workboard-config-modal .modal-footer .btn-secondary:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
   transform: none;
 }
 

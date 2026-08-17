@@ -12,6 +12,7 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { PermissionsModule } from "./permissions/permissions.module";
 import { ProjectsModule } from "./projects/projects.module";
 import { UsersModule } from "./users/users.module";
+import { WorkboardColumnsModule } from "./workboard-columns/workboard-columns.module";
 import { WorkItemsModule } from "./work-items/work-items.module";
 
 @Module({
@@ -35,6 +36,7 @@ import { WorkItemsModule } from "./work-items/work-items.module";
     MediaModule,
     ImportsModule,
     ExportsModule,
+    WorkboardColumnsModule,
     WorkItemsModule
   ]
 })

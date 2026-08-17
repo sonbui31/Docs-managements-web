@@ -49,6 +49,10 @@ export class CreateWorkItemDto {
   status?: WorkItemStatus;
 
   @IsOptional()
+  @IsString()
+  columnId?: string;
+
+  @IsOptional()
   @IsEnum(WorkItemPriority)
   priority?: WorkItemPriority;
 

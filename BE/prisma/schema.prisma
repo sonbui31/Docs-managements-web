@@ -76,6 +76,21 @@ enum WorkItemPriority {
   CRITICAL
 }
 
+enum WorkboardColumnType {
+  INTAKE
+  READY
+  OPEN
+  IN_PROGRESS
+  REVIEW
+  QA
+  WAITING
+  BLOCKED
+  REWORK
+  APPROVED
+  DONE
+  ARCHIVED
+}
+
 model Project {
   id                   String               @id @default(cuid())
   code                 String               @unique
@@ -91,6 +106,7 @@ model Project {
   traceLinks           TraceLink[]
   workItems            WorkItem[]
   workItemLabels       WorkItemLabel[]
+  workboardColumns     WorkboardColumn[]
   members              ProjectMember[]
   documentPermissions  DocumentPermission[]
   createdAt            DateTime             @default(now())
@@ -286,6 +302,8 @@ model WorkItem {
   sourceComment   Comment?                @relation(fields: [sourceCommentId], references: [id], onDelete: SetNull)
   type            WorkItemType            @default(TASK)
   status          WorkItemStatus          @default(BACKLOG)
+  columnId        String?
+  column          WorkboardColumn?        @relation(fields: [columnId], references: [id], onDelete: SetNull)
   priority        WorkItemPriority        @default(MEDIUM)
   title           String
   description     String?
@@ -308,9 +326,29 @@ model WorkItem {
   updatedAt       DateTime                @updatedAt
 
   @@index([projectId, status, priority])
+  @@index([columnId])
   @@index([documentId])
   @@index([sourceCommentId])
   @@index([assigneeId])
+}
+
+model WorkboardColumn {
+  id        String              @id @default(cuid())
+  projectId String
+  project   Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  key       String
+  name      String
+  color     String              @default("#6366f1")
+  type      WorkboardColumnType @default(OPEN)
+  position  Int                 @default(0)
+  isDefault Boolean             @default(false)
+  isDone    Boolean             @default(false)
+  workItems WorkItem[]
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@unique([projectId, key])
+  @@index([projectId, position])
 }
 
 model WorkItemAssignee {

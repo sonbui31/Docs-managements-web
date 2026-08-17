@@ -52,6 +52,7 @@ import {
   Tags,
   Trash2,
   TrendingUp,
+  GripVertical,
   UploadCloud,
   User as UserIcon,
   UserCheck,
@@ -68,6 +69,7 @@ import {
   createProject,
   createRequirementTag,
   createTraceLink,
+  createWorkboardColumn,
   createWorkItem,
   createWorkItemComment,
   deleteComment,
@@ -89,6 +91,7 @@ import {
   fetchProjectDashboard,
   fetchProjectMembers,
   fetchProjectWorkItems,
+  fetchWorkboardColumns,
   fetchWorkItemActivity,
   fetchWorkItemComments,
   fetchProjects,
@@ -99,11 +102,14 @@ import {
   resolveComment,
   restoreDocumentVersion,
   searchProject,
+  updateWorkboardColumn,
   updateComment,
   updateDocument,
   updateProject,
   updateWorkItem,
   updateWorkItemComment,
+  deleteWorkboardColumn,
+  reorderWorkboardColumns,
   uploadMediaAsset
 } from "./api";
 import { AuthPage } from "./AuthPage";
@@ -131,6 +137,8 @@ import type {
   WorkItemComment,
   WorkItemPriority,
   WorkItemStatus,
+  WorkboardColumn,
+  WorkboardColumnType,
   WorkItemType
 } from "./types";
 
@@ -344,13 +352,28 @@ interface TocItem {
   level: number;
 }
 
-const WORKBOARD_COLUMNS: Array<{ id: WorkItemStatus; label: string; hint: string }> = [
-  { id: "BACKLOG", label: "Backlog", hint: "Mới ghi nhận" },
-  { id: "TODO", label: "To Do", hint: "Đã xác nhận" },
-  { id: "IN_PROGRESS", label: "In Progress", hint: "Đang xử lý" },
-  { id: "REVIEW", label: "Review / QA", hint: "Chờ kiểm tra" },
-  { id: "BLOCKED", label: "Blocked", hint: "Đang kẹt" },
-  { id: "DONE", label: "Done", hint: "Hoàn thành" }
+const DEFAULT_WORKBOARD_COLUMNS: WorkboardColumn[] = [
+  { id: "BACKLOG", projectId: "", key: "BACKLOG", name: "Backlog", color: "#64748b", type: "OPEN", position: 0, isDefault: true, isDone: false },
+  { id: "TODO", projectId: "", key: "TODO", name: "To Do", color: "#3b82f6", type: "OPEN", position: 1, isDefault: false, isDone: false },
+  { id: "IN_PROGRESS", projectId: "", key: "IN_PROGRESS", name: "In Progress", color: "#f59e0b", type: "IN_PROGRESS", position: 2, isDefault: false, isDone: false },
+  { id: "REVIEW", projectId: "", key: "REVIEW", name: "Review / QA", color: "#8b5cf6", type: "REVIEW", position: 3, isDefault: false, isDone: false },
+  { id: "BLOCKED", projectId: "", key: "BLOCKED", name: "Blocked", color: "#ef4444", type: "BLOCKED", position: 4, isDefault: false, isDone: false },
+  { id: "DONE", projectId: "", key: "DONE", name: "Done", color: "#10b981", type: "DONE", position: 5, isDefault: false, isDone: true }
+];
+
+const WORKBOARD_COLUMN_TYPE_OPTIONS: Array<{ value: WorkboardColumnType; label: string }> = [
+  { value: "INTAKE", label: "Mới tiếp nhận" },
+  { value: "READY", label: "Sẵn sàng làm" },
+  { value: "OPEN", label: "Đang mở" },
+  { value: "IN_PROGRESS", label: "Đang làm" },
+  { value: "REVIEW", label: "Review" },
+  { value: "QA", label: "Test / QA" },
+  { value: "WAITING", label: "Chờ phản hồi" },
+  { value: "BLOCKED", label: "Bị chặn" },
+  { value: "REWORK", label: "Cần làm lại" },
+  { value: "APPROVED", label: "Đã duyệt" },
+  { value: "DONE", label: "Hoàn thành" },
+  { value: "ARCHIVED", label: "Lưu trữ" }
 ];
 
 const WORK_ITEM_TYPE_LABEL: Record<WorkItemType, string> = {
@@ -381,6 +404,7 @@ type WorkItemDraft = {
   documentId: string;
   type: WorkItemType;
   status: WorkItemStatus;
+  columnId: string;
   priority: WorkItemPriority;
   title: string;
   description: string;
@@ -390,6 +414,15 @@ type WorkItemDraft = {
   attachmentsText: string;
   checklistText: string;
   labelsText: string;
+};
+
+type WorkboardColumnDraft = {
+  id?: string;
+  name: string;
+  color: string;
+  type: WorkboardColumnType;
+  isDefault: boolean;
+  isDone: boolean;
 };
 
 function splitAssigneeNames(value?: string | null) {
@@ -530,9 +563,16 @@ function App() {
   const [commentsList, setCommentsList] = useState<CommentThread[]>([]);
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
   const [dashboardWorkItems, setDashboardWorkItems] = useState<WorkItem[]>([]);
+  const [workboardColumnsByProject, setWorkboardColumnsByProject] = useState<Record<string, WorkboardColumn[]>>({});
   const [isLoadingWorkItems, setIsLoadingWorkItems] = useState<boolean>(false);
   const [draggingWorkItemId, setDraggingWorkItemId] = useState<string | null>(null);
-  const pendingWorkItemMovesRef = useRef<Record<string, { status: WorkItemStatus; previousStatus: WorkItemStatus; token: number }>>({});
+  const pendingWorkItemMovesRef = useRef<Record<string, {
+    status: WorkItemStatus;
+    columnId?: string | null;
+    previousStatus: WorkItemStatus;
+    previousColumnId?: string | null;
+    token: number;
+  }>>({});
   const workItemMoveTokenRef = useRef<number>(0);
   const [workboardSearchQuery, setWorkboardSearchQuery] = useState<string>("");
   const [workboardTypeFilter, setWorkboardTypeFilter] = useState<"ALL" | WorkItemType>("ALL");
@@ -540,6 +580,9 @@ function App() {
   const [workboardAssigneeFilter, setWorkboardAssigneeFilter] = useState<string>("ALL");
   const [workboardCreatorFilter, setWorkboardCreatorFilter] = useState<string>("ALL");
   const [workboardSortBy, setWorkboardSortBy] = useState<"BOARD_ORDER" | "UPDATED_DESC" | "DUE_ASC" | "PRIORITY_DESC">("BOARD_ORDER");
+  const [isWorkboardConfigOpen, setIsWorkboardConfigOpen] = useState<boolean>(false);
+  const [workboardColumnDrafts, setWorkboardColumnDrafts] = useState<WorkboardColumnDraft[]>([]);
+  const [isSavingWorkboardColumns, setIsSavingWorkboardColumns] = useState<boolean>(false);
   const [isWorkItemModalOpen, setIsWorkItemModalOpen] = useState<boolean>(false);
   const [workItemDraft, setWorkItemDraft] = useState<WorkItemDraft | null>(null);
   const [isSavingWorkItem, setIsSavingWorkItem] = useState<boolean>(false);
@@ -887,7 +930,7 @@ function App() {
     } catch (error) {
       console.error("Cannot load project collaboration:", error);
     }
-    await loadProjectWorkItems(projectId);
+    await Promise.all([loadWorkboardColumns(projectId), loadProjectWorkItems(projectId)]);
   }
 
   async function loadProjectWorkItems(projectId: string) {
@@ -926,16 +969,33 @@ function App() {
     ];
   }
 
+  function statusForWorkboardColumn(column?: WorkboardColumn | null): WorkItemStatus {
+    if (!column) return "BACKLOG";
+    if ((["BACKLOG", "TODO", "IN_PROGRESS", "REVIEW", "BLOCKED", "DONE"] as string[]).includes(column.key)) {
+      return column.key as WorkItemStatus;
+    }
+    if (column.isDone || column.type === "DONE" || column.type === "ARCHIVED") return "DONE";
+    if (column.type === "BLOCKED") return "BLOCKED";
+    if (["REVIEW", "QA", "WAITING", "REWORK", "APPROVED"].includes(column.type)) return "REVIEW";
+    if (column.type === "IN_PROGRESS") return "IN_PROGRESS";
+    if (column.type === "INTAKE") return "BACKLOG";
+    return "TODO";
+  }
+
+  function workItemBelongsToColumn(item: WorkItem, column: WorkboardColumn) {
+    return item.columnId === column.id || (!item.columnId && item.status === column.key);
+  }
+
   function moveWorkItemToColumn(
     items: WorkItem[],
     workItemId: string,
-    status: WorkItemStatus,
+    column: WorkboardColumn,
     targetId?: string,
     placement: "before" | "after" | "end" = "end"
   ) {
     const currentItem = items.find((item) => item.id === workItemId);
     if (!currentItem || targetId === workItemId) return items;
-    const movedItem = { ...currentItem, status };
+    const movedItem = { ...currentItem, columnId: column.id, column, status: statusForWorkboardColumn(column) };
     const remainingItems = items.filter((item) => item.id !== workItemId);
     if (targetId) {
       const targetIndex = remainingItems.findIndex((item) => item.id === targetId);
@@ -951,7 +1011,7 @@ function App() {
 
     const sameColumnIndexes = remainingItems
       .map((item, index) => ({ item, index }))
-      .filter(({ item }) => item.status === status)
+      .filter(({ item }) => workItemBelongsToColumn(item, column))
       .map(({ index }) => index);
     if (!sameColumnIndexes.length) return [...remainingItems, movedItem];
     const insertIndex = sameColumnIndexes[sameColumnIndexes.length - 1] + 1;
@@ -966,8 +1026,23 @@ function App() {
     const pendingMoves = pendingWorkItemMovesRef.current;
     return items.map((item) => {
       const pendingMove = pendingMoves[item.id];
-      return pendingMove ? { ...item, status: pendingMove.status } : item;
+      return pendingMove ? { ...item, status: pendingMove.status, columnId: pendingMove.columnId ?? item.columnId } : item;
     });
+  }
+
+  async function loadWorkboardColumns(projectId: string) {
+    if (!projectId) return DEFAULT_WORKBOARD_COLUMNS;
+    try {
+      const columns = await fetchWorkboardColumns(projectId);
+      const normalized = columns.length ? columns : DEFAULT_WORKBOARD_COLUMNS.map((column) => ({ ...column, projectId }));
+      setWorkboardColumnsByProject((prev) => ({ ...prev, [projectId]: normalized }));
+      return normalized;
+    } catch (error) {
+      console.error("Cannot load workboard columns:", error);
+      const fallback = DEFAULT_WORKBOARD_COLUMNS.map((column) => ({ ...column, projectId }));
+      setWorkboardColumnsByProject((prev) => ({ ...prev, [projectId]: prev[projectId] ?? fallback }));
+      return fallback;
+    }
   }
 
   async function loadProjectMembers(projectId: string) {
@@ -1737,6 +1812,36 @@ function App() {
       }));
   }, [commentsList, selectedDocument.id, commentFilter, currentUser?.email, currentUser?.name]);
 
+  const selectedWorkboardColumns = useMemo(() => {
+    const columns = workboardColumnsByProject[selectedProjectId];
+    return (columns?.length ? columns : DEFAULT_WORKBOARD_COLUMNS.map((column) => ({ ...column, projectId: selectedProjectId })))
+      .slice()
+      .sort((first, second) => first.position - second.position);
+  }, [selectedProjectId, workboardColumnsByProject]);
+
+  const selectedDefaultWorkboardColumn = useMemo(
+    () => selectedWorkboardColumns.find((column) => column.isDefault) ?? selectedWorkboardColumns[0] ?? null,
+    [selectedWorkboardColumns]
+  );
+
+  function workboardColumnLabelForItem(item: WorkItem) {
+    return item.column?.name ??
+      selectedWorkboardColumns.find((column) => workItemBelongsToColumn(item, column))?.name ??
+      DEFAULT_WORKBOARD_COLUMNS.find((column) => column.key === item.status)?.name ??
+      item.status;
+  }
+
+  function workboardColumnHint(column: WorkboardColumn) {
+    return WORKBOARD_COLUMN_TYPE_OPTIONS.find((option) => option.value === column.type)?.label ?? "Đang mở";
+  }
+
+  function dashboardColumnLabelForItem(item: WorkItem) {
+    return item.column?.name ??
+      workboardColumnsByProject[item.projectId]?.find((column) => workItemBelongsToColumn(item, column))?.name ??
+      DEFAULT_WORKBOARD_COLUMNS.find((column) => column.key === item.status)?.name ??
+      item.status;
+  }
+
   const workboardAssigneeOptions = useMemo(() => {
     const names = workItems
       .flatMap(workItemAssigneeNames)
@@ -1798,11 +1903,13 @@ function App() {
   ]);
 
   const workboardMetrics = useMemo(() => {
-    const openItems = workItems.filter((item) => item.status !== "DONE");
-    const criticalBugs = workItems.filter((item) => item.type === "BUG" && item.priority === "CRITICAL" && item.status !== "DONE");
-    const blockedItems = workItems.filter((item) => item.status === "BLOCKED");
+    const isDoneItem = (item: WorkItem) => item.column?.isDone || item.status === "DONE";
+    const isBlockedItem = (item: WorkItem) => item.column?.type === "BLOCKED" || item.status === "BLOCKED";
+    const openItems = workItems.filter((item) => !isDoneItem(item));
+    const criticalBugs = workItems.filter((item) => item.type === "BUG" && item.priority === "CRITICAL" && !isDoneItem(item));
+    const blockedItems = workItems.filter(isBlockedItem);
     const overdueItems = workItems.filter(isWorkItemOverdue);
-    const doneItems = workItems.filter((item) => item.status === "DONE");
+    const doneItems = workItems.filter(isDoneItem);
     const completionRate = workItems.length ? Math.round((doneItems.length / workItems.length) * 100) : 0;
     return { openItems, criticalBugs, blockedItems, overdueItems, doneItems, completionRate };
   }, [workItems]);
@@ -2028,25 +2135,27 @@ function App() {
     void loadProjectWorkItems(item.projectId);
   }
 
-  async function handleDropWorkItem(status: WorkItemStatus, targetId?: string, placement: "before" | "after" | "end" = "end") {
+  async function handleDropWorkItem(column: WorkboardColumn, targetId?: string, placement: "before" | "after" | "end" = "end") {
     if (!draggingWorkItemId) return;
     const item = workItems.find((workItem) => workItem.id === draggingWorkItemId);
     setDraggingWorkItemId(null);
     if (!item || item.id === targetId) return;
 
     const previousStatus = item.status;
-    if (item.status === status) {
-      setWorkItems((prev) => moveWorkItemToColumn(prev, item.id, status, targetId, placement));
-      setDashboardWorkItems((prev) => moveWorkItemToColumn(prev, item.id, status, targetId, placement));
+    const previousColumnId = item.columnId;
+    const nextStatus = statusForWorkboardColumn(column);
+    if (workItemBelongsToColumn(item, column)) {
+      setWorkItems((prev) => moveWorkItemToColumn(prev, item.id, column, targetId, placement));
+      setDashboardWorkItems((prev) => moveWorkItemToColumn(prev, item.id, column, targetId, placement));
       return;
     }
 
     const moveToken = ++workItemMoveTokenRef.current;
-    pendingWorkItemMovesRef.current[item.id] = { status, previousStatus, token: moveToken };
-    setWorkItems((prev) => moveWorkItemToColumn(prev, item.id, status, targetId, placement));
-    setDashboardWorkItems((prev) => moveWorkItemToColumn(prev, item.id, status, targetId, placement));
+    pendingWorkItemMovesRef.current[item.id] = { status: nextStatus, columnId: column.id, previousStatus, previousColumnId, token: moveToken };
+    setWorkItems((prev) => moveWorkItemToColumn(prev, item.id, column, targetId, placement));
+    setDashboardWorkItems((prev) => moveWorkItemToColumn(prev, item.id, column, targetId, placement));
     try {
-      const updated = await updateWorkItem(item.id, { status });
+      const updated = await updateWorkItem(item.id, { columnId: column.id });
       if (pendingWorkItemMovesRef.current[item.id]?.token !== moveToken) return;
       delete pendingWorkItemMovesRef.current[item.id];
       setWorkItems((prev) => prev.map((workItem) => workItem.id === updated.id ? updated : workItem));
@@ -2055,8 +2164,11 @@ function App() {
       if (pendingWorkItemMovesRef.current[item.id]?.token !== moveToken) return;
       delete pendingWorkItemMovesRef.current[item.id];
       console.error("Drop work item error:", error);
-      setWorkItems((prev) => moveWorkItemToColumn(prev, item.id, previousStatus));
-      setDashboardWorkItems((prev) => moveWorkItemToColumn(prev, item.id, previousStatus));
+      const previousColumn = selectedWorkboardColumns.find((entry) => entry.id === previousColumnId || entry.key === previousStatus) ??
+        DEFAULT_WORKBOARD_COLUMNS.find((entry) => entry.key === previousStatus) ??
+        column;
+      setWorkItems((prev) => moveWorkItemToColumn(prev, item.id, previousColumn));
+      setDashboardWorkItems((prev) => moveWorkItemToColumn(prev, item.id, previousColumn));
       addToast("error", "Không đổi được trạng thái", "BE chưa cập nhật trạng thái work item.");
     }
   }
@@ -2066,7 +2178,8 @@ function App() {
       projectId: selectedProject.id,
       documentId: selectedDocument.id !== "empty-document" ? selectedDocument.id : "",
       type: "TASK",
-      status: "BACKLOG",
+      status: selectedDefaultWorkboardColumn ? statusForWorkboardColumn(selectedDefaultWorkboardColumn) : "BACKLOG",
+      columnId: selectedDefaultWorkboardColumn?.id ?? "BACKLOG",
       priority: "MEDIUM",
       title: "",
       description: "",
@@ -2080,11 +2193,136 @@ function App() {
     };
   }
 
-  function openCreateWorkItemModal(status: WorkItemStatus = "BACKLOG") {
-    setWorkItemDraft(buildWorkItemDraft({ status }));
+  function openCreateWorkItemModal(column: WorkboardColumn | null = selectedDefaultWorkboardColumn) {
+    setWorkItemDraft(buildWorkItemDraft({
+      status: column ? statusForWorkboardColumn(column) : "BACKLOG",
+      columnId: column?.id ?? "BACKLOG"
+    }));
     setIsAssigneeMenuOpen(false);
     void loadProjectMembers(selectedProject.id);
     setIsWorkItemModalOpen(true);
+  }
+
+  function openWorkboardConfigModal() {
+    setWorkboardColumnDrafts(selectedWorkboardColumns.map((column) => ({
+      id: column.id.startsWith(column.key) && !workboardColumnsByProject[selectedProjectId]?.length ? undefined : column.id,
+      name: column.name,
+      color: column.color,
+      type: column.type,
+      isDefault: column.isDefault,
+      isDone: column.isDone
+    })));
+    setIsWorkboardConfigOpen(true);
+  }
+
+  function updateWorkboardColumnDraft(index: number, patch: Partial<WorkboardColumnDraft>) {
+    setWorkboardColumnDrafts((prev) => prev.map((draft, draftIndex) => {
+      if (draftIndex !== index) return draft;
+      const next = { ...draft, ...patch };
+      if (patch.isDefault) return next;
+      return next;
+    }).map((draft, draftIndex) => patch.isDefault && draftIndex !== index ? { ...draft, isDefault: false } : draft));
+  }
+
+  function moveWorkboardColumnDraft(index: number, direction: -1 | 1) {
+    setWorkboardColumnDrafts((prev) => {
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= prev.length) return prev;
+      const next = [...prev];
+      const [entry] = next.splice(index, 1);
+      next.splice(nextIndex, 0, entry);
+      return next;
+    });
+  }
+
+  const wbcfgDragRef = useRef<{ fromIndex: number; toIndex: number } | null>(null);
+
+  function reorderWorkboardColumnDraft(fromIndex: number, toIndex: number) {
+    if (fromIndex === toIndex) return;
+    setWorkboardColumnDrafts((prev) => {
+      const next = [...prev];
+      const [entry] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, entry);
+      return next;
+    });
+  }
+
+  function addWorkboardColumnDraft() {
+    setWorkboardColumnDrafts((prev) => [
+      ...prev,
+      { name: "Cột mới", color: "#6366f1", type: "OPEN", isDefault: prev.length === 0, isDone: false }
+    ]);
+  }
+
+  const [pendingDeleteColumnIndex, setPendingDeleteColumnIndex] = useState<number | null>(null);
+
+  function requestRemoveWorkboardColumn(index: number) {
+    setPendingDeleteColumnIndex(index);
+  }
+
+  function confirmRemoveWorkboardColumn() {
+    if (pendingDeleteColumnIndex === null) return;
+    setWorkboardColumnDrafts((prev) => prev.filter((_, draftIndex) => draftIndex !== pendingDeleteColumnIndex));
+    setPendingDeleteColumnIndex(null);
+  }
+
+  function cancelRemoveWorkboardColumn() {
+    setPendingDeleteColumnIndex(null);
+  }
+
+  async function handleSaveWorkboardColumns() {
+    if (!selectedProject.id || isSavingWorkboardColumns) return;
+    const normalizedDrafts = workboardColumnDrafts
+      .map((draft) => ({ ...draft, name: draft.name.trim(), color: draft.color.trim() || "#6366f1" }))
+      .filter((draft) => draft.name);
+    if (!normalizedDrafts.length) {
+      addToast("warning", "Thiếu cột", "Workboard cần ít nhất một cột.");
+      return;
+    }
+    if (!normalizedDrafts.some((draft) => draft.isDefault)) normalizedDrafts[0].isDefault = true;
+
+    setIsSavingWorkboardColumns(true);
+    try {
+      const realExistingColumns = workboardColumnsByProject[selectedProject.id] ?? [];
+      const existingIds = new Set(realExistingColumns.map((column) => column.id));
+      const nextIds: string[] = [];
+      for (const [index, draft] of normalizedDrafts.entries()) {
+        if (draft.id && existingIds.has(draft.id)) {
+          const updated = await updateWorkboardColumn(selectedProject.id, draft.id, {
+            name: draft.name,
+            color: draft.color,
+            type: draft.type,
+            position: index,
+            isDefault: draft.isDefault,
+            isDone: draft.isDone
+          });
+          nextIds.push(updated.id);
+        } else {
+          const created = await createWorkboardColumn(selectedProject.id, {
+            name: draft.name,
+            color: draft.color,
+            type: draft.type,
+            position: index,
+            isDefault: draft.isDefault,
+            isDone: draft.isDone
+          });
+          nextIds.push(created.id);
+        }
+      }
+      const removed = realExistingColumns.filter((column) => !nextIds.includes(column.id));
+      for (const column of removed) {
+        await deleteWorkboardColumn(selectedProject.id, column.id);
+      }
+      const columns = await reorderWorkboardColumns(selectedProject.id, nextIds);
+      setWorkboardColumnsByProject((prev) => ({ ...prev, [selectedProject.id]: columns }));
+      setIsWorkboardConfigOpen(false);
+      addToast("success", "Đã cập nhật board", "Mô hình Kanban của project đã được lưu.");
+    } catch (error) {
+      console.error("Save workboard columns error:", error);
+      addToast("error", "Không lưu được board", error instanceof Error ? error.message : "BE chưa lưu được cấu hình cột.");
+    } finally {
+      setIsSavingWorkboardColumns(false);
+    }
   }
 
   function openEditWorkItemModal(item: WorkItem) {
@@ -2094,6 +2332,7 @@ function App() {
       documentId: item.documentId ?? "",
       type: item.type,
       status: item.status,
+      columnId: item.columnId ?? selectedWorkboardColumns.find((column) => workItemBelongsToColumn(item, column))?.id ?? item.status,
       priority: item.priority,
       title: displayWorkItemTitle(item),
       description: item.description ?? "",
@@ -2358,6 +2597,7 @@ function App() {
         documentId: workItemDraft.documentId || undefined,
         type: workItemDraft.type,
         status: workItemDraft.status,
+        columnId: workItemDraft.columnId,
         priority: workItemDraft.priority,
         title: workItemDraft.title.trim(),
         description: workItemDraft.description.trim() || undefined,
@@ -2393,6 +2633,7 @@ function App() {
         documentId: item.documentId ?? undefined,
         type: item.type,
         status: item.status,
+        columnId: item.columnId ?? item.column?.id ?? undefined,
         priority: item.priority,
         title: nextDuplicateWorkItemTitle(item),
         description: item.description ?? undefined,
@@ -3854,8 +4095,8 @@ function App() {
           project,
           action: wasUpdated ? "Cập nhật" : "Tạo mới",
           happenedAt: item.updatedAt ?? item.createdAt,
-          statusLabel: WORKBOARD_COLUMNS.find((column) => column.id === item.status)?.label ?? item.status,
-          summary: `${WORK_ITEM_TYPE_LABEL[item.type]} ${wasUpdated ? "được cập nhật" : "được tạo"} trong ${WORKBOARD_COLUMNS.find((column) => column.id === item.status)?.label ?? item.status}`,
+          statusLabel: dashboardColumnLabelForItem(item),
+          summary: `${WORK_ITEM_TYPE_LABEL[item.type]} ${wasUpdated ? "được cập nhật" : "được tạo"} trong ${dashboardColumnLabelForItem(item)}`,
           detail: `${WORK_ITEM_PRIORITY_LABEL[item.priority]} · ${workItemAssigneeLabel(item)}`
         };
       });
@@ -3877,10 +4118,10 @@ function App() {
       };
     });
     const maxActivity = Math.max(...activitySeries.map((item) => item.value), 1);
-    const statusBreakdown = WORKBOARD_COLUMNS.map((column) => ({
+    const statusBreakdown = DEFAULT_WORKBOARD_COLUMNS.map((column) => ({
       id: column.id,
-      label: column.label,
-      value: dashboardItems.filter((item) => item.status === column.id).length
+      label: column.name,
+      value: dashboardItems.filter((item) => item.status === column.key).length
     }));
     const maxStatusBreakdown = Math.max(...statusBreakdown.map((item) => item.value), 1);
     const workloadRows = Array.from(
@@ -4304,9 +4545,18 @@ function App() {
                 <span>{isLoadingWorkItems ? "Đang tải" : "Làm mới"}</span>
               </button>
               <button
+                className="exec-action secondary"
+                type="button"
+                onClick={openWorkboardConfigModal}
+                disabled={!selectedProject.id}
+              >
+                <SlidersHorizontal size={14} />
+                <span>Tùy chỉnh board</span>
+              </button>
+              <button
                 className="exec-action primary"
                 type="button"
-                onClick={() => openCreateWorkItemModal("BACKLOG")}
+                onClick={() => openCreateWorkItemModal()}
                 disabled={!selectedProject.id}
               >
                 <Plus size={15} />
@@ -4635,7 +4885,7 @@ function App() {
                       >
                         {workItemTypeIcon(item.type)}
                         <strong>{displayWorkItemTitle(item)}</strong>
-                        <small>{project?.code ?? "Project"} · {WORKBOARD_COLUMNS.find((column) => column.id === item.status)?.label ?? item.status} · {relativeDashboardTime(item.updatedAt ?? item.createdAt)}</small>
+                        <small>{project?.code ?? "Project"} · {dashboardColumnLabelForItem(item)} · {relativeDashboardTime(item.updatedAt ?? item.createdAt)}</small>
                       </button>
                     );
                   })}
@@ -4867,29 +5117,30 @@ function App() {
             </div>
 
             <div className="workboard-kanban" aria-label="Project workboard">
-              {WORKBOARD_COLUMNS.map((column) => {
-                const columnItems = visibleWorkItems.filter((item) => item.status === column.id);
+              {selectedWorkboardColumns.map((column) => {
+                const columnItems = visibleWorkItems.filter((item) => workItemBelongsToColumn(item, column));
                 return (
                   <section
-                    className={`workboard-column status-${column.id.toLowerCase()} ${draggingWorkItemId ? "drop-ready" : ""}`}
+                    className={`workboard-column status-${statusForWorkboardColumn(column).toLowerCase()} ${draggingWorkItemId ? "drop-ready" : ""}`}
+                    style={{ "--column-color": column.color } as CSSProperties}
                     key={column.id}
                     onDragOver={(event) => event.preventDefault()}
                     onDrop={(event) => {
                       event.preventDefault();
-                      void handleDropWorkItem(column.id);
+                      void handleDropWorkItem(column);
                     }}
                   >
                     <div className="workboard-column-header">
                       <div>
-                        <strong>{column.label}</strong>
-                        <small>{column.hint}</small>
+                        <strong>{column.name}</strong>
+                        <small>{workboardColumnHint(column)}</small>
                       </div>
                       <div className="workboard-column-actions">
                         <span className="count-badge">{columnItems.length}</span>
                         <button
                           type="button"
-                          title={`Tạo ticket ở ${column.label}`}
-                          onClick={() => openCreateWorkItemModal(column.id)}
+                          title={`Tạo ticket ở ${column.name}`}
+                          onClick={() => openCreateWorkItemModal(column)}
                           disabled={!selectedProject.id}
                         >
                           <Plus size={13} />
@@ -4910,7 +5161,7 @@ function App() {
 	                            event.stopPropagation();
 	                            const rect = event.currentTarget.getBoundingClientRect();
 	                            const placement = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
-	                            void handleDropWorkItem(column.id, item.id, placement);
+	                            void handleDropWorkItem(column, item.id, placement);
 	                          }}
 	                        >
                           <button className="workboard-card-main" type="button" onClick={() => openViewWorkItemModal(item)}>
@@ -6285,7 +6536,7 @@ function App() {
                     <span className={`workitem-type type-${viewingWorkItem.type.toLowerCase()}`}>
                       {workItemTypeIcon(viewingWorkItem.type)} {WORK_ITEM_TYPE_LABEL[viewingWorkItem.type]}
                     </span>
-                    • {WORKBOARD_COLUMNS.find((column) => column.id === viewingWorkItem.status)?.label ?? viewingWorkItem.status}
+                    • {workboardColumnLabelForItem(viewingWorkItem)}
                   </p>
                 </div>
               </div>
@@ -6598,7 +6849,172 @@ function App() {
         </div>
       )}
 
-      {/* Work Item Create/Edit Modal */}
+      {/* Workboard Config Modal */}
+      {isWorkboardConfigOpen && (
+        <div className="modal-backdrop">
+          <div className="modal-content workboard-config-modal">
+            <div className="modal-header">
+              <div className="modal-title-with-icon">
+                <div className="modal-header-badge">
+                  <SlidersHorizontal size={20} />
+                </div>
+                <div>
+                  <h3>Tùy chỉnh Workboard</h3>
+                  <p className="modal-subtitle">{selectedProject.code} • Cấu hình cột Kanban theo project</p>
+                </div>
+              </div>
+              <button className="icon-btn" type="button" onClick={() => setIsWorkboardConfigOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="wbcfg-columns">
+                {workboardColumnDrafts.map((draft, index) => (
+                  <div
+                    className="wbcfg-card"
+                    key={draft.id ?? `new-${index}`}
+                    draggable
+                    onDragStart={(e) => {
+                      wbcfgDragRef.current = { fromIndex: index, toIndex: index };
+                      e.dataTransfer.effectAllowed = "move";
+                      (e.currentTarget as HTMLElement).classList.add("wbcfg-dragging");
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      if (wbcfgDragRef.current) wbcfgDragRef.current.toIndex = index;
+                      // Visual drop indicator
+                      document.querySelectorAll(".wbcfg-card").forEach((el) => el.classList.remove("wbcfg-drag-over"));
+                      (e.currentTarget as HTMLElement).classList.add("wbcfg-drag-over");
+                    }}
+                    onDragEnd={(e) => {
+                      (e.currentTarget as HTMLElement).classList.remove("wbcfg-dragging");
+                      document.querySelectorAll(".wbcfg-card").forEach((el) => el.classList.remove("wbcfg-drag-over"));
+                      if (wbcfgDragRef.current) {
+                        reorderWorkboardColumnDraft(wbcfgDragRef.current.fromIndex, wbcfgDragRef.current.toIndex);
+                        wbcfgDragRef.current = null;
+                      }
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                    }}
+                  >
+                    <div className="wbcfg-card-header" style={{ cursor: "grab" }}>
+                      <div className="wbcfg-card-handle">
+                        <GripVertical size={14} className="wbcfg-grip-icon" />
+                        <span className="wbcfg-order-num">{index + 1}</span>
+                        <div className="wbcfg-color-dot" style={{ background: draft.color }} />
+                        <span className="wbcfg-card-title">{draft.name || "Cột mới"}</span>
+                      </div>
+                      <div className="wbcfg-card-actions">
+                        <button className="wbcfg-move-btn" type="button" onClick={() => moveWorkboardColumnDraft(index, -1)} disabled={index === 0} title="Di chuyển lên">
+                          <ChevronUp size={14} />
+                        </button>
+                        <button className="wbcfg-move-btn" type="button" onClick={() => moveWorkboardColumnDraft(index, 1)} disabled={index === workboardColumnDrafts.length - 1} title="Di chuyển xuống">
+                          <ChevronDown size={14} />
+                        </button>
+                        <button
+                          className="wbcfg-move-btn wbcfg-delete-btn"
+                          type="button"
+                          title="Xóa cột"
+                          onClick={() => requestRemoveWorkboardColumn(index)}
+                          disabled={workboardColumnDrafts.length <= 1}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="wbcfg-card-body">
+                      <div className="wbcfg-field wbcfg-field-name">
+                        <label>Tên cột</label>
+                        <input
+                          className="form-input"
+                          value={draft.name}
+                          onChange={(event) => updateWorkboardColumnDraft(index, { name: event.target.value })}
+                          placeholder="Tên hiển thị..."
+                        />
+                      </div>
+                      <div className="wbcfg-field wbcfg-field-color">
+                        <label>Màu</label>
+                        <div className="wbcfg-color-wrapper">
+                          <input
+                            type="color"
+                            value={draft.color}
+                            onChange={(event) => updateWorkboardColumnDraft(index, { color: event.target.value })}
+                          />
+                        </div>
+                      </div>
+                      <div className="wbcfg-field wbcfg-field-type">
+                        <label>Nhóm trạng thái</label>
+                        <select
+                          className="form-select"
+                          value={draft.type}
+                          onChange={(event) => updateWorkboardColumnDraft(index, { type: event.target.value as WorkboardColumnType })}
+                        >
+                          {WORKBOARD_COLUMN_TYPE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="wbcfg-field wbcfg-field-flags">
+                        <label className={`wbcfg-pill${draft.isDefault ? " active" : ""}`}>
+                          <input
+                            type="checkbox"
+                            checked={draft.isDefault}
+                            onChange={(event) => updateWorkboardColumnDraft(index, { isDefault: event.target.checked })}
+                          />
+                          Mặc định
+                        </label>
+                        <label className={`wbcfg-pill${draft.isDone ? " active" : ""}`}>
+                          <input
+                            type="checkbox"
+                            checked={draft.isDone}
+                            onChange={(event) => updateWorkboardColumnDraft(index, { isDone: event.target.checked, type: event.target.checked ? "DONE" : draft.type })}
+                          />
+                          Done
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button className="wbcfg-add-btn" type="button" onClick={addWorkboardColumnDraft}>
+                <Plus size={15} /> Thêm cột mới
+              </button>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" type="button" onClick={() => setIsWorkboardConfigOpen(false)} disabled={isSavingWorkboardColumns}>
+                Hủy
+              </button>
+              <button className="btn-primary" type="button" onClick={() => void handleSaveWorkboardColumns()} disabled={isSavingWorkboardColumns}>
+                {isSavingWorkboardColumns ? <><Loader2 className="spin-icon" size={15} /> Đang lưu...</> : <><CheckCircle2 size={15} /> Lưu board</>}
+              </button>
+            </div>
+
+            {/* Inline Delete Confirmation Overlay */}
+            {pendingDeleteColumnIndex !== null && (
+              <div className="wbcfg-confirm-overlay">
+                <div className="wbcfg-confirm-card">
+                  <div className="wbcfg-confirm-icon">
+                    <Trash2 size={22} />
+                  </div>
+                  <h4>Xóa cột "{workboardColumnDrafts[pendingDeleteColumnIndex]?.name || "Cột mới"}"?</h4>
+                  <p>Cột này sẽ bị xóa khỏi board. Các ticket trong cột cần được di chuyển trước khi lưu.</p>
+                  <div className="wbcfg-confirm-actions">
+                    <button className="btn-secondary" type="button" onClick={cancelRemoveWorkboardColumn}>
+                      Giữ lại
+                    </button>
+                    <button className="wbcfg-confirm-delete-btn" type="button" onClick={confirmRemoveWorkboardColumn}>
+                      <Trash2 size={14} /> Xóa cột
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {isWorkItemModalOpen && workItemDraft && (
         <div className="modal-backdrop">
           <div className="modal-content workitem-modal-content">
@@ -6653,11 +7069,18 @@ function App() {
                   <label><FolderKanban size={13} /> Trạng thái</label>
                   <select
                     className="form-select"
-                    value={workItemDraft.status}
-                    onChange={(event) => setWorkItemDraft({ ...workItemDraft, status: event.target.value as WorkItemStatus })}
+                    value={workItemDraft.columnId}
+                    onChange={(event) => {
+                      const column = selectedWorkboardColumns.find((entry) => entry.id === event.target.value);
+                      setWorkItemDraft({
+                        ...workItemDraft,
+                        columnId: event.target.value,
+                        status: statusForWorkboardColumn(column)
+                      });
+                    }}
                   >
-                    {WORKBOARD_COLUMNS.map((column) => (
-                      <option key={column.id} value={column.id}>{column.label}</option>
+                    {selectedWorkboardColumns.map((column) => (
+                      <option key={column.id} value={column.id}>{column.name}</option>
                     ))}
                   </select>
                 </div>

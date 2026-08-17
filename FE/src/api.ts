@@ -19,6 +19,8 @@ import type {
   WorkItemComment,
   WorkItemPriority,
   WorkItemStatus,
+  WorkboardColumn,
+  WorkboardColumnType,
   WorkItemType
 } from "./types";
 import { getAccessToken, refreshSession } from "./authApi";
@@ -393,12 +395,59 @@ export async function fetchProjectMembers(projectId: string) {
   return apiFetch<ProjectMemberOption[]>(`/projects/${projectId}/members`);
 }
 
+export async function fetchWorkboardColumns(projectId: string) {
+  return apiFetch<WorkboardColumn[]>(`/projects/${projectId}/workboard-columns`);
+}
+
+export async function createWorkboardColumn(projectId: string, payload: {
+  name: string;
+  key?: string;
+  color?: string;
+  type?: WorkboardColumnType;
+  position?: number;
+  isDefault?: boolean;
+  isDone?: boolean;
+}) {
+  return apiFetch<WorkboardColumn>(`/projects/${projectId}/workboard-columns`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateWorkboardColumn(projectId: string, columnId: string, payload: Partial<{
+  name: string;
+  color: string;
+  type: WorkboardColumnType;
+  position: number;
+  isDefault: boolean;
+  isDone: boolean;
+}>) {
+  return apiFetch<WorkboardColumn>(`/projects/${projectId}/workboard-columns/${columnId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteWorkboardColumn(projectId: string, columnId: string) {
+  return apiFetch<{ ok: boolean }>(`/projects/${projectId}/workboard-columns/${columnId}`, {
+    method: "DELETE"
+  });
+}
+
+export async function reorderWorkboardColumns(projectId: string, columnIds: string[]) {
+  return apiFetch<WorkboardColumn[]>(`/projects/${projectId}/workboard-columns/reorder`, {
+    method: "PATCH",
+    body: JSON.stringify({ columnIds })
+  });
+}
+
 export async function createWorkItem(payload: {
   projectId: string;
   documentId?: string;
   sourceCommentId?: string;
   type?: WorkItemType;
   status?: WorkItemStatus;
+  columnId?: string;
   priority?: WorkItemPriority;
   title: string;
   description?: string;
@@ -420,6 +469,7 @@ export async function createWorkItem(payload: {
 export async function createWorkItemFromComment(commentId: string, payload: {
   type?: WorkItemType;
   status?: WorkItemStatus;
+  columnId?: string;
   priority?: WorkItemPriority;
   title: string;
   description?: string;
@@ -443,6 +493,7 @@ export async function updateWorkItem(workItemId: string, payload: Partial<{
   sourceCommentId: string | null;
   type: WorkItemType;
   status: WorkItemStatus;
+  columnId: string | null;
   priority: WorkItemPriority;
   title: string;
   description: string | null;

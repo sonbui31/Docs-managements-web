@@ -21,6 +21,10 @@ export class UpdateWorkItemDto {
   status?: WorkItemStatus;
 
   @IsOptional()
+  @IsString()
+  columnId?: string | null;
+
+  @IsOptional()
   @IsEnum(WorkItemPriority)
   priority?: WorkItemPriority;
 

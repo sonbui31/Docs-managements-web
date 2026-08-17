@@ -5,6 +5,7 @@ import { CollaborationService } from "../collaboration/collaboration.service";
 import { MediaService } from "../media/media.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { WorkboardColumnsService } from "../workboard-columns/workboard-columns.service";
 import { CreateWorkItemDto } from "./dto/create-work-item.dto";
 import { CreateWorkItemCommentDto } from "./dto/create-work-item-comment.dto";
 import { UpdateWorkItemDto } from "./dto/update-work-item.dto";
@@ -16,7 +17,8 @@ export class WorkItemsService {
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionsService,
     private readonly collaboration: CollaborationService,
-    private readonly media: MediaService
+    private readonly media: MediaService,
+    private readonly workboardColumns: WorkboardColumnsService
   ) {}
 
   async findByProject(projectId: string, user: AuthenticatedUser) {
@@ -48,6 +50,7 @@ export class WorkItemsService {
 
     const assigneeUsers = await this.resolveAssignableUsers(dto.projectId, this.workItemAssigneeIds(dto), user);
     const labels = await this.ensureLabels(dto.projectId, dto.labelNames ?? []);
+    const column = await this.workboardColumns.resolveColumnForWorkItem(dto.projectId, dto.columnId, dto.status);
 
     const item = await this.prisma.workItem.create({
       data: {
@@ -55,7 +58,8 @@ export class WorkItemsService {
         documentId: dto.documentId || null,
         sourceCommentId: dto.sourceCommentId || null,
         type: dto.type ?? WorkItemType.TASK,
-        status: dto.status ?? WorkItemStatus.BACKLOG,
+        status: this.workboardColumns.statusForColumn(column),
+        columnId: column.id,
         priority: dto.priority ?? WorkItemPriority.MEDIUM,
         title: dto.title.trim(),
         description: dto.description?.trim() || null,
@@ -138,7 +142,8 @@ export class WorkItemsService {
         assignees: { include: { user: { select: { id: true, name: true, email: true } } } },
         checklistItems: { orderBy: { position: "asc" } },
         labels: { include: { label: true } },
-        blockingLinks: true
+        blockingLinks: true,
+        column: true
       }
     });
     if (!existing) throw new NotFoundException("Work item not found");
@@ -164,12 +169,20 @@ export class WorkItemsService {
       ? await this.ensureLabels(existing.projectId, dto.labelNames ?? [])
       : null;
     const changes = this.workItemChanges(existing, dto, assigneeUsers, labels);
+    const targetColumn = dto.columnId !== undefined || dto.status !== undefined
+      ? await this.workboardColumns.resolveColumnForWorkItem(existing.projectId, dto.columnId, dto.status ?? existing.status)
+      : null;
 
     const data: Prisma.WorkItemUpdateInput = {};
     if (dto.documentId !== undefined) data.document = dto.documentId ? { connect: { id: dto.documentId } } : { disconnect: true };
     if (dto.sourceCommentId !== undefined) data.sourceComment = dto.sourceCommentId ? { connect: { id: dto.sourceCommentId } } : { disconnect: true };
     if (dto.type !== undefined) data.type = dto.type;
-    if (dto.status !== undefined) data.status = dto.status;
+    if (targetColumn) {
+      data.column = { connect: { id: targetColumn.id } };
+      data.status = this.workboardColumns.statusForColumn(targetColumn);
+    } else if (dto.status !== undefined) {
+      data.status = dto.status;
+    }
     if (dto.priority !== undefined) data.priority = dto.priority;
     if (dto.title !== undefined) data.title = dto.title.trim();
     if (dto.description !== undefined) data.description = dto.description?.trim() || null;
@@ -355,6 +368,7 @@ export class WorkItemsService {
   private includeRelations() {
     return {
       document: { select: { id: true, title: true, type: true, currentVersion: true } },
+      column: true,
       sourceComment: { select: { id: true, blockId: true, selectedText: true, content: true, status: true } },
       assignee: { select: { id: true, name: true, email: true } },
       assignees: {
@@ -523,6 +537,7 @@ export class WorkItemsService {
       checklistItems: Array<{ title: string; done: boolean }>;
       labels: Array<{ label: { name: string } }>;
       blockingLinks: Array<{ blockerItemId: string }>;
+      column?: { id: string; name: string } | null;
     },
     dto: UpdateWorkItemDto,
     assignees: Array<{ id: string; name: string; email: string }> | null,
@@ -531,6 +546,9 @@ export class WorkItemsService {
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     if (dto.title !== undefined && dto.title.trim() !== existing.title) changes.title = { from: existing.title, to: dto.title.trim() };
     if (dto.status !== undefined && dto.status !== existing.status) changes.status = { from: existing.status, to: dto.status };
+    if (dto.columnId !== undefined && dto.columnId !== existing.column?.id) {
+      changes.column = { from: existing.column?.name ?? existing.status, to: dto.columnId };
+    }
     if (dto.priority !== undefined && dto.priority !== existing.priority) changes.priority = { from: existing.priority, to: dto.priority };
     if (dto.dueDate !== undefined) {
       const from = existing.dueDate ? existing.dueDate.toISOString().slice(0, 10) : null;
@@ -643,7 +661,7 @@ export class WorkItemsService {
   }
 
   private isOnlyStatusChange(dto: UpdateWorkItemDto) {
-    return dto.status !== undefined &&
+    return (dto.status !== undefined || dto.columnId !== undefined) &&
       dto.documentId === undefined &&
       dto.sourceCommentId === undefined &&
       dto.type === undefined &&

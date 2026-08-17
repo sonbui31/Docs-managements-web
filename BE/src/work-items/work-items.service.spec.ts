@@ -80,8 +80,17 @@ function serviceHarness() {
   const media = {
     upload: jest.fn()
   };
-  const service = new WorkItemsService(prisma as any, permissions as any, collaboration as any, media as any);
-  return { service, prisma, permissions, collaboration, media };
+  const workboardColumns = {
+    resolveColumnForWorkItem: jest.fn().mockResolvedValue({
+      id: "column-done",
+      key: "DONE",
+      type: "DONE",
+      isDone: true
+    }),
+    statusForColumn: jest.fn().mockReturnValue("DONE")
+  };
+  const service = new WorkItemsService(prisma as any, permissions as any, collaboration as any, media as any, workboardColumns as any);
+  return { service, prisma, permissions, collaboration, media, workboardColumns };
 }
 
 describe("WorkItemsService permissions", () => {

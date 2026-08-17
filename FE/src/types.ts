@@ -56,6 +56,33 @@ export type CommentThread = {
 export type WorkItemType = "TASK" | "BUG" | "REVIEW" | "CHANGE_REQUEST" | "QUESTION";
 export type WorkItemStatus = "BACKLOG" | "TODO" | "IN_PROGRESS" | "REVIEW" | "BLOCKED" | "DONE";
 export type WorkItemPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type WorkboardColumnType =
+  | "INTAKE"
+  | "READY"
+  | "OPEN"
+  | "IN_PROGRESS"
+  | "REVIEW"
+  | "QA"
+  | "WAITING"
+  | "BLOCKED"
+  | "REWORK"
+  | "APPROVED"
+  | "DONE"
+  | "ARCHIVED";
+
+export type WorkboardColumn = {
+  id: string;
+  projectId: string;
+  key: string;
+  name: string;
+  color: string;
+  type: WorkboardColumnType;
+  position: number;
+  isDefault: boolean;
+  isDone: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
 
 export type ProjectMemberOption = {
   id: string;
@@ -73,6 +100,8 @@ export type WorkItem = {
   sourceCommentId?: string | null;
   type: WorkItemType;
   status: WorkItemStatus;
+  columnId?: string | null;
+  column?: WorkboardColumn | null;
   priority: WorkItemPriority;
   title: string;
   description?: string | null;
