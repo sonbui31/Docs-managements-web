@@ -456,6 +456,179 @@ function workItemAssigneeLabel(item: WorkItem) {
   return names.length ? names.join(", ") : "Chưa giao";
 }
 
+function CustomProjectSelect({
+  projects,
+  selectedProjectId,
+  onSelectProject
+}: {
+  projects: Project[];
+  selectedProjectId: string;
+  onSelectProject: (projectId: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const selectedProject = useMemo(
+    () => projects.find((p) => p.id === selectedProjectId) ?? projects[0],
+    [projects, selectedProjectId]
+  );
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const filteredProjects = useMemo(() => {
+    if (!searchQuery.trim()) return projects;
+    const q = searchQuery.toLowerCase().trim();
+    return projects.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)
+    );
+  }, [projects, searchQuery]);
+
+  return (
+    <div className={`custom-project-select-container ${isOpen ? "is-open" : ""}`} ref={dropdownRef}>
+      <button
+        type="button"
+        className="custom-select-trigger"
+        onClick={() => setIsOpen((prev) => !prev)}
+        disabled={projects.length === 0}
+      >
+        <div className="select-trigger-content">
+          <FolderKanban size={15} className="trigger-icon" />
+          {selectedProject ? (
+            <div className="trigger-project-info">
+              <span className="trigger-code-chip">{selectedProject.code}</span>
+              <span className="trigger-name">{selectedProject.name}</span>
+            </div>
+          ) : (
+            <span className="trigger-placeholder">Chọn dự án...</span>
+          )}
+        </div>
+        <ChevronDown size={14} className={`trigger-arrow ${isOpen ? "active" : ""}`} />
+      </button>
+
+      {isOpen && (
+        <div className="custom-select-dropdown-menu">
+          {projects.length > 3 && (
+            <div className="dropdown-search-header">
+              <Search size={13} />
+              <input
+                type="text"
+                placeholder="Tìm dự án..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                autoFocus
+              />
+            </div>
+          )}
+
+          <div className="dropdown-options-container">
+            {filteredProjects.length === 0 ? (
+              <div className="dropdown-empty-state">Không có dự án phù hợp</div>
+            ) : (
+              filteredProjects.map((p) => {
+                const isSelected = p.id === selectedProjectId;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`dropdown-option-row ${isSelected ? "selected" : ""}`}
+                    onClick={() => {
+                      onSelectProject(p.id);
+                      setIsOpen(false);
+                      setSearchQuery("");
+                    }}
+                  >
+                    <span className="option-code-pill">{p.code}</span>
+                    <span className="option-title-text">{p.name}</span>
+                    {isSelected && <CheckCheck size={14} className="option-selected-icon" />}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CustomFormSelect<T extends string>({
+  value,
+  onChange,
+  options,
+  placeholder,
+  className
+}: {
+  value: T | undefined | null;
+  onChange: (val: T) => void;
+  options: Array<{ value: T; label: string }>;
+  placeholder?: string;
+  className?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const selectedOption = useMemo(
+    () => options.find((o) => o.value === value) ?? (placeholder ? null : options[0]),
+    [options, value, placeholder]
+  );
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  return (
+    <div className={`custom-form-select-wrapper ${className ?? ""} ${isOpen ? "is-open" : ""}`} ref={dropdownRef}>
+      <button
+        type="button"
+        className="form-select-trigger"
+        onClick={() => setIsOpen((prev) => !prev)}
+      >
+        <span className="trigger-label-text">
+          {selectedOption ? selectedOption.label : (placeholder || "Chọn...")}
+        </span>
+        <ChevronDown size={14} className={`trigger-arrow-icon ${isOpen ? "rotate" : ""}`} />
+      </button>
+
+      {isOpen && (
+        <div className="custom-form-select-menu">
+          {options.map((opt) => {
+            const isSelected = opt.value === value;
+            return (
+              <button
+                key={String(opt.value)}
+                type="button"
+                className={`custom-select-option ${isSelected ? "selected" : ""}`}
+                onClick={() => {
+                  onChange(opt.value);
+                  setIsOpen(false);
+                }}
+              >
+                <span>{opt.label}</span>
+                {isSelected && <CheckCheck size={14} className="option-check-mark" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function parseChecklistText(value: string) {
   return value
     .split("\n")
@@ -4464,13 +4637,13 @@ function App() {
             <button
               className={activeTabNav === "projects" ? "nav-item active" : "nav-item"}
               type="button"
-              title={`Dự án (${isLoadingBackend ? "..." : projectsList.length})`}
-              data-tooltip={`Dự án (${projectsList.length})`}
+              title="Dự án"
+              data-tooltip="Dự án"
               onClick={() => setActiveTabNav("projects")}
             >
               <div className="nav-item-content">
                 <FolderKanban size={17} />
-                <span>Dự án ({isLoadingBackend ? "..." : projectsList.length})</span>
+                <span>Dự án</span>
               </div>
             </button>
 
@@ -4666,26 +4839,16 @@ function App() {
 
           {activeTabNav === "review" && (
             <div className="topbar-actions">
-              <label className="workboard-project-switcher">
-                <FolderKanban size={14} />
-                <select
-                  value={selectedProject.id}
-                  onChange={(event) => {
-                    const projectId = event.target.value;
-                    setSelectedProjectId(projectId);
-                    const firstDoc = documentsList.find((doc) => doc.projectId === projectId);
-                    setSelectedDocumentId(firstDoc?.id ?? "empty-document");
-                    void loadProjectWorkItems(projectId);
-                  }}
-                  disabled={projectsList.length === 0}
-                >
-                  {projectsList.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.code} - {project.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <CustomProjectSelect
+                projects={projectsList}
+                selectedProjectId={selectedProject.id}
+                onSelectProject={(projectId) => {
+                  setSelectedProjectId(projectId);
+                  const firstDoc = documentsList.find((doc) => doc.projectId === projectId);
+                  setSelectedDocumentId(firstDoc?.id ?? "empty-document");
+                  void loadProjectWorkItems(projectId);
+                }}
+              />
               <button
                 className="exec-action secondary"
                 type="button"
@@ -5082,56 +5245,81 @@ function App() {
           </section>
         ) : activeTabNav === "projects" ? (
           <section className="project-hub-page">
-            {/* Executive Stats Strip */}
-            <div className="project-hub-stats-strip">
-              <div className="hub-stat-card">
-                <div className="hub-stat-icon indigo">
-                  <FolderKanban size={20} />
+            {/* Executive Hero Stats Strip */}
+            <div className="project-hub-hero">
+              <div className="hub-hero-card hero-primary">
+                <div className="hub-hero-icon">
+                  <FolderKanban size={24} />
                 </div>
-                <div className="hub-stat-info">
-                  <strong>{projectsList.length}</strong>
-                  <span>Tổng số dự án</span>
-                </div>
-              </div>
-              <div className="hub-stat-card">
-                <div className="hub-stat-icon emerald">
-                  <FileText size={20} />
-                </div>
-                <div className="hub-stat-info">
-                  <strong>{documentsList.length}</strong>
-                  <span>Tài liệu hệ thống</span>
+                <div className="hub-hero-data">
+                  <span className="hub-hero-label">Tổng số dự án</span>
+                  <div className="hub-hero-value-wrap">
+                    <strong className="hub-hero-value">{projectsList.length}</strong>
+                    <span className="hub-hero-sub">Đang vận hành</span>
+                  </div>
                 </div>
               </div>
-              <div className="hub-stat-card">
-                <div className="hub-stat-icon amber">
-                  <MessageSquareText size={20} />
+
+              <div className="hub-hero-card hero-emerald">
+                <div className="hub-hero-icon">
+                  <FileText size={24} />
                 </div>
-                <div className="hub-stat-info">
-                  <strong>{projectsList.reduce((acc, p) => acc + getProjectOpenCommentsCount(p.id), 0)}</strong>
-                  <span>Trao đổi cần xử lý</span>
+                <div className="hub-hero-data">
+                  <span className="hub-hero-label">Tài liệu hệ thống</span>
+                  <div className="hub-hero-value-wrap">
+                    <strong className="hub-hero-value">{documentsList.length}</strong>
+                    <span className="hub-hero-sub">
+                      {documentsList.filter((d) => d.status === "Triển khai").length} triển khai · {documentsList.filter((d) => d.status === "Draft").length} draft
+                    </span>
+                  </div>
                 </div>
               </div>
-              <div className="hub-stat-card">
-                <div className="hub-stat-icon violet">
-                  <TrendingUp size={20} />
+
+              <div className="hub-hero-card hero-amber">
+                <div className="hub-hero-icon">
+                  <MessageSquareText size={24} />
                 </div>
-                <div className="hub-stat-info">
-                  <strong>
-                    {projectsList.length > 0
-                      ? Math.round(projectsList.reduce((acc, p) => acc + (p.progress ?? 0), 0) / projectsList.length)
-                      : 0}%
-                  </strong>
-                  <span>Tiến độ trung bình</span>
+                <div className="hub-hero-data">
+                  <span className="hub-hero-label">Trao đổi cần xử lý</span>
+                  <div className="hub-hero-value-wrap">
+                    <strong className="hub-hero-value">
+                      {projectsList.reduce((acc, p) => acc + getProjectOpenCommentsCount(p.id), 0)}
+                    </strong>
+                    <span className="hub-hero-sub">Comment đang mở</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="hub-hero-card hero-indigo">
+                <div className="hub-hero-icon">
+                  <Kanban size={24} />
+                </div>
+                <div className="hub-hero-data">
+                  <span className="hub-hero-label">Workboard Tickets</span>
+                  <div className="hub-hero-value-wrap">
+                    <strong className="hub-hero-value">{dashboardWorkItems.length}</strong>
+                    <span className="hub-hero-sub">
+                      {dashboardWorkItems.filter((i) => i.status === "DONE").length} đã hoàn thành
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Bento Grid Projects */}
+            <div className="project-hub-section-header">
+              <div className="section-title-wrap">
+                <h3>Danh sách dự án</h3>
+                <span className="project-count-badge">{filteredProjectsHub.length} dự án</span>
+              </div>
+              <p className="section-subtitle">Không gian làm việc & quản lý tài liệu chi tiết cho từng dự án</p>
+            </div>
+
             <div className="project-hub-grid">
               {filteredProjectsHub.length === 0 ? (
                 <div className="project-hub-empty">
                   <div className="project-hub-empty-icon">
-                    <FolderKanban size={32} />
+                    <FolderKanban size={36} />
                   </div>
                   <h4>Không tìm thấy dự án phù hợp</h4>
                   <p>Thử điều chỉnh từ khóa tìm kiếm hoặc tạo một không gian dự án mới cho team.</p>
@@ -5140,7 +5328,7 @@ function App() {
                     type="button"
                     onClick={() => setIsCreateProjectModalOpen(true)}
                   >
-                    <FolderPlus size={15} /> Tạo dự án mới
+                    <FolderPlus size={16} /> Tạo dự án mới
                   </button>
                 </div>
               ) : (
@@ -5151,10 +5339,13 @@ function App() {
                   const deployedDocsCount = projectDocs.filter((d) => d.status === "Triển khai").length;
                   const openCommentsCount = getProjectOpenCommentsCount(project.id);
                   const isSelected = selectedProjectId === project.id;
+                  const progressPct = docCount > 0 ? Math.round((deployedDocsCount / docCount) * 100) : 0;
+                  const members = projectMembersByProject[project.id] ?? [];
+                  const projectWorkItems = dashboardWorkItems.filter((item) => item.projectId === project.id);
 
                   return (
                     <div
-                      className={`project-hub-card ${isSelected ? "selected" : ""}`}
+                      className="project-hub-card"
                       key={project.id}
                     >
                       <div className="project-hub-card-top">
@@ -5191,6 +5382,7 @@ function App() {
                         </p>
                       </div>
 
+
                       <div className="project-hub-card-metrics">
                         <div className="hub-metric-item" title="Số tài liệu Draft">
                           <PenLine size={13} className="text-amber" />
@@ -5207,12 +5399,67 @@ function App() {
                       </div>
 
                       <div className="project-hub-card-footer">
+                        {(() => {
+                          const allMembers = members.length > 0 ? members : [{ id: currentUser.id, name: currentUser.name, email: currentUser.email, role: currentUser.role }];
+                          const tooltipText = allMembers.map((m) => `${m.name} (${m.projectRole || m.role || "Thành viên"})`).join("\n");
+
+                          return (
+                            <div className="project-members-stack">
+                              <div className="members-stack-avatars" title={tooltipText}>
+                                {allMembers.slice(0, 3).map((m, idx) => (
+                                  <span key={m.id || idx} className="member-avatar-chip">
+                                    {m.name.charAt(0).toUpperCase()}
+                                  </span>
+                                ))}
+                                {allMembers.length > 3 && (
+                                  <span className="member-avatar-chip more">+{allMembers.length - 3}</span>
+                                )}
+
+                                {/* Hover Tooltip Card */}
+                                <div className="members-tooltip-popup">
+                                  <div className="tooltip-header">
+                                    <Users size={12} />
+                                    <span>Người có quyền ({allMembers.length})</span>
+                                  </div>
+                                  <div className="tooltip-member-list">
+                                    {allMembers.map((m, idx) => {
+                                      const roleStr = m.projectRole || m.role;
+                                      const roleLabel = roleStr === "MANAGER" || roleStr === "ADMIN"
+                                        ? "Quản trị viên (Manager)"
+                                        : roleStr === "EDITOR"
+                                          ? "Chỉnh sửa (Editor)"
+                                          : roleStr === "REVIEWER"
+                                            ? "Xem & Duyệt (Reviewer)"
+                                            : roleStr === "VIEWER"
+                                              ? "Chỉ xem (Viewer)"
+                                              : "Thành viên";
+                                      return (
+                                        <div className="tooltip-member-item" key={m.id || idx}>
+                                          <span className="mini-avatar">{m.name.charAt(0).toUpperCase()}</span>
+                                          <div className="member-text">
+                                            <strong>{m.name}</strong>
+                                            <small>{roleLabel}</small>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <span className="project-workitem-count">
+                                <Kanban size={12} /> {projectWorkItems.length} tickets
+                              </span>
+                            </div>
+                          );
+                        })()}
+
                         <button
                           type="button"
-                          className="btn-secondary full-w"
+                          className="btn-primary full-w hub-open-btn"
                           onClick={() => handleOpenProjectWorkspace(project.id)}
                         >
-                          <span>Truy cập không gian dự án</span>
+                          <span>Truy cập dự án</span>
                           <ExternalLink size={14} />
                         </button>
                       </div>
@@ -5506,21 +5753,11 @@ function App() {
                 </div>
 
                 <div className="library-project-bar">
-                  <label className="library-project-select">
-                    <FolderKanban size={14} />
-                    <select
-                      value={selectedProjectId}
-                      onChange={(e) => handleSelectProject(e.target.value)}
-                      disabled={projectsList.length === 0}
-                    >
-                      {projectsList.map((project) => (
-                        <option key={project.id} value={project.id}>
-                          {project.code} - {project.name}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown size={13} className="select-arrow" />
-                  </label>
+                  <CustomProjectSelect
+                    projects={projectsList}
+                    selectedProjectId={selectedProjectId}
+                    onSelectProject={handleSelectProject}
+                  />
                 </div>
 
                 <div className="panel-mode-tabs">
@@ -7351,48 +7588,45 @@ function App() {
               <div className="workitem-form-grid">
                 <div className="form-group">
                   <label><Tags size={13} /> Loại item</label>
-                  <select
-                    className="form-select"
+                  <CustomFormSelect
                     value={workItemDraft.type}
-                    onChange={(event) => setWorkItemDraft({ ...workItemDraft, type: event.target.value as WorkItemType })}
-                  >
-                    {(["TASK", "BUG", "REVIEW", "CHANGE_REQUEST", "QUESTION"] as const).map((type) => (
-                      <option key={type} value={type}>{WORK_ITEM_TYPE_LABEL[type]}</option>
-                    ))}
-                  </select>
+                    onChange={(val) => setWorkItemDraft({ ...workItemDraft, type: val })}
+                    options={(["TASK", "BUG", "REVIEW", "CHANGE_REQUEST", "QUESTION"] as const).map((type) => ({
+                      value: type,
+                      label: WORK_ITEM_TYPE_LABEL[type]
+                    }))}
+                  />
                 </div>
 
                 <div className="form-group">
                   <label><FolderKanban size={13} /> Trạng thái</label>
-                  <select
-                    className="form-select"
+                  <CustomFormSelect
                     value={workItemDraft.columnId}
-                    onChange={(event) => {
-                      const column = selectedWorkboardColumns.find((entry) => entry.id === event.target.value);
+                    onChange={(colId) => {
+                      const column = selectedWorkboardColumns.find((entry) => entry.id === colId);
                       setWorkItemDraft({
                         ...workItemDraft,
-                        columnId: event.target.value,
+                        columnId: colId,
                         status: statusForWorkboardColumn(column)
                       });
                     }}
-                  >
-                    {selectedWorkboardColumns.map((column) => (
-                      <option key={column.id} value={column.id}>{column.name}</option>
-                    ))}
-                  </select>
+                    options={selectedWorkboardColumns.map((column) => ({
+                      value: column.id,
+                      label: column.name
+                    }))}
+                  />
                 </div>
 
                 <div className="form-group">
                   <label><AlertTriangle size={13} /> Priority</label>
-                  <select
-                    className="form-select"
+                  <CustomFormSelect
                     value={workItemDraft.priority}
-                    onChange={(event) => setWorkItemDraft({ ...workItemDraft, priority: event.target.value as WorkItemPriority })}
-                  >
-                    {(["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const).map((priority) => (
-                      <option key={priority} value={priority}>{WORK_ITEM_PRIORITY_LABEL[priority]}</option>
-                    ))}
-                  </select>
+                    onChange={(pri) => setWorkItemDraft({ ...workItemDraft, priority: pri })}
+                    options={(["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const).map((priority) => ({
+                      value: priority,
+                      label: WORK_ITEM_PRIORITY_LABEL[priority]
+                    }))}
+                  />
                 </div>
 
                 <div className="form-group">
@@ -7407,16 +7641,17 @@ function App() {
 
                 <div className="form-group">
                   <label><FileText size={13} /> Tài liệu liên quan</label>
-                  <select
-                    className="form-select"
-                    value={workItemDraft.documentId}
-                    onChange={(event) => setWorkItemDraft({ ...workItemDraft, documentId: event.target.value })}
-                  >
-                    <option value="">Không gắn tài liệu</option>
-                    {projectDocuments.map((document) => (
-                      <option key={document.id} value={document.id}>{document.title}</option>
-                    ))}
-                  </select>
+                  <CustomFormSelect
+                    value={workItemDraft.documentId ?? ""}
+                    onChange={(docId) => setWorkItemDraft({ ...workItemDraft, documentId: docId })}
+                    options={[
+                      { value: "", label: "Không gắn tài liệu" },
+                      ...projectDocuments.map((doc) => ({
+                        value: doc.id,
+                        label: doc.title
+                      }))
+                    ]}
+                  />
                 </div>
 
                 <div className="form-group">

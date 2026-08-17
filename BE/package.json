@@ -5,8 +5,8 @@
   "scripts": {
     "build": "nest build",
     "start": "nest start",
-    "start:dev": "NODE_ENV=development nest start --watch",
-    "start:prod": "NODE_ENV=production node dist/main.js",
+    "start:dev": "npx cross-env NODE_ENV=development nest start --watch",
+    "start:prod": "npx cross-env NODE_ENV=production node dist/main.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "lint": "eslint \"src/**/*.ts\"",
