@@ -1,5 +1,5 @@
 import { WorkItemPriority, WorkItemStatus, WorkItemType } from "@prisma/client";
-import { IsArray, IsDateString, IsEnum, IsOptional, IsString, MaxLength, ValidateNested } from "class-validator";
+import { IsArray, IsBoolean, IsDateString, IsEnum, IsOptional, IsString, MaxLength, ValidateNested } from "class-validator";
 import { Type } from "class-transformer";
 
 export class WorkItemAttachmentDto {
@@ -16,6 +16,16 @@ export class WorkItemAttachmentDto {
   @IsString()
   @MaxLength(80)
   mimeType?: string;
+}
+
+export class WorkItemChecklistItemDto {
+  @IsString()
+  @MaxLength(240)
+  title: string;
+
+  @IsOptional()
+  @IsBoolean()
+  done?: boolean;
 }
 
 export class CreateWorkItemDto {
@@ -62,6 +72,11 @@ export class CreateWorkItemDto {
   assigneeId?: string;
 
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  assigneeIds?: string[];
+
+  @IsOptional()
   @IsString()
   @MaxLength(120)
   assigneeName?: string;
@@ -69,4 +84,20 @@ export class CreateWorkItemDto {
   @IsOptional()
   @IsDateString()
   dueDate?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => WorkItemChecklistItemDto)
+  checklistItems?: WorkItemChecklistItemDto[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  labelNames?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  dependencyIds?: string[];
 }

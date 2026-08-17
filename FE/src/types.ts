@@ -83,6 +83,38 @@ export type WorkItem = {
   }> | null;
   assigneeId?: string | null;
   assigneeName?: string | null;
+  assignees?: Array<{
+    id: string;
+    userId: string;
+    user: {
+      id: string;
+      name: string;
+      email: string;
+    };
+  }>;
+  checklistItems?: Array<{
+    id: string;
+    title: string;
+    done: boolean;
+    position: number;
+  }>;
+  labels?: Array<{
+    id: string;
+    label: {
+      id: string;
+      name: string;
+      color?: string | null;
+    };
+  }>;
+  blockingLinks?: Array<{
+    id: string;
+    blockerItemId: string;
+    blockerItem: {
+      id: string;
+      title: string;
+      status: WorkItemStatus;
+    };
+  }>;
   dueDate?: string | null;
   createdByName?: string | null;
   createdByEmail?: string | null;

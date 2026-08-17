@@ -43,6 +43,9 @@ Workboard:
 - Only ticket owner may edit ticket content, delete ticket, or upload attachments.
 - Work item comments/replies require work item `REVIEWER` or above.
 - Only comment/reply owner may edit/delete their own comment/reply.
+- Multiple assignees must be active members of the same project.
+- Checklist, labels, dependencies, attachments, title, priority, due date, and assignee changes are content edits and therefore owner-only.
+- Dependencies must point to tickets in the same project.
 
 Users/share:
 - User management is admin/manager-only.
@@ -62,8 +65,17 @@ Covered:
 - `ProjectsService`: project member list requires project-level permission and hides inactive users.
 - `WorkItemsService`: non-owner can status-drag only, cannot edit content/comment, unpermitted user cannot status-drag, owner cannot delete a comment with another user's reply.
 
+## Workboard Foundation Added
+
+- `WorkItemAssignee`: normalized multiple assignee table.
+- `WorkItemChecklistItem`: subtask/checklist foundation.
+- `WorkItemLabel` and `WorkItemLabelLink`: project-scoped ticket labels.
+- `WorkItemDependency`: dependency graph foundation for blocked-by relationships.
+- Work item update audit metadata now contains field-level `changes`.
+- Assignment writes create `WorkItem` notifications for newly assigned users.
+
 ## Known Follow-Ups
 
 - Add controller/e2e tests around JWT-protected routes once a test database seed is available.
-- Add explicit assignee validation in Workboard when the data model supports multiple assignees.
 - Add tests for `UsersService` share-candidate and assignment batch paths.
+- Add dedicated UI for dependency management, calendar/timeline, workload-by-person board, and mention autocomplete.

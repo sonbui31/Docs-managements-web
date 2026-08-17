@@ -29,6 +29,7 @@ import {
   Kanban,
   Layers,
   LayoutDashboard,
+  Loader2,
   ListTree,
   LogOut,
   MessageSquarePlus,
@@ -59,7 +60,7 @@ import {
   Users,
   X
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
   createComment,
   createDocument,
@@ -384,8 +385,11 @@ type WorkItemDraft = {
   title: string;
   description: string;
   assigneeName: string;
+  assigneeIds: string[];
   dueDate: string;
   attachmentsText: string;
+  checklistText: string;
+  labelsText: string;
 };
 
 function splitAssigneeNames(value?: string | null) {
@@ -397,6 +401,48 @@ function splitAssigneeNames(value?: string | null) {
 
 function joinAssigneeNames(names: string[]) {
   return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean))).join(", ");
+}
+
+function workItemAssigneeNames(item: WorkItem) {
+  const names = item.assignees?.map((assignee) => assignee.user.name).filter(Boolean) ?? [];
+  return names.length ? names : splitAssigneeNames(item.assigneeName ?? item.assignee?.name ?? "");
+}
+
+function workItemAssigneeLabel(item: WorkItem) {
+  const names = workItemAssigneeNames(item);
+  return names.length ? names.join(", ") : "Chưa giao";
+}
+
+function parseChecklistText(value: string) {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const done = /^\[[xX]\]\s+/.test(line);
+      const title = line.replace(/^\[[ xX]\]\s+/, "").trim();
+      return { title, done };
+    })
+    .filter((item) => item.title);
+}
+
+function checklistToText(item: WorkItem) {
+  return (item.checklistItems ?? [])
+    .map((entry) => `${entry.done ? "[x]" : "[ ]"} ${entry.title}`)
+    .join("\n");
+}
+
+function parseLabelText(value: string) {
+  return Array.from(new Set(
+    value
+      .split(/[,\n]/)
+      .map((label) => label.trim())
+      .filter(Boolean)
+  ));
+}
+
+function workItemLabelNames(item: WorkItem) {
+  return item.labels?.map((entry) => entry.label.name).filter(Boolean) ?? [];
 }
 
 function App() {
@@ -486,15 +532,19 @@ function App() {
   const [dashboardWorkItems, setDashboardWorkItems] = useState<WorkItem[]>([]);
   const [isLoadingWorkItems, setIsLoadingWorkItems] = useState<boolean>(false);
   const [draggingWorkItemId, setDraggingWorkItemId] = useState<string | null>(null);
+  const pendingWorkItemMovesRef = useRef<Record<string, { status: WorkItemStatus; previousStatus: WorkItemStatus; token: number }>>({});
+  const workItemMoveTokenRef = useRef<number>(0);
   const [workboardSearchQuery, setWorkboardSearchQuery] = useState<string>("");
   const [workboardTypeFilter, setWorkboardTypeFilter] = useState<"ALL" | WorkItemType>("ALL");
   const [workboardPriorityFilter, setWorkboardPriorityFilter] = useState<"ALL" | WorkItemPriority>("ALL");
   const [workboardAssigneeFilter, setWorkboardAssigneeFilter] = useState<string>("ALL");
   const [workboardCreatorFilter, setWorkboardCreatorFilter] = useState<string>("ALL");
-  const [workboardSortBy, setWorkboardSortBy] = useState<"UPDATED_DESC" | "DUE_ASC" | "PRIORITY_DESC">("UPDATED_DESC");
+  const [workboardSortBy, setWorkboardSortBy] = useState<"BOARD_ORDER" | "UPDATED_DESC" | "DUE_ASC" | "PRIORITY_DESC">("BOARD_ORDER");
   const [isWorkItemModalOpen, setIsWorkItemModalOpen] = useState<boolean>(false);
   const [workItemDraft, setWorkItemDraft] = useState<WorkItemDraft | null>(null);
+  const [isSavingWorkItem, setIsSavingWorkItem] = useState<boolean>(false);
   const [isAssigneeMenuOpen, setIsAssigneeMenuOpen] = useState<boolean>(false);
+  const workItemAssigneeDropdownRef = useRef<HTMLDivElement>(null);
   const [viewingWorkItemId, setViewingWorkItemId] = useState<string | null>(null);
   const [workItemComments, setWorkItemComments] = useState<WorkItemComment[]>([]);
   const [workItemActivity, setWorkItemActivity] = useState<WorkItemActivity[]>([]);
@@ -503,6 +553,7 @@ function App() {
   const [workItemCommentText, setWorkItemCommentText] = useState<string>("");
   const [replyingWorkItemCommentId, setReplyingWorkItemCommentId] = useState<string | null>(null);
   const [workItemReplyText, setWorkItemReplyText] = useState<string>("");
+  const [activeWorkItemMentionTarget, setActiveWorkItemMentionTarget] = useState<"comment" | "reply" | null>(null);
   const [editingWorkItemCommentId, setEditingWorkItemCommentId] = useState<string | null>(null);
   const [editingWorkItemCommentText, setEditingWorkItemCommentText] = useState<string>("");
   const [isUploadingWorkItemAttachment, setIsUploadingWorkItemAttachment] = useState<boolean>(false);
@@ -744,7 +795,7 @@ function App() {
       const hydratedDocuments = (
         await Promise.all(backendProjects.map((project) => fetchDocumentsByProject(project.id)))
       ).flat();
-      const hydratedWorkItems = (
+      const hydratedWorkItems = applyPendingWorkItemMoves((
         await Promise.all(
           backendProjects.map((project) =>
             fetchProjectWorkItems(project.id).catch((error) => {
@@ -753,7 +804,7 @@ function App() {
             })
           )
         )
-      ).flat();
+      ).flat());
       const hydratedProjectMembers = Object.fromEntries(
         await Promise.all(
           backendProjects.map(async (project) => {
@@ -843,18 +894,80 @@ function App() {
     if (!projectId) return;
     setIsLoadingWorkItems(true);
     try {
-      const nextItems = await fetchProjectWorkItems(projectId);
-      setWorkItems(nextItems);
-      setDashboardWorkItems((prev) => [
-        ...nextItems,
-        ...prev.filter((item) => item.projectId !== projectId)
-      ]);
+      const nextItems = applyPendingWorkItemMoves(await fetchProjectWorkItems(projectId));
+      setWorkItems((prev) => mergeStableWorkItems(prev, nextItems));
+      setDashboardWorkItems((prev) => mergeStableWorkItems(prev, nextItems, projectId));
     } catch (error) {
       console.error("Cannot load project work items:", error);
       setWorkItems([]);
     } finally {
       setIsLoadingWorkItems(false);
     }
+  }
+
+  function mergeStableWorkItems(prevItems: WorkItem[], nextItems: WorkItem[], projectId?: string) {
+    const nextById = new Map(nextItems.map((item) => [item.id, item]));
+    const previousScopedItems = projectId ? prevItems.filter((item) => item.projectId === projectId) : prevItems;
+    const keptIds = new Set<string>();
+    const stableScopedItems = previousScopedItems
+      .map((item) => {
+        const next = nextById.get(item.id);
+        if (!next) return null;
+        keptIds.add(item.id);
+        return next;
+      })
+      .filter((item): item is WorkItem => Boolean(item));
+    const appendedItems = nextItems.filter((item) => !keptIds.has(item.id));
+    if (!projectId) return [...stableScopedItems, ...appendedItems];
+    return [
+      ...stableScopedItems,
+      ...appendedItems,
+      ...prevItems.filter((item) => item.projectId !== projectId)
+    ];
+  }
+
+  function moveWorkItemToColumn(
+    items: WorkItem[],
+    workItemId: string,
+    status: WorkItemStatus,
+    targetId?: string,
+    placement: "before" | "after" | "end" = "end"
+  ) {
+    const currentItem = items.find((item) => item.id === workItemId);
+    if (!currentItem || targetId === workItemId) return items;
+    const movedItem = { ...currentItem, status };
+    const remainingItems = items.filter((item) => item.id !== workItemId);
+    if (targetId) {
+      const targetIndex = remainingItems.findIndex((item) => item.id === targetId);
+      if (targetIndex >= 0) {
+        const insertIndex = placement === "after" ? targetIndex + 1 : targetIndex;
+        return [
+          ...remainingItems.slice(0, insertIndex),
+          movedItem,
+          ...remainingItems.slice(insertIndex)
+        ];
+      }
+    }
+
+    const sameColumnIndexes = remainingItems
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => item.status === status)
+      .map(({ index }) => index);
+    if (!sameColumnIndexes.length) return [...remainingItems, movedItem];
+    const insertIndex = sameColumnIndexes[sameColumnIndexes.length - 1] + 1;
+    return [
+      ...remainingItems.slice(0, insertIndex),
+      movedItem,
+      ...remainingItems.slice(insertIndex)
+    ];
+  }
+
+  function applyPendingWorkItemMoves(items: WorkItem[]) {
+    const pendingMoves = pendingWorkItemMovesRef.current;
+    return items.map((item) => {
+      const pendingMove = pendingMoves[item.id];
+      return pendingMove ? { ...item, status: pendingMove.status } : item;
+    });
   }
 
   async function loadProjectMembers(projectId: string) {
@@ -1505,45 +1618,46 @@ function App() {
   }, [documentsList, selectedProjectId]);
 
   const selectedWorkItemAssignees = useMemo(
-    () => splitAssigneeNames(workItemDraft?.assigneeName),
-    [workItemDraft?.assigneeName]
+    () => {
+      if (!workItemDraft) return [];
+      if (workItemDraft.assigneeIds.length) {
+        const members = projectMembersByProject[workItemDraft.projectId] ?? [];
+        return workItemDraft.assigneeIds
+          .map((id) => members.find((member) => member.id === id)?.name)
+          .filter((name): name is string => Boolean(name));
+      }
+      return splitAssigneeNames(workItemDraft.assigneeName);
+    },
+    [projectMembersByProject, workItemDraft]
   );
 
   const workItemAssigneeOptions = useMemo(() => {
     const targetProjectId = workItemDraft?.projectId || selectedProjectId;
-    const options = new Map<string, ProjectMemberOption>();
     const projectMembers = projectMembersByProject[targetProjectId] ?? [];
+    const options = [...projectMembers];
+    if (currentUser && !options.some((member) => member.id === currentUser.id || member.email?.toLowerCase() === currentUser.email.toLowerCase())) {
+      options.push({
+        id: currentUser.id,
+        name: currentUser.name,
+        email: currentUser.email,
+        role: currentUser.role
+      });
+    }
+    return options.sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }, [currentUser, projectMembersByProject, selectedProjectId, workItemDraft?.projectId]);
 
-    projectMembers.forEach((member) => {
-      const key = member.email?.toLowerCase() || member.id || member.name.toLowerCase();
-      options.set(key, member);
-    });
+  useEffect(() => {
+    if (!isAssigneeMenuOpen) return;
 
-    if (currentUser) {
-      const currentUserKey = currentUser.email?.toLowerCase() || currentUser.id;
-      if (!options.has(currentUserKey)) {
-        options.set(currentUserKey, {
-          id: currentUser.id,
-          name: currentUser.name,
-          email: currentUser.email,
-          role: currentUser.role
-        });
+    function handleClickOutside(event: MouseEvent) {
+      if (!workItemAssigneeDropdownRef.current?.contains(event.target as Node)) {
+        setIsAssigneeMenuOpen(false);
       }
     }
 
-    selectedWorkItemAssignees.forEach((name) => {
-      const exists = Array.from(options.values()).some((member) => member.name === name);
-      if (!exists) {
-        options.set(`legacy-${name}`, {
-          id: `legacy-${name}`,
-          name,
-          email: "Đã gán trước đó"
-        });
-      }
-    });
-
-    return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name, "vi"));
-  }, [currentUser, projectMembersByProject, selectedProjectId, selectedWorkItemAssignees, workItemDraft?.projectId]);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isAssigneeMenuOpen]);
 
   // Handle project change: auto select first document of new project
   const handleSelectProject = (projectId: string) => {
@@ -1625,8 +1739,7 @@ function App() {
 
   const workboardAssigneeOptions = useMemo(() => {
     const names = workItems
-      .map((item) => item.assigneeName ?? item.assignee?.name ?? "")
-      .flatMap(splitAssigneeNames)
+      .flatMap(workItemAssigneeNames)
       .filter(Boolean);
     return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, "vi"));
   }, [workItems]);
@@ -1644,18 +1757,20 @@ function App() {
       const matchesPriority = workboardPriorityFilter === "ALL" || item.priority === workboardPriorityFilter;
       const matchesAssignee =
         workboardAssigneeFilter === "ALL" ||
-        splitAssigneeNames(item.assigneeName ?? item.assignee?.name ?? "").includes(workboardAssigneeFilter);
+        workItemAssigneeNames(item).includes(workboardAssigneeFilter);
       const matchesCreator = workboardCreatorFilter === "ALL" || getWorkItemCreatorName(item) === workboardCreatorFilter;
       const query = workboardSearchQuery.trim().toLowerCase();
       const matchesSearch =
         !query ||
-        item.title.toLowerCase().includes(query) ||
+        displayWorkItemTitle(item).toLowerCase().includes(query) ||
         (item.description ?? "").toLowerCase().includes(query) ||
         (item.document?.title ?? "").toLowerCase().includes(query) ||
-        (item.assigneeName ?? item.assignee?.name ?? "").toLowerCase().includes(query) ||
+        workItemAssigneeLabel(item).toLowerCase().includes(query) ||
         getWorkItemCreatorName(item).toLowerCase().includes(query);
       return matchesType && matchesPriority && matchesAssignee && matchesCreator && matchesSearch;
     });
+
+    if (workboardSortBy === "BOARD_ORDER") return filtered;
 
     return [...filtered].sort((first, second) => {
       if (workboardSortBy === "PRIORITY_DESC") {
@@ -1697,6 +1812,37 @@ function App() {
     [viewingWorkItemId, workItems]
   );
 
+  const workItemMentionOptions = useMemo(() => {
+    if (!viewingWorkItem) return [];
+    const options = new Map<string, ProjectMemberOption>();
+    (projectMembersByProject[viewingWorkItem.projectId] ?? []).forEach((member) => {
+      options.set(member.id, member);
+    });
+    (viewingWorkItem.assignees ?? []).forEach((assignee) => {
+      options.set(assignee.userId, {
+        id: assignee.userId,
+        name: assignee.user.name,
+        email: assignee.user.email
+      });
+    });
+    if (viewingWorkItem.createdBy?.id) {
+      options.set(viewingWorkItem.createdBy.id, {
+        id: viewingWorkItem.createdBy.id,
+        name: viewingWorkItem.createdBy.name,
+        email: viewingWorkItem.createdBy.email
+      });
+    }
+    if (currentUser) {
+      options.set(currentUser.id, {
+        id: currentUser.id,
+        name: currentUser.name,
+        email: currentUser.email,
+        role: currentUser.role
+      });
+    }
+    return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }, [currentUser, projectMembersByProject, viewingWorkItem]);
+
   function workItemTypeIcon(type: WorkItemType) {
     if (type === "BUG") return <AlertTriangle size={13} />;
     if (type === "REVIEW") return <MessageSquareText size={13} />;
@@ -1705,11 +1851,76 @@ function App() {
     return <CheckCircle2 size={13} />;
   }
 
+  function renderMentionedText(content: string) {
+    const mentionNames = workItemMentionOptions
+      .map((member) => member.name.trim())
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
+    if (!mentionNames.length) return content;
+
+    const nodes: ReactNode[] = [];
+    let cursor = 0;
+    while (cursor < content.length) {
+      const atIndex = content.indexOf("@", cursor);
+      if (atIndex < 0) {
+        nodes.push(content.slice(cursor));
+        break;
+      }
+
+      const matchedName = mentionNames.find((name) => content.slice(atIndex + 1).startsWith(name));
+      if (!matchedName) {
+        nodes.push(content.slice(cursor, atIndex + 1));
+        cursor = atIndex + 1;
+        continue;
+      }
+
+      if (atIndex > cursor) nodes.push(content.slice(cursor, atIndex));
+      nodes.push(
+        <span className="workitem-mentioned-user" key={`${atIndex}-${matchedName}`}>
+          @{matchedName}
+        </span>
+      );
+      cursor = atIndex + matchedName.length + 1;
+    }
+
+    return nodes;
+  }
+
   function formatWorkItemDate(value?: string | null) {
     if (!value) return "Chưa có hạn";
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "Chưa có hạn";
     return date.toLocaleDateString("vi-VN");
+  }
+
+  function copyTitleMeta(title: string) {
+    const suffixRegex = /\s*\(Copy(?:\s+(\d+))?\)$/i;
+    let root = title.trim();
+    const suffixNumbers: number[] = [];
+    while (suffixRegex.test(root)) {
+      const match = root.match(suffixRegex);
+      suffixNumbers.unshift(match?.[1] ? Number(match[1]) : 0);
+      root = root.replace(suffixRegex, "").trim();
+    }
+    if (!suffixNumbers.length) return { root, copyNumber: 0 };
+    const numberedSuffix = suffixNumbers.find((number) => number > 0);
+    return { root, copyNumber: numberedSuffix ?? suffixNumbers.length };
+  }
+
+  function displayWorkItemTitle(item: WorkItem) {
+    const meta = copyTitleMeta(item.title);
+    if (!meta.copyNumber) return item.title;
+    return `${meta.root} (Copy ${meta.copyNumber})`;
+  }
+
+  function nextDuplicateWorkItemTitle(item: WorkItem) {
+    const root = copyTitleMeta(item.title).root;
+    const sameProjectItems = dashboardWorkItems.filter((candidate) => candidate.projectId === item.projectId);
+    const maxCopyNumber = sameProjectItems.reduce((max, candidate) => {
+      const meta = copyTitleMeta(candidate.title);
+      return meta.root === root ? Math.max(max, meta.copyNumber) : max;
+    }, 0);
+    return `${root} (Copy ${maxCopyNumber + 1})`;
   }
 
   function getWorkItemDueEndOfDay(value?: string | null) {
@@ -1786,6 +1997,19 @@ function App() {
     return labels[activity.action] ?? activity.action;
   }
 
+  function workItemActivityDetail(activity: WorkItemActivity) {
+    const changes = activity.metadata?.changes;
+    if (!changes || typeof changes !== "object" || Array.isArray(changes)) return "";
+    return Object.entries(changes as Record<string, { from?: unknown; to?: unknown }>)
+      .slice(0, 4)
+      .map(([field, value]) => {
+        const from = Array.isArray(value.from) ? value.from.join(", ") : value.from ?? "trống";
+        const to = Array.isArray(value.to) ? value.to.join(", ") : value.to ?? "trống";
+        return `${field}: ${from} → ${to}`;
+      })
+      .join(" · ");
+  }
+
   function isOwnWorkItemComment(comment: WorkItemComment) {
     return comment.createdBy?.id === currentUser?.id || isCurrentUserEmail(comment.createdByEmail);
   }
@@ -1804,24 +2028,35 @@ function App() {
     void loadProjectWorkItems(item.projectId);
   }
 
-  async function handleDropWorkItem(status: WorkItemStatus) {
+  async function handleDropWorkItem(status: WorkItemStatus, targetId?: string, placement: "before" | "after" | "end" = "end") {
     if (!draggingWorkItemId) return;
     const item = workItems.find((workItem) => workItem.id === draggingWorkItemId);
     setDraggingWorkItemId(null);
-    if (!item || item.status === status) return;
+    if (!item || item.id === targetId) return;
 
-    const previousItems = workItems;
-    const previousDashboardItems = dashboardWorkItems;
-    setWorkItems((prev) => prev.map((workItem) => workItem.id === item.id ? { ...workItem, status } : workItem));
-    setDashboardWorkItems((prev) => prev.map((workItem) => workItem.id === item.id ? { ...workItem, status } : workItem));
+    const previousStatus = item.status;
+    if (item.status === status) {
+      setWorkItems((prev) => moveWorkItemToColumn(prev, item.id, status, targetId, placement));
+      setDashboardWorkItems((prev) => moveWorkItemToColumn(prev, item.id, status, targetId, placement));
+      return;
+    }
+
+    const moveToken = ++workItemMoveTokenRef.current;
+    pendingWorkItemMovesRef.current[item.id] = { status, previousStatus, token: moveToken };
+    setWorkItems((prev) => moveWorkItemToColumn(prev, item.id, status, targetId, placement));
+    setDashboardWorkItems((prev) => moveWorkItemToColumn(prev, item.id, status, targetId, placement));
     try {
       const updated = await updateWorkItem(item.id, { status });
+      if (pendingWorkItemMovesRef.current[item.id]?.token !== moveToken) return;
+      delete pendingWorkItemMovesRef.current[item.id];
       setWorkItems((prev) => prev.map((workItem) => workItem.id === updated.id ? updated : workItem));
       setDashboardWorkItems((prev) => prev.map((workItem) => workItem.id === updated.id ? updated : workItem));
     } catch (error) {
+      if (pendingWorkItemMovesRef.current[item.id]?.token !== moveToken) return;
+      delete pendingWorkItemMovesRef.current[item.id];
       console.error("Drop work item error:", error);
-      setWorkItems(previousItems);
-      setDashboardWorkItems(previousDashboardItems);
+      setWorkItems((prev) => moveWorkItemToColumn(prev, item.id, previousStatus));
+      setDashboardWorkItems((prev) => moveWorkItemToColumn(prev, item.id, previousStatus));
       addToast("error", "Không đổi được trạng thái", "BE chưa cập nhật trạng thái work item.");
     }
   }
@@ -1835,9 +2070,12 @@ function App() {
       priority: "MEDIUM",
       title: "",
       description: "",
-      assigneeName: currentUser?.name ?? "",
+      assigneeName: "",
+      assigneeIds: [],
       dueDate: "",
       attachmentsText: "",
+      checklistText: "",
+      labelsText: "",
       ...overrides
     };
   }
@@ -1857,24 +2095,30 @@ function App() {
       type: item.type,
       status: item.status,
       priority: item.priority,
-      title: item.title,
+      title: displayWorkItemTitle(item),
       description: item.description ?? "",
-      assigneeName: item.assigneeName ?? item.assignee?.name ?? "",
+      assigneeName: workItemAssigneeNames(item).join(", "),
+      assigneeIds: item.assignees?.map((assignee) => assignee.userId) ?? (item.assigneeId ? [item.assigneeId] : []),
       dueDate: item.dueDate ? item.dueDate.slice(0, 10) : "",
-      attachmentsText: (item.attachments ?? []).map((attachment) => attachment.url).join("\n")
+      attachmentsText: (item.attachments ?? []).map((attachment) => attachment.url).join("\n"),
+      checklistText: checklistToText(item),
+      labelsText: workItemLabelNames(item).join(", ")
     });
     setIsAssigneeMenuOpen(false);
     void loadProjectMembers(item.projectId);
     setIsWorkItemModalOpen(true);
   }
 
-  function toggleWorkItemAssignee(name: string) {
+  function toggleWorkItemAssignee(member: ProjectMemberOption) {
     if (!workItemDraft) return;
-    const current = splitAssigneeNames(workItemDraft.assigneeName);
-    const next = current.includes(name)
-      ? current.filter((assignee) => assignee !== name)
-      : [...current, name];
-    setWorkItemDraft({ ...workItemDraft, assigneeName: joinAssigneeNames(next) });
+    const currentNames = splitAssigneeNames(workItemDraft.assigneeName);
+    const nextNames = currentNames.includes(member.name)
+      ? currentNames.filter((assignee) => assignee !== member.name)
+      : [...currentNames, member.name];
+    const nextIds = workItemDraft.assigneeIds.includes(member.id)
+      ? workItemDraft.assigneeIds.filter((id) => id !== member.id)
+      : [...workItemDraft.assigneeIds, member.id];
+    setWorkItemDraft({ ...workItemDraft, assigneeIds: nextIds, assigneeName: joinAssigneeNames(nextNames) });
   }
 
   function openViewWorkItemModal(item: WorkItem) {
@@ -1888,6 +2132,7 @@ function App() {
     setEditingWorkItemCommentText("");
     void loadWorkItemComments(item.id);
     void loadWorkItemActivity(item.id);
+    void loadProjectMembers(item.projectId);
   }
 
   async function loadWorkItemComments(workItemId: string) {
@@ -1920,6 +2165,76 @@ function App() {
     return workItemComments
       .filter((comment) => !comment.parentId)
       .map((comment) => ({ ...comment, replies: repliesByParent.get(comment.id) ?? [] }));
+  }
+
+  function getMentionTrigger(value: string) {
+    const atIndex = value.lastIndexOf("@");
+    if (atIndex < 0) return null;
+    const query = value.slice(atIndex + 1);
+    if (/[\s,;:()[\]{}]/.test(query)) return null;
+    return { atIndex, query: query.toLowerCase() };
+  }
+
+  function handleWorkItemCommentTextChange(value: string, target: "comment" | "reply") {
+    if (target === "comment") {
+      setWorkItemCommentText(value);
+    } else {
+      setWorkItemReplyText(value);
+    }
+    setActiveWorkItemMentionTarget(getMentionTrigger(value) ? target : null);
+  }
+
+  function filteredWorkItemMentionOptions(target: "comment" | "reply") {
+    const value = target === "comment" ? workItemCommentText : workItemReplyText;
+    const trigger = getMentionTrigger(value);
+    if (!trigger) return [];
+    return workItemMentionOptions
+      .filter((member) => {
+        const haystack = `${member.name} ${member.email}`.toLowerCase();
+        return !trigger.query || haystack.includes(trigger.query);
+      })
+      .slice(0, 6);
+  }
+
+  function insertWorkItemMention(target: "comment" | "reply", member: ProjectMemberOption) {
+    const value = target === "comment" ? workItemCommentText : workItemReplyText;
+    const trigger = getMentionTrigger(value);
+    if (!trigger) return;
+    const nextValue = `${value.slice(0, trigger.atIndex)}@${member.name} `;
+    if (target === "comment") {
+      setWorkItemCommentText(nextValue);
+    } else {
+      setWorkItemReplyText(nextValue);
+    }
+    setActiveWorkItemMentionTarget(null);
+  }
+
+  function renderWorkItemMentionMenu(target: "comment" | "reply") {
+    if (activeWorkItemMentionTarget !== target) return null;
+    const options = filteredWorkItemMentionOptions(target);
+    if (!options.length) return (
+      <div className="workitem-mention-menu">
+        <div className="workitem-mention-empty">Không có người phù hợp.</div>
+      </div>
+    );
+
+    return (
+      <div className="workitem-mention-menu">
+        {options.map((member) => (
+          <button
+            type="button"
+            key={member.id}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              insertWorkItemMention(target, member);
+            }}
+          >
+            <strong>@{member.name}</strong>
+            <small>{member.email}</small>
+          </button>
+        ))}
+      </div>
+    );
   }
 
   async function handleAddWorkItemComment(parentId?: string) {
@@ -2009,25 +2324,51 @@ function App() {
   }
 
   async function handleSaveWorkItem() {
-    if (!workItemDraft) return;
+    if (!workItemDraft || isSavingWorkItem) return;
     if (!workItemDraft.title.trim()) {
       addToast("warning", "Thiếu tiêu đề", "Vui lòng nhập tiêu đề ticket.");
       return;
     }
 
-    const payload = {
-      documentId: workItemDraft.documentId || undefined,
-      type: workItemDraft.type,
-      status: workItemDraft.status,
-      priority: workItemDraft.priority,
-      title: workItemDraft.title.trim(),
-      description: workItemDraft.description.trim() || undefined,
-      attachments: parseWorkItemAttachments(workItemDraft.attachmentsText),
-      assigneeName: workItemDraft.assigneeName.trim() || undefined,
-      dueDate: workItemDraft.dueDate || undefined
-    };
-
+    setIsSavingWorkItem(true);
+    let projectMembers = projectMembersByProject[workItemDraft.projectId] ?? [];
     try {
+      if (workItemDraft.assigneeIds.length && projectMembers.length === 0) {
+        try {
+          projectMembers = await fetchProjectMembers(workItemDraft.projectId);
+          setProjectMembersByProject((prev) => ({ ...prev, [workItemDraft.projectId]: projectMembers }));
+        } catch (error) {
+          console.error("Cannot reload project members before saving work item:", error);
+        }
+      }
+
+      const validProjectMemberIds = new Set(projectMembers.map((member) => member.id));
+      if (currentUser) validProjectMemberIds.add(currentUser.id);
+      const assigneeIds = Array.from(new Set(workItemDraft.assigneeIds)).filter((id) => validProjectMemberIds.has(id));
+      if (workItemDraft.assigneeIds.length !== assigneeIds.length) {
+        addToast("error", "Người phụ trách không hợp lệ", "Chỉ có thể gán ticket cho thành viên đang hoạt động trong dự án.");
+        return;
+      }
+      const assigneeName = assigneeIds
+        .map((id) => projectMembers.find((member) => member.id === id)?.name ?? (id === currentUser?.id ? currentUser.name : undefined))
+        .filter((name): name is string => Boolean(name))
+        .join(", ");
+
+      const payload = {
+        documentId: workItemDraft.documentId || undefined,
+        type: workItemDraft.type,
+        status: workItemDraft.status,
+        priority: workItemDraft.priority,
+        title: workItemDraft.title.trim(),
+        description: workItemDraft.description.trim() || undefined,
+        attachments: parseWorkItemAttachments(workItemDraft.attachmentsText),
+        assigneeIds: assigneeIds.length ? assigneeIds : undefined,
+        assigneeName: assigneeName || undefined,
+        dueDate: workItemDraft.dueDate || undefined,
+        checklistItems: parseChecklistText(workItemDraft.checklistText),
+        labelNames: parseLabelText(workItemDraft.labelsText)
+      };
+
       const saved = workItemDraft.id
         ? await updateWorkItem(workItemDraft.id, payload)
         : await createWorkItem({ ...payload, projectId: workItemDraft.projectId });
@@ -2036,10 +2377,12 @@ function App() {
       setIsAssigneeMenuOpen(false);
       setIsWorkItemModalOpen(false);
       setWorkItemDraft(null);
-      addToast("success", workItemDraft.id ? "Đã cập nhật ticket" : "Đã tạo ticket", `"${saved.title}" đã được lưu vào Workboard.`);
+      addToast("success", workItemDraft.id ? "Đã cập nhật ticket" : "Đã tạo ticket", `"${displayWorkItemTitle(saved)}" đã được lưu vào Workboard.`);
     } catch (error) {
       console.error("Save work item error:", error);
-      addToast("error", "Không lưu được ticket", "BE chưa lưu được thay đổi này.");
+      addToast("error", "Không lưu được ticket", error instanceof Error ? error.message : "BE chưa lưu được thay đổi này.");
+    } finally {
+      setIsSavingWorkItem(false);
     }
   }
 
@@ -2051,19 +2394,22 @@ function App() {
         type: item.type,
         status: item.status,
         priority: item.priority,
-        title: `${item.title} (Copy)`,
+        title: nextDuplicateWorkItemTitle(item),
         description: item.description ?? undefined,
         attachments: (item.attachments ?? []).map((attachment) => ({
           url: attachment.url,
           name: attachment.name ?? undefined,
           mimeType: attachment.mimeType ?? undefined
         })),
-        assigneeName: item.assigneeName ?? item.assignee?.name ?? undefined,
+        assigneeIds: item.assignees?.map((assignee) => assignee.userId) ?? (item.assigneeId ? [item.assigneeId] : undefined),
+        assigneeName: workItemAssigneeLabel(item),
+        checklistItems: item.checklistItems?.map((entry) => ({ title: entry.title, done: entry.done })),
+        labelNames: workItemLabelNames(item),
         dueDate: item.dueDate ? item.dueDate.slice(0, 10) : undefined
       });
       setWorkItems((prev) => duplicated.projectId === selectedProjectId ? [duplicated, ...prev] : prev);
       setDashboardWorkItems((prev) => [duplicated, ...prev]);
-      addToast("success", "Đã duplicate ticket", `"${duplicated.title}" đã được tạo.`);
+      addToast("success", "Đã duplicate ticket", `"${displayWorkItemTitle(duplicated)}" đã được tạo.`);
     } catch (error) {
       console.error("Duplicate work item error:", error);
       addToast("error", "Không duplicate được ticket", "BE chưa tạo được bản sao ticket này.");
@@ -2076,7 +2422,7 @@ function App() {
       type: "workItem",
       id: item.id,
       title: "Xác nhận xóa ticket",
-      message: `Bạn có chắc chắn muốn xóa ticket "${item.title}" khỏi Workboard?`
+      message: `Bạn có chắc chắn muốn xóa ticket "${displayWorkItemTitle(item)}" khỏi Workboard?`
     });
   }
 
@@ -3510,7 +3856,7 @@ function App() {
           happenedAt: item.updatedAt ?? item.createdAt,
           statusLabel: WORKBOARD_COLUMNS.find((column) => column.id === item.status)?.label ?? item.status,
           summary: `${WORK_ITEM_TYPE_LABEL[item.type]} ${wasUpdated ? "được cập nhật" : "được tạo"} trong ${WORKBOARD_COLUMNS.find((column) => column.id === item.status)?.label ?? item.status}`,
-          detail: `${WORK_ITEM_PRIORITY_LABEL[item.priority]} · ${item.assigneeName ?? item.assignee?.name ?? "Chưa giao"}`
+          detail: `${WORK_ITEM_PRIORITY_LABEL[item.priority]} · ${workItemAssigneeLabel(item)}`
         };
       });
 
@@ -3539,7 +3885,7 @@ function App() {
     const maxStatusBreakdown = Math.max(...statusBreakdown.map((item) => item.value), 1);
     const workloadRows = Array.from(
       dashboardItems.reduce((map, item) => {
-        const assignees = splitAssigneeNames(item.assigneeName ?? item.assignee?.name ?? "") || [];
+        const assignees = workItemAssigneeNames(item) || [];
         const targetNames = assignees.length ? assignees : ["Chưa giao"];
         targetNames.forEach((name) => {
           const current = map.get(name) ?? { name, open: 0, done: 0, blocked: 0, overdue: 0, critical: 0 };
@@ -3920,7 +4266,7 @@ function App() {
                   onClick={() => setAdminTriggerCreate((prev) => prev + 1)}
                 >
                   <UserPlus size={15} />
-                  <span>+ Tạo Tài khoản</span>
+                  <span>Tạo Tài khoản</span>
                 </button>
               )}
             </div>
@@ -3964,7 +4310,7 @@ function App() {
                 disabled={!selectedProject.id}
               >
                 <Plus size={15} />
-                <span>+ Tạo ticket</span>
+                <span>Tạo ticket</span>
               </button>
             </div>
           )}
@@ -4288,7 +4634,7 @@ function App() {
                         onClick={() => openDashboardWorkItem(item)}
                       >
                         {workItemTypeIcon(item.type)}
-                        <strong>{item.title}</strong>
+                        <strong>{displayWorkItemTitle(item)}</strong>
                         <small>{project?.code ?? "Project"} · {WORKBOARD_COLUMNS.find((column) => column.id === item.status)?.label ?? item.status} · {relativeDashboardTime(item.updatedAt ?? item.createdAt)}</small>
                       </button>
                     );
@@ -4321,7 +4667,7 @@ function App() {
                     return (
                       <button type="button" key={item.id} onClick={() => openDashboardWorkItem(item)}>
                         <span className={isHighRisk ? "quiet-dot high" : "quiet-dot"}></span>
-                        <strong>{item.title}</strong>
+                        <strong>{displayWorkItemTitle(item)}</strong>
                         <small>{project?.code ?? "Project"} · {riskReason} · Hạn {formatWorkItemDate(item.dueDate)}</small>
                       </button>
                     );
@@ -4483,6 +4829,7 @@ function App() {
                     value={workboardSortBy}
                     onChange={(event) => setWorkboardSortBy(event.target.value as typeof workboardSortBy)}
                   >
+                    <option value="BOARD_ORDER">Thứ tự board</option>
                     <option value="UPDATED_DESC">Mới cập nhật</option>
                     <option value="DUE_ASC">Hạn gần nhất</option>
                     <option value="PRIORITY_DESC">Priority cao nhất</option>
@@ -4495,7 +4842,7 @@ function App() {
                   workboardAssigneeFilter !== "ALL" ||
                   workboardCreatorFilter !== "ALL" ||
                   workboardSearchQuery.trim() ||
-                  workboardSortBy !== "UPDATED_DESC") && (
+                  workboardSortBy !== "BOARD_ORDER") && (
                     <button
                       className="btn-reset-filters"
                       type="button"
@@ -4506,7 +4853,7 @@ function App() {
                         setWorkboardPriorityFilter("ALL");
                         setWorkboardAssigneeFilter("ALL");
                         setWorkboardCreatorFilter("ALL");
-                        setWorkboardSortBy("UPDATED_DESC");
+                        setWorkboardSortBy("BOARD_ORDER");
                       }}
                     >
                       <X size={12} /> Reset
@@ -4551,13 +4898,21 @@ function App() {
                     </div>
                     <div className="workboard-card-list">
                       {columnItems.map((item) => (
-                        <article
-                          className={`workboard-card priority-${item.priority.toLowerCase()} ${draggingWorkItemId === item.id ? "dragging" : ""}`}
-                          key={item.id}
-                          draggable
-                          onDragStart={() => setDraggingWorkItemId(item.id)}
-                          onDragEnd={() => setDraggingWorkItemId(null)}
-                        >
+	                        <article
+	                          className={`workboard-card priority-${item.priority.toLowerCase()} ${draggingWorkItemId === item.id ? "dragging" : ""}`}
+	                          key={item.id}
+	                          draggable
+	                          onDragStart={() => setDraggingWorkItemId(item.id)}
+	                          onDragEnd={() => setDraggingWorkItemId(null)}
+	                          onDragOver={(event) => event.preventDefault()}
+	                          onDrop={(event) => {
+	                            event.preventDefault();
+	                            event.stopPropagation();
+	                            const rect = event.currentTarget.getBoundingClientRect();
+	                            const placement = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+	                            void handleDropWorkItem(column.id, item.id, placement);
+	                          }}
+	                        >
                           <button className="workboard-card-main" type="button" onClick={() => openViewWorkItemModal(item)}>
                             <div className="workboard-card-badges">
                               <span className={`workitem-type type-${item.type.toLowerCase()}`}>
@@ -4567,9 +4922,9 @@ function App() {
                                 {WORK_ITEM_PRIORITY_LABEL[item.priority]}
                               </span>
                             </div>
-                            <strong>{item.title}</strong>
+                            <strong>{displayWorkItemTitle(item)}</strong>
                             <span><Users size={12} /> Tạo bởi: {getWorkItemCreatorName(item)}</span>
-                            <span><UserCheck size={12} /> Giao: {item.assigneeName ?? item.assignee?.name ?? "Chưa giao"}</span>
+                            <span><UserCheck size={12} /> Giao: {workItemAssigneeLabel(item)}</span>
                             <span><Clock size={12} /> Tạo {formatWorkItemDate(item.createdAt)} · Hạn {formatWorkItemDate(item.dueDate)}</span>
                           </button>
                           <div className="workboard-card-actions">
@@ -5921,13 +6276,16 @@ function App() {
           <div className="modal-content workitem-detail-modal">
             <div className="modal-header">
               <div className="modal-title-with-icon">
-                <div className="modal-header-badge">
+                <div className={`modal-header-badge type-${viewingWorkItem.type.toLowerCase()}`}>
                   {workItemTypeIcon(viewingWorkItem.type)}
                 </div>
                 <div>
-                  <h3>{viewingWorkItem.title}</h3>
+                  <h3>{displayWorkItemTitle(viewingWorkItem)}</h3>
                   <p className="modal-subtitle">
-                    {WORK_ITEM_TYPE_LABEL[viewingWorkItem.type]} • {WORKBOARD_COLUMNS.find((column) => column.id === viewingWorkItem.status)?.label ?? viewingWorkItem.status}
+                    <span className={`workitem-type type-${viewingWorkItem.type.toLowerCase()}`}>
+                      {workItemTypeIcon(viewingWorkItem.type)} {WORK_ITEM_TYPE_LABEL[viewingWorkItem.type]}
+                    </span>
+                    • {WORKBOARD_COLUMNS.find((column) => column.id === viewingWorkItem.status)?.label ?? viewingWorkItem.status}
                   </p>
                 </div>
               </div>
@@ -5954,7 +6312,7 @@ function App() {
                 </div>
                 <div className="summary-card">
                   <span className="summary-label"><UserIcon size={12} /> Người phụ trách</span>
-                  <strong className="summary-value">{viewingWorkItem.assigneeName ?? viewingWorkItem.assignee?.name ?? "Chưa giao"}</strong>
+                  <strong className="summary-value">{workItemAssigneeLabel(viewingWorkItem)}</strong>
                 </div>
                 <div className="summary-card">
                   <span className="summary-label"><ShieldCheck size={12} /> Người tạo</span>
@@ -5981,6 +6339,31 @@ function App() {
                   <div>
                     <span>Tài liệu đính kèm liên quan:</span>
                     <strong>{viewingWorkItem.document.title}</strong>
+                  </div>
+                </div>
+              )}
+
+              {workItemLabelNames(viewingWorkItem).length > 0 && (
+                <div className="workitem-detail-block">
+                  <label className="block-label"><Tags size={13} /> Labels</label>
+                  <div className="workitem-label-list">
+                    {workItemLabelNames(viewingWorkItem).map((label) => (
+                      <span className="workitem-label-chip" key={label}>{label}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(viewingWorkItem.checklistItems ?? []).length > 0 && (
+                <div className="workitem-detail-block">
+                  <label className="block-label"><CheckCheck size={13} /> Checklist</label>
+                  <div className="workitem-checklist-list">
+                    {(viewingWorkItem.checklistItems ?? []).map((item) => (
+                      <div className={item.done ? "workitem-checklist-row done" : "workitem-checklist-row"} key={item.id}>
+                        <CheckCircle2 size={14} />
+                        <span>{item.title}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -6046,6 +6429,7 @@ function App() {
                         <div>
                           <strong>{workItemActivityLabel(activity)}</strong>
                           <small>{activity.actor?.name ?? activity.actor?.email ?? "Hệ thống"} · {relativeDashboardTime(activity.createdAt)}</small>
+                          {workItemActivityDetail(activity) && <small>{workItemActivityDetail(activity)}</small>}
                         </div>
                       </div>
                     ))
@@ -6062,12 +6446,16 @@ function App() {
                 </div>
 
                 <div className="workitem-comment-composer">
-                  <textarea
-                    rows={3}
-                    value={workItemCommentText}
-                    onChange={(event) => setWorkItemCommentText(event.target.value)}
-                    placeholder="Nhập comment..."
-                  />
+                  <div className="workitem-mention-input">
+                    <textarea
+                      rows={3}
+                      value={workItemCommentText}
+                      onChange={(event) => handleWorkItemCommentTextChange(event.target.value, "comment")}
+                      onBlur={() => window.setTimeout(() => setActiveWorkItemMentionTarget(null), 120)}
+                      placeholder="Nhập comment... Gõ @ để mention người xử lý"
+                    />
+                    {renderWorkItemMentionMenu("comment")}
+                  </div>
                   <button className="btn-primary" type="button" onClick={() => void handleAddWorkItemComment()}>
                     <Send size={14} /> Gửi
                   </button>
@@ -6104,7 +6492,7 @@ function App() {
                         </div>
                       ) : (
                         <>
-                          <p>{comment.content}</p>
+                          <p>{renderMentionedText(comment.content)}</p>
                           <div className="workitem-comment-actions">
                             <button
                               className="btn-secondary compact"
@@ -6161,7 +6549,7 @@ function App() {
                             </div>
                           ) : (
                             <>
-                              <p>{reply.content}</p>
+                              <p>{renderMentionedText(reply.content)}</p>
                               {isOwnWorkItemComment(reply) && (
                                 <div className="workitem-comment-actions">
                                   <button className="btn-secondary compact" type="button" onClick={() => openEditWorkItemComment(reply)}>
@@ -6179,12 +6567,16 @@ function App() {
 
                       {replyingWorkItemCommentId === comment.id && (
                         <div className="workitem-reply-composer">
-                          <textarea
-                            rows={2}
-                            value={workItemReplyText}
-                            onChange={(event) => setWorkItemReplyText(event.target.value)}
-                            placeholder="Nhập reply..."
-                          />
+                          <div className="workitem-mention-input">
+                            <textarea
+                              rows={2}
+                              value={workItemReplyText}
+                              onChange={(event) => handleWorkItemCommentTextChange(event.target.value, "reply")}
+                              onBlur={() => window.setTimeout(() => setActiveWorkItemMentionTarget(null), 120)}
+                              placeholder="Nhập reply... Gõ @ để mention"
+                            />
+                            {renderWorkItemMentionMenu("reply")}
+                          </div>
                           <button className="btn-primary" type="button" onClick={() => void handleAddWorkItemComment(comment.id)}>
                             <Send size={13} /> Gửi
                           </button>
@@ -6309,7 +6701,7 @@ function App() {
 
                 <div className="form-group">
                   <label><UserCheck size={13} /> Người phụ trách</label>
-                  <div className="workitem-assignee-select">
+                  <div className="workitem-assignee-select" ref={workItemAssigneeDropdownRef}>
                     <button
                       className="workitem-assignee-summary"
                       type="button"
@@ -6325,13 +6717,13 @@ function App() {
                     {isAssigneeMenuOpen && (
                       <div className="workitem-assignee-menu">
                         {workItemAssigneeOptions.map((member) => {
-                          const checked = selectedWorkItemAssignees.includes(member.name);
+                          const checked = workItemDraft.assigneeIds.includes(member.id) || selectedWorkItemAssignees.includes(member.name);
                           return (
                             <label className="workitem-assignee-option" key={member.email || member.id || member.name}>
                               <input
                                 type="checkbox"
                                 checked={checked}
-                                onChange={() => toggleWorkItemAssignee(member.name)}
+                                onChange={() => toggleWorkItemAssignee(member)}
                               />
                               <span>
                                 <strong>{member.name}</strong>
@@ -6361,6 +6753,29 @@ function App() {
                   onChange={(event) => setWorkItemDraft({ ...workItemDraft, description: event.target.value })}
                   placeholder="Mô tả chi tiết nội dung cần xử lý..."
                 />
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label><Tags size={13} /> Labels</label>
+                  <textarea
+                    className="form-textarea"
+                    rows={2}
+                    value={workItemDraft.labelsText}
+                    onChange={(event) => setWorkItemDraft({ ...workItemDraft, labelsText: event.target.value })}
+                    placeholder="Frontend, API, UAT..."
+                  />
+                </div>
+                <div className="form-group">
+                  <label><CheckCheck size={13} /> Checklist</label>
+                  <textarea
+                    className="form-textarea"
+                    rows={2}
+                    value={workItemDraft.checklistText}
+                    onChange={(event) => setWorkItemDraft({ ...workItemDraft, checklistText: event.target.value })}
+                    placeholder="[ ] Việc cần làm&#10;[x] Việc đã xong"
+                  />
+                </div>
               </div>
 
               {/* Attachments Section Box */}
@@ -6396,14 +6811,22 @@ function App() {
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn-secondary" type="button" onClick={() => {
+              <button className="btn-secondary" type="button" disabled={isSavingWorkItem} onClick={() => {
                 setIsAssigneeMenuOpen(false);
                 setIsWorkItemModalOpen(false);
               }}>
                 Hủy
               </button>
-              <button className="btn-primary" type="button" onClick={() => void handleSaveWorkItem()}>
-                <CheckCircle2 size={15} /> {workItemDraft.id ? "Cập nhật ticket" : "Lưu ticket"}
+              <button className="btn-primary" type="button" disabled={isSavingWorkItem} onClick={() => void handleSaveWorkItem()}>
+                {isSavingWorkItem ? (
+                  <>
+                    <Loader2 className="spin-icon" size={15} /> {workItemDraft.id ? "Đang cập nhật..." : "Đang lưu..."}
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 size={15} /> {workItemDraft.id ? "Cập nhật ticket" : "Lưu ticket"}
+                  </>
+                )}
               </button>
             </div>
           </div>

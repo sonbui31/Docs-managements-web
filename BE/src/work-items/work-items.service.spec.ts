@@ -24,10 +24,33 @@ const teammate: AuthenticatedUser = {
   status: UserStatus.ACTIVE
 };
 
+function workItemFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "wi-1",
+    projectId: "project-1",
+    documentId: null,
+    sourceCommentId: null,
+    status: "BACKLOG",
+    priority: "MEDIUM",
+    title: "Ticket",
+    dueDate: null,
+    assigneeName: "Owner",
+    createdById: owner.id,
+    createdByEmail: owner.email,
+    assignees: [],
+    checklistItems: [],
+    labels: [],
+    blockingLinks: [],
+    ...overrides
+  };
+}
+
 function serviceHarness() {
   const prisma = {
     workItem: {
       findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+      count: jest.fn(),
       update: jest.fn(),
       delete: jest.fn()
     },
@@ -42,6 +65,9 @@ function serviceHarness() {
     },
     comment: {
       findUnique: jest.fn()
+    },
+    notification: {
+      createMany: jest.fn()
     }
   };
   const permissions = {
@@ -61,15 +87,9 @@ function serviceHarness() {
 describe("WorkItemsService permissions", () => {
   it("allows any permitted teammate to change only ticket status", async () => {
     const { service, prisma } = serviceHarness();
-    prisma.workItem.findUnique.mockResolvedValue({
-      id: "wi-1",
-      projectId: "project-1",
-      documentId: null,
-      sourceCommentId: null,
-      createdById: owner.id,
-      createdByEmail: owner.email
-    });
+    prisma.workItem.findUnique.mockResolvedValue(workItemFixture());
     prisma.workItem.update.mockResolvedValue({ id: "wi-1", status: "DONE", priority: "MEDIUM" });
+    prisma.workItem.findUniqueOrThrow.mockResolvedValue(workItemFixture({ status: "DONE" }));
 
     await expect(service.update("wi-1", { status: "DONE" } as any, teammate)).resolves.toMatchObject({ status: "DONE" });
     expect(prisma.workItem.update).toHaveBeenCalled();
@@ -77,14 +97,7 @@ describe("WorkItemsService permissions", () => {
 
   it("denies non-owner edits that change ticket content", async () => {
     const { service, prisma } = serviceHarness();
-    prisma.workItem.findUnique.mockResolvedValue({
-      id: "wi-1",
-      projectId: "project-1",
-      documentId: null,
-      sourceCommentId: null,
-      createdById: owner.id,
-      createdByEmail: owner.email
-    });
+    prisma.workItem.findUnique.mockResolvedValue(workItemFixture());
 
     await expect(service.update("wi-1", { title: "New title" } as any, teammate)).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.workItem.update).not.toHaveBeenCalled();
@@ -93,14 +106,7 @@ describe("WorkItemsService permissions", () => {
   it("still denies status changes when the user lacks board permission", async () => {
     const { service, prisma, permissions } = serviceHarness();
     permissions.assertProjectRole.mockRejectedValue(new ForbiddenException("denied"));
-    prisma.workItem.findUnique.mockResolvedValue({
-      id: "wi-1",
-      projectId: "project-1",
-      documentId: null,
-      sourceCommentId: null,
-      createdById: owner.id,
-      createdByEmail: owner.email
-    });
+    prisma.workItem.findUnique.mockResolvedValue(workItemFixture());
 
     await expect(service.update("wi-1", { status: "DONE" } as any, teammate)).rejects.toBeInstanceOf(ForbiddenException);
     expect(prisma.workItem.update).not.toHaveBeenCalled();

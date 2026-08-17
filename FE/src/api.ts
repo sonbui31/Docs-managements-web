@@ -404,8 +404,12 @@ export async function createWorkItem(payload: {
   description?: string;
   attachments?: Array<{ url: string; name?: string; mimeType?: string }>;
   assigneeId?: string;
+  assigneeIds?: string[];
   assigneeName?: string;
   dueDate?: string;
+  checklistItems?: Array<{ title: string; done?: boolean }>;
+  labelNames?: string[];
+  dependencyIds?: string[];
 }) {
   return apiFetch<BackendWorkItem>("/work-items", {
     method: "POST",
@@ -421,8 +425,12 @@ export async function createWorkItemFromComment(commentId: string, payload: {
   description?: string;
   attachments?: Array<{ url: string; name?: string; mimeType?: string }>;
   assigneeId?: string;
+  assigneeIds?: string[];
   assigneeName?: string;
   dueDate?: string;
+  checklistItems?: Array<{ title: string; done?: boolean }>;
+  labelNames?: string[];
+  dependencyIds?: string[];
 }) {
   return apiFetch<BackendWorkItem>(`/work-items/from-comment/${commentId}`, {
     method: "POST",
@@ -440,8 +448,12 @@ export async function updateWorkItem(workItemId: string, payload: Partial<{
   description: string | null;
   attachments: Array<{ url: string; name?: string; mimeType?: string }> | null;
   assigneeId: string | null;
+  assigneeIds: string[] | null;
   assigneeName: string | null;
   dueDate: string | null;
+  checklistItems: Array<{ title: string; done?: boolean }> | null;
+  labelNames: string[] | null;
+  dependencyIds: string[] | null;
 }>) {
   return apiFetch<BackendWorkItem>(`/work-items/${workItemId}`, {
     method: "PATCH",

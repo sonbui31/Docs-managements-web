@@ -44,6 +44,10 @@ export class WorkItemsService {
       await this.permissions.assertProjectRole(user, dto.projectId, ["REVIEWER", "EDITOR", "MANAGER"]);
     }
     await this.assertLinkedEntitiesBelongToProject(dto.projectId, dto.documentId, dto.sourceCommentId);
+    await this.assertDependenciesBelongToProject(dto.projectId, dto.dependencyIds);
+
+    const assigneeUsers = await this.resolveAssignableUsers(dto.projectId, this.workItemAssigneeIds(dto), user);
+    const labels = await this.ensureLabels(dto.projectId, dto.labelNames ?? []);
 
     const item = await this.prisma.workItem.create({
       data: {
@@ -56,8 +60,23 @@ export class WorkItemsService {
         title: dto.title.trim(),
         description: dto.description?.trim() || null,
         attachments: this.normalizeAttachments(dto.attachments),
-        assigneeId: dto.assigneeId || null,
-        assigneeName: dto.assigneeName?.trim() || null,
+        assigneeId: assigneeUsers[0]?.id ?? dto.assigneeId ?? null,
+        assigneeName: assigneeUsers.length ? assigneeUsers.map((assignee) => assignee.name).join(", ") : dto.assigneeName?.trim() || null,
+        assignees: assigneeUsers.length
+          ? { create: assigneeUsers.map((assignee) => ({ user: { connect: { id: assignee.id } }, assignedBy: user.id })) }
+          : undefined,
+        checklistItems: dto.checklistItems?.length
+          ? {
+              create: this.normalizeChecklistItems(dto.checklistItems).map((item, index) => ({
+                title: item.title,
+                done: item.done,
+                position: index
+              }))
+            }
+          : undefined,
+        labels: labels.length
+          ? { create: labels.map((label) => ({ label: { connect: { id: label.id } } })) }
+          : undefined,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
         createdById: user.id,
         createdByName: user.name || user.email,
@@ -66,15 +85,28 @@ export class WorkItemsService {
       include: this.includeRelations()
     });
 
+    if (dto.dependencyIds?.length) {
+      await this.syncDependencies(item.id, item.projectId, dto.dependencyIds, user);
+    }
+
     await this.collaboration.log(user, "WORK_ITEM_CREATED", "Project", dto.projectId, {
       workItemId: item.id,
       type: item.type,
       status: item.status,
       documentId: item.documentId,
-      sourceCommentId: item.sourceCommentId
+      sourceCommentId: item.sourceCommentId,
+      assigneeIds: assigneeUsers.map((assignee) => assignee.id),
+      labels: labels.map((label) => label.name)
     });
+    await this.notifyUsers(
+      assigneeUsers.map((assignee) => assignee.id),
+      user,
+      "Bạn được gán ticket mới",
+      `${user.name || user.email} đã gán bạn vào ticket: ${item.title}`,
+      item.id
+    );
 
-    return item;
+    return this.hydrateWorkItem(item.id);
   }
 
   async createFromComment(commentId: string, dto: Omit<CreateWorkItemDto, "projectId" | "documentId" | "sourceCommentId">, user: AuthenticatedUser) {
@@ -100,7 +132,15 @@ export class WorkItemsService {
   }
 
   async update(id: string, dto: UpdateWorkItemDto, user: AuthenticatedUser) {
-    const existing = await this.prisma.workItem.findUnique({ where: { id } });
+    const existing = await this.prisma.workItem.findUnique({
+      where: { id },
+      include: {
+        assignees: { include: { user: { select: { id: true, name: true, email: true } } } },
+        checklistItems: { orderBy: { position: "asc" } },
+        labels: { include: { label: true } },
+        blockingLinks: true
+      }
+    });
     if (!existing) throw new NotFoundException("Work item not found");
 
     await this.assertWorkItemRole(existing, user, ["REVIEWER", "EDITOR", "MANAGER"]);
@@ -113,9 +153,17 @@ export class WorkItemsService {
       dto.documentId === undefined ? existing.documentId ?? undefined : dto.documentId ?? undefined,
       dto.sourceCommentId === undefined ? existing.sourceCommentId ?? undefined : dto.sourceCommentId ?? undefined
     );
+    await this.assertDependenciesBelongToProject(existing.projectId, dto.dependencyIds);
     if (dto.documentId !== undefined && dto.documentId) {
       await this.permissions.assertDocumentRole(user, dto.documentId, ["REVIEWER", "EDITOR", "MANAGER"]);
     }
+    const assigneeUsers = dto.assigneeIds !== undefined || dto.assigneeId !== undefined
+      ? await this.resolveAssignableUsers(existing.projectId, this.workItemAssigneeIds(dto), user)
+      : null;
+    const labels = dto.labelNames !== undefined
+      ? await this.ensureLabels(existing.projectId, dto.labelNames ?? [])
+      : null;
+    const changes = this.workItemChanges(existing, dto, assigneeUsers, labels);
 
     const data: Prisma.WorkItemUpdateInput = {};
     if (dto.documentId !== undefined) data.document = dto.documentId ? { connect: { id: dto.documentId } } : { disconnect: true };
@@ -126,21 +174,51 @@ export class WorkItemsService {
     if (dto.title !== undefined) data.title = dto.title.trim();
     if (dto.description !== undefined) data.description = dto.description?.trim() || null;
     if (dto.attachments !== undefined) data.attachments = this.normalizeAttachments(dto.attachments);
-    if (dto.assigneeId !== undefined) data.assignee = dto.assigneeId ? { connect: { id: dto.assigneeId } } : { disconnect: true };
-    if (dto.assigneeName !== undefined) data.assigneeName = dto.assigneeName?.trim() || null;
+    if (assigneeUsers) {
+      data.assignee = assigneeUsers[0] ? { connect: { id: assigneeUsers[0].id } } : { disconnect: true };
+      data.assigneeName = assigneeUsers.length ? assigneeUsers.map((assignee) => assignee.name).join(", ") : dto.assigneeName?.trim() || null;
+    } else if (dto.assigneeName !== undefined) {
+      data.assigneeName = dto.assigneeName?.trim() || null;
+    }
     if (dto.dueDate !== undefined) data.dueDate = dto.dueDate ? new Date(dto.dueDate) : null;
 
-    const item = await this.prisma.workItem.update({
+    let item = await this.prisma.workItem.update({
       where: { id },
       data,
       include: this.includeRelations()
     });
 
+    if (assigneeUsers) {
+      await this.syncAssignees(id, assigneeUsers.map((assignee) => assignee.id), user);
+    }
+    if (dto.checklistItems !== undefined) {
+      await this.syncChecklist(id, dto.checklistItems ?? []);
+    }
+    if (labels) {
+      await this.syncLabels(id, labels.map((label) => label.id));
+    }
+    if (dto.dependencyIds !== undefined) {
+      await this.syncDependencies(id, existing.projectId, dto.dependencyIds ?? [], user);
+    }
+    item = await this.hydrateWorkItem(id);
+
     await this.collaboration.log(user, "WORK_ITEM_UPDATED", "Project", existing.projectId, {
       workItemId: id,
       status: item.status,
-      priority: item.priority
+      priority: item.priority,
+      changes: changes as Prisma.InputJsonValue
     });
+    if (assigneeUsers) {
+      const previousIds = new Set(existing.assignees.map((assignee) => assignee.userId));
+      const newIds = assigneeUsers.map((assignee) => assignee.id).filter((assigneeId) => !previousIds.has(assigneeId));
+      await this.notifyUsers(
+        newIds,
+        user,
+        "Bạn được gán vào ticket",
+        `${user.name || user.email} đã gán bạn vào ticket: ${item.title}`,
+        item.id
+      );
+    }
 
     return item;
   }
@@ -279,8 +357,209 @@ export class WorkItemsService {
       document: { select: { id: true, title: true, type: true, currentVersion: true } },
       sourceComment: { select: { id: true, blockId: true, selectedText: true, content: true, status: true } },
       assignee: { select: { id: true, name: true, email: true } },
+      assignees: {
+        include: { user: { select: { id: true, name: true, email: true } } },
+        orderBy: { createdAt: "asc" }
+      },
+      checklistItems: { orderBy: { position: "asc" } },
+      labels: {
+        include: { label: true },
+        orderBy: { createdAt: "asc" }
+      },
+      blockingLinks: {
+        include: { blockerItem: { select: { id: true, title: true, status: true } } },
+        orderBy: { createdAt: "asc" }
+      },
       createdBy: { select: { id: true, name: true, email: true } }
     } satisfies Prisma.WorkItemInclude;
+  }
+
+  private hydrateWorkItem(id: string) {
+    return this.prisma.workItem.findUniqueOrThrow({
+      where: { id },
+      include: this.includeRelations()
+    });
+  }
+
+  private workItemAssigneeIds(dto: { assigneeId?: string | null; assigneeIds?: string[] | null }) {
+    return this.uniqueIds([...(dto.assigneeIds ?? []), ...(dto.assigneeId ? [dto.assigneeId] : [])]);
+  }
+
+  private uniqueIds(ids: Array<string | null | undefined>) {
+    return Array.from(new Set(ids.map((id) => id?.trim()).filter((id): id is string => Boolean(id))));
+  }
+
+  private async resolveAssignableUsers(projectId: string, userIds: string[], actor: AuthenticatedUser) {
+    const ids = this.uniqueIds(userIds);
+    if (!ids.length) return [];
+
+    const members = await this.prisma.projectMember.findMany({
+      where: { projectId, userId: { in: ids }, user: { deletedAt: null, status: "ACTIVE" } },
+      include: { user: { select: { id: true, name: true, email: true } } }
+    });
+    const usersById = new Map(members.map((member) => [member.userId, member.user]));
+    const missingIds = ids.filter((id) => !usersById.has(id));
+    if (missingIds.length === 1 && missingIds[0] === actor.id) {
+      await this.permissions.assertProjectRole(actor, projectId, ["VIEWER"]);
+      const actorUser = await this.prisma.user.findFirst({
+        where: { id: actor.id, deletedAt: null, status: "ACTIVE" },
+        select: { id: true, name: true, email: true }
+      });
+      if (actorUser) usersById.set(actorUser.id, actorUser);
+    }
+
+    if (ids.some((id) => !usersById.has(id))) {
+      throw new BadRequestException("Người phụ trách phải là thành viên đang hoạt động trong dự án");
+    }
+    return ids.map((id) => usersById.get(id)).filter((user): user is { id: string; name: string; email: string } => Boolean(user));
+  }
+
+  private normalizeChecklistItems(items?: Array<{ title: string; done?: boolean }> | null) {
+    return (items ?? [])
+      .map((item) => ({ title: item.title.trim(), done: Boolean(item.done) }))
+      .filter((item) => item.title)
+      .slice(0, 80);
+  }
+
+  private normalizeLabelNames(labelNames?: string[] | null) {
+    return Array.from(
+      new Set(
+        (labelNames ?? [])
+          .map((label) => label.trim().replace(/\s+/g, " "))
+          .filter(Boolean)
+          .slice(0, 20)
+      )
+    );
+  }
+
+  private async ensureLabels(projectId: string, labelNames: string[]) {
+    const names = this.normalizeLabelNames(labelNames);
+    if (!names.length) return [];
+    return Promise.all(
+      names.map((name) =>
+        this.prisma.workItemLabel.upsert({
+          where: { projectId_name: { projectId, name } },
+          create: { projectId, name },
+          update: {}
+        })
+      )
+    );
+  }
+
+  private async syncAssignees(workItemId: string, assigneeIds: string[], user: AuthenticatedUser) {
+    await this.prisma.workItemAssignee.deleteMany({ where: { workItemId } });
+    if (!assigneeIds.length) return;
+    await this.prisma.workItemAssignee.createMany({
+      data: assigneeIds.map((userId) => ({ workItemId, userId, assignedBy: user.id })),
+      skipDuplicates: true
+    });
+  }
+
+  private async syncChecklist(workItemId: string, items: Array<{ title: string; done?: boolean }>) {
+    const normalized = this.normalizeChecklistItems(items);
+    await this.prisma.workItemChecklistItem.deleteMany({ where: { workItemId } });
+    if (!normalized.length) return;
+    await this.prisma.workItemChecklistItem.createMany({
+      data: normalized.map((item, index) => ({
+        workItemId,
+        title: item.title,
+        done: item.done,
+        position: index
+      }))
+    });
+  }
+
+  private async syncLabels(workItemId: string, labelIds: string[]) {
+    await this.prisma.workItemLabelLink.deleteMany({ where: { workItemId } });
+    if (!labelIds.length) return;
+    await this.prisma.workItemLabelLink.createMany({
+      data: labelIds.map((labelId) => ({ workItemId, labelId })),
+      skipDuplicates: true
+    });
+  }
+
+  private async syncDependencies(workItemId: string, projectId: string, dependencyIds: string[], user: AuthenticatedUser) {
+    const ids = this.uniqueIds(dependencyIds).filter((id) => id !== workItemId);
+    await this.assertDependenciesBelongToProject(projectId, ids);
+    await this.prisma.workItemDependency.deleteMany({ where: { blockedItemId: workItemId } });
+    if (!ids.length) return;
+    await this.prisma.workItemDependency.createMany({
+      data: ids.map((blockerItemId) => ({ blockedItemId: workItemId, blockerItemId, createdById: user.id })),
+      skipDuplicates: true
+    });
+  }
+
+  private async assertDependenciesBelongToProject(projectId: string, dependencyIds?: string[] | null) {
+    const ids = this.uniqueIds(dependencyIds ?? []);
+    if (!ids.length) return;
+    const count = await this.prisma.workItem.count({ where: { id: { in: ids }, projectId } });
+    if (count !== ids.length) {
+      throw new BadRequestException("Ticket phụ thuộc phải thuộc cùng dự án");
+    }
+  }
+
+  private async notifyUsers(userIds: string[], actor: AuthenticatedUser, title: string, message: string, workItemId: string) {
+    const recipients = this.uniqueIds(userIds).filter((userId) => userId !== actor.id);
+    if (!recipients.length) return;
+    await this.prisma.notification.createMany({
+      data: recipients.map((userId) => ({
+        userId,
+        title,
+        message,
+        entityType: "WorkItem",
+        entityId: workItemId
+      }))
+    });
+  }
+
+  private workItemChanges(
+    existing: {
+      title: string;
+      status: WorkItemStatus;
+      priority: WorkItemPriority;
+      dueDate?: Date | null;
+      assigneeName?: string | null;
+      assignees: Array<{ user: { name: string } }>;
+      checklistItems: Array<{ title: string; done: boolean }>;
+      labels: Array<{ label: { name: string } }>;
+      blockingLinks: Array<{ blockerItemId: string }>;
+    },
+    dto: UpdateWorkItemDto,
+    assignees: Array<{ id: string; name: string; email: string }> | null,
+    labels: Array<{ id: string; name: string }> | null
+  ) {
+    const changes: Record<string, { from: unknown; to: unknown }> = {};
+    if (dto.title !== undefined && dto.title.trim() !== existing.title) changes.title = { from: existing.title, to: dto.title.trim() };
+    if (dto.status !== undefined && dto.status !== existing.status) changes.status = { from: existing.status, to: dto.status };
+    if (dto.priority !== undefined && dto.priority !== existing.priority) changes.priority = { from: existing.priority, to: dto.priority };
+    if (dto.dueDate !== undefined) {
+      const from = existing.dueDate ? existing.dueDate.toISOString().slice(0, 10) : null;
+      const to = dto.dueDate ? new Date(dto.dueDate).toISOString().slice(0, 10) : null;
+      if (from !== to) changes.dueDate = { from, to };
+    }
+    if (assignees) {
+      const from = existing.assignees.length ? existing.assignees.map((assignee) => assignee.user.name) : existing.assigneeName ? [existing.assigneeName] : [];
+      const to = assignees.map((assignee) => assignee.name);
+      if (from.join("|") !== to.join("|")) changes.assignees = { from, to };
+    }
+    if (dto.checklistItems !== undefined) {
+      changes.checklist = {
+        from: existing.checklistItems.map((item) => ({ title: item.title, done: item.done })),
+        to: this.normalizeChecklistItems(dto.checklistItems ?? [])
+      };
+    }
+    if (labels) {
+      const from = existing.labels.map((item) => item.label.name);
+      const to = labels.map((label) => label.name);
+      if (from.join("|") !== to.join("|")) changes.labels = { from, to };
+    }
+    if (dto.dependencyIds !== undefined) {
+      changes.dependencies = {
+        from: existing.blockingLinks.map((link) => link.blockerItemId),
+        to: this.uniqueIds(dto.dependencyIds ?? [])
+      };
+    }
+    return changes;
   }
 
   private async assertLinkedEntitiesBelongToProject(projectId: string, documentId?: string | null, sourceCommentId?: string | null) {
@@ -373,8 +652,12 @@ export class WorkItemsService {
       dto.description === undefined &&
       dto.attachments === undefined &&
       dto.assigneeId === undefined &&
+      dto.assigneeIds === undefined &&
       dto.assigneeName === undefined &&
-      dto.dueDate === undefined;
+      dto.dueDate === undefined &&
+      dto.checklistItems === undefined &&
+      dto.labelNames === undefined &&
+      dto.dependencyIds === undefined;
   }
 
   private async canUseProjectRole(
