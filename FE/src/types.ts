@@ -91,6 +91,9 @@ export type ProjectMemberOption = {
   role?: string;
   projectRole?: string;
   projectRoles?: string[];
+  documentIds?: string[];
+  documentRoles?: string[];
+  source?: "PROJECT" | "DOCUMENT";
 };
 
 export type WorkItem = {

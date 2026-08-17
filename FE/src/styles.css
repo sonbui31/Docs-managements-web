@@ -1388,37 +1388,83 @@ button {
 
 .panel-header {
   padding: 10px 12px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid #e2e8f0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--bg-surface);
-  gap: 8px;
+  background: #ffffff;
+  gap: 6px;
 }
 
 .panel-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.panel-title h2 {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.panel-title h2 .title-count {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.panel-title .eyebrow {
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  color: #64748b;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   min-width: 0;
   overflow: hidden;
 }
 
-.panel-title h2 {
-  font-size: 0.88rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.panel-title .eyebrow > span:first-child {
+  flex-shrink: 0;
 }
 
-.panel-title .eyebrow {
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  letter-spacing: 0.05em;
-  font-weight: 600;
-  white-space: nowrap;
+.panel-title .eyebrow-dot {
+  color: #cbd5e1;
+  font-size: 0.6rem;
+  flex-shrink: 0;
+}
+
+.panel-title .eyebrow-code {
+  font-family: var(--font-mono, monospace);
+  color: #4f46e5;
+  font-weight: 800;
+  background: #eef2ff;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(79, 70, 229, 0.15);
+  max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 1;
 }
 
 .panel-action-group {
@@ -1428,34 +1474,63 @@ button {
   flex-shrink: 0;
 }
 
+.btn-add-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(79, 70, 229, 0.25);
+  background: #eef2ff;
+  color: #4f46e5;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-add-mini:hover:not(:disabled) {
+  background: #4f46e5;
+  color: #ffffff;
+  border-color: #4f46e5;
+  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.25);
+}
+
+.btn-add-mini:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .panel-close-btn {
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
   display: grid;
   place-items: center;
+  cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .panel-close-btn:hover {
-  background: rgba(225, 29, 72, 0.1);
-  color: var(--accent-rose);
-  border-color: rgba(225, 29, 72, 0.3);
+  background: #fef2f2;
+  color: #ef4444;
+  border-color: #fecaca;
 }
 
-/* Document Library Filters */
+/* Document Library Filters (Segmented Control) */
 .library-filter-tabs {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
-  padding: 4px;
+  gap: 3px;
+  padding: 3px;
   background: #f1f5f9;
   border-radius: 10px;
   border: 1px solid #e2e8f0;
-  margin: 8px 10px 10px 10px;
+  margin: 10px 10px 8px 10px;
 }
 
 .library-filter-tabs::-webkit-scrollbar {
@@ -1466,13 +1541,13 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   padding: 6px 8px;
   border-radius: 7px;
-  font-weight: 600;
+  font-weight: 700;
   color: #64748b;
   white-space: nowrap;
-  transition: all 0.15s ease;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
   border: none;
   background: transparent;
   cursor: pointer;
@@ -1488,7 +1563,7 @@ button {
   background: #ffffff;
   color: #4f46e5;
   font-weight: 800;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
 }
 
 /* Document List - Card Rows with Left Accent Indicator */
@@ -1496,10 +1571,27 @@ button {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px 28px 10px;
+  gap: 7px;
+  padding: 4px 10px 24px 10px;
   overflow-y: auto;
   min-height: 0;
+}
+
+.document-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 16px;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.document-empty-state p {
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin: 0;
 }
 
 .document-row {
@@ -1507,7 +1599,7 @@ button {
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   text-align: left;
@@ -1515,21 +1607,22 @@ button {
   box-sizing: border-box;
   overflow: hidden;
   position: relative;
-  transition: all 0.18s ease;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03);
+  cursor: pointer;
 }
 
 .document-row:hover {
   background: #f8fafc;
   border-color: #cbd5e1;
   transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
 }
 
 .document-row.selected {
   background: #eef2ff;
-  border-color: rgba(79, 70, 229, 0.3);
-  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.08);
+  border-color: rgba(79, 70, 229, 0.35);
+  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.09);
 }
 
 .document-row.selected::before {
@@ -1543,40 +1636,39 @@ button {
   background: linear-gradient(180deg, #6366f1 0%, #4f46e5 100%);
 }
 
-
+/* File Icon Badges - Distinct Color Coding */
 .doc-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background: #eef2ff;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
   display: grid;
   place-items: center;
-  color: #4f46e5;
   flex-shrink: 0;
-  border: 1px solid rgba(79, 70, 229, 0.15);
+  transition: all 0.15s ease;
+}
+
+.doc-icon.md {
+  background: #eef2ff;
+  color: #4f46e5;
+  border: 1px solid rgba(79, 70, 229, 0.2);
+}
+
+.doc-icon.pdf {
+  background: #fff1f2;
+  color: #e11d48;
+  border: 1px solid rgba(225, 29, 72, 0.2);
+}
+
+.doc-icon.doc {
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.2);
 }
 
 .doc-info {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-}
-
-.doc-comments-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  margin-top: 2px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
-  color: #c2410c;
-  border: 1px solid rgba(249, 115, 22, 0.35);
-  font-weight: 800;
-  font-size: 0.66rem;
-  line-height: 1;
-  box-shadow: 0 1px 4px rgba(249, 115, 22, 0.12);
-  white-space: nowrap;
 }
 
 .doc-info strong {
@@ -1594,10 +1686,10 @@ button {
 
 .doc-info small {
   display: block;
-  font-size: 0.7rem;
+  font-size: 0.69rem;
   color: #64748b;
   margin-top: 3px;
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1607,15 +1699,7 @@ button {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.doc-status-col {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 5px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
@@ -1627,12 +1711,12 @@ button {
 
 .version-tag {
   font-family: var(--font-mono, monospace);
-  font-size: 0.66rem;
-  font-weight: 800;
+  font-size: 0.65rem;
+  font-weight: 700;
   color: #64748b;
   background: #f1f5f9;
-  padding: 2px 6px;
-  border-radius: 6px;
+  padding: 2px 5px;
+  border-radius: 5px;
   border: 1px solid #e2e8f0;
   white-space: nowrap;
 }
@@ -1642,18 +1726,17 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px;
+  padding: 2px 7px;
   border-radius: 999px;
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   font-weight: 800;
   text-transform: capitalize;
   white-space: nowrap;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .status-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
 }
 
@@ -1665,7 +1748,7 @@ button {
 
 .status-pill.draft .status-dot {
   background: #f59e0b;
-  box-shadow: 0 0 5px rgba(245, 158, 11, 0.5);
+  box-shadow: 0 0 4px rgba(245, 158, 11, 0.6);
 }
 
 .status-pill.deployed {
@@ -1676,7 +1759,24 @@ button {
 
 .status-pill.deployed .status-dot {
   background: #10b981;
-  box-shadow: 0 0 5px rgba(16, 185, 129, 0.6);
+  box-shadow: 0 0 4px rgba(16, 185, 129, 0.6);
+}
+
+.doc-comments-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 1px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+  color: #c2410c;
+  border: 1px solid rgba(249, 115, 22, 0.3);
+  font-weight: 800;
+  font-size: 0.65rem;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(249, 115, 22, 0.1);
+  white-space: nowrap;
 }
 
 .form-hint {
@@ -8186,10 +8286,10 @@ button {
 /* Panel Mode Switcher Tabs */
 .panel-mode-tabs {
   display: flex;
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border-subtle);
-  padding: 4px 6px;
-  gap: 4px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 6px 10px;
+  gap: 6px;
 }
 
 .mode-tab {
@@ -8198,24 +8298,47 @@ button {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 6px 10px;
+  padding: 7px 10px;
   font-size: 0.74rem;
-  font-weight: 600;
-  border-radius: 6px;
-  color: var(--text-secondary);
-  background: transparent;
+  font-weight: 700;
+  border-radius: 8px;
+  color: #64748b;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .mode-tab:hover {
-  color: var(--text-primary);
-  background: var(--bg-canvas);
+  color: #0f172a;
+  background: #f1f5f9;
+  border-color: #cbd5e1;
 }
 
 .mode-tab.active {
-  background: var(--bg-panel);
-  color: var(--accent-primary);
-  box-shadow: var(--shadow-sm);
+  background: #ffffff;
+  color: #4f46e5;
+  border-color: rgba(79, 70, 229, 0.3);
+  font-weight: 800;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05);
+}
+
+.mode-tab .mode-count {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+  line-height: 1.2;
+}
+
+.mode-tab.active .mode-count {
+  background: #eef2ff;
+  color: #4f46e5;
+  border-color: rgba(79, 70, 229, 0.2);
 }
 
 /* TOC Container & Tree */
@@ -12912,29 +13035,57 @@ button {
   align-items: end;
 }
 
-.workitem-comment-composer textarea,
-.workitem-reply-composer textarea {
-  width: 100%;
-  border: 1px solid #cbd5e1;
-  border-radius: 12px;
-  padding: 12px 14px;
-  resize: vertical;
-  font: inherit;
-  font-size: 0.88rem;
-  background: #ffffff;
-  transition: all 0.18s ease;
-}
-
-.workitem-comment-composer textarea:focus,
-.workitem-reply-composer textarea:focus {
-  border-color: #4f46e5;
-  box-shadow: 0 0 0 3.5px rgba(79, 70, 229, 0.14);
-  outline: none;
-}
-
 .workitem-mention-input {
   position: relative;
   min-width: 0;
+  flex: 1;
+}
+
+.workitem-mention-editor {
+  min-height: 72px;
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
+  font-family: inherit;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.workitem-mention-editor:focus {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 3.5px rgba(79, 70, 229, 0.14);
+}
+
+.workitem-mention-editor:empty::before {
+  content: attr(data-placeholder);
+  color: #94a3b8;
+  pointer-events: none;
+  display: block;
+}
+
+.workitem-mention-pill {
+  color: #4338ca;
+  background: #eef2ff;
+  font-weight: 800;
+  padding: 1px 7px;
+  border-radius: 6px;
+  border: 1px solid rgba(79, 70, 229, 0.3);
+  box-shadow: 0 1px 3px rgba(79, 70, 229, 0.08);
+  display: inline-flex;
+  align-items: center;
+  margin: 0 2px;
+  vertical-align: baseline;
+  line-height: 1.25;
+  user-select: all;
 }
 
 .workitem-mention-menu {

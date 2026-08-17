@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { Prisma, ProjectRole } from "@prisma/client";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -52,32 +52,92 @@ export class ProjectsService {
   async findMembers(id: string, user: AuthenticatedUser) {
     await this.permissions.assertProjectRole(user, id, ["VIEWER"]);
 
-    const members = await this.prisma.projectMember.findMany({
-      where: { projectId: id },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            globalRole: true,
-            status: true
+    const [members, documentPermissions] = await Promise.all([
+      this.prisma.projectMember.findMany({
+        where: { projectId: id },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              globalRole: true,
+              status: true
+            }
           }
-        }
-      },
-      orderBy: { createdAt: "asc" }
-    });
+        },
+        orderBy: { createdAt: "asc" }
+      }),
+      this.prisma.documentPermission.findMany({
+        where: { projectId: id },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              globalRole: true,
+              status: true
+            }
+          }
+        },
+        orderBy: { createdAt: "asc" }
+      })
+    ]);
 
-    return members
+    const users = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        email: string;
+        role: string;
+        projectRole?: ProjectRole;
+        projectRoles?: ProjectRole[];
+        documentIds: string[];
+        documentRoles: ProjectRole[];
+        source: "PROJECT" | "DOCUMENT";
+      }
+    >();
+
+    members
       .filter((member) => member.user.status === "ACTIVE")
-      .map((member) => ({
-        id: member.user.id,
-        name: member.user.name,
-        email: member.user.email,
-        role: member.user.globalRole,
-        projectRole: member.role,
-        projectRoles: member.roles
-      }));
+      .forEach((member) => {
+        users.set(member.user.id, {
+          id: member.user.id,
+          name: member.user.name,
+          email: member.user.email,
+          role: member.user.globalRole,
+          projectRole: member.role,
+          projectRoles: member.roles,
+          documentIds: [],
+          documentRoles: [],
+          source: "PROJECT"
+        });
+      });
+
+    documentPermissions
+      .filter((permission) => permission.user.status === "ACTIVE")
+      .forEach((permission) => {
+        const existing = users.get(permission.user.id);
+        const documentIds = new Set([...(existing?.documentIds ?? []), permission.documentId]);
+        const permissionRoles = permission.roles?.length ? permission.roles : [permission.role];
+        const documentRoles = new Set([...(existing?.documentRoles ?? []), ...permissionRoles]);
+
+        users.set(permission.user.id, {
+          id: permission.user.id,
+          name: permission.user.name,
+          email: permission.user.email,
+          role: permission.user.globalRole,
+          projectRole: existing?.projectRole,
+          projectRoles: existing?.projectRoles,
+          documentIds: Array.from(documentIds),
+          documentRoles: Array.from(documentRoles),
+          source: existing?.source ?? "DOCUMENT"
+        });
+      });
+
+    return Array.from(users.values());
   }
 
   async create(dto: CreateProjectDto, user: AuthenticatedUser) {

@@ -68,6 +68,15 @@ function serviceHarness() {
     },
     notification: {
       createMany: jest.fn()
+    },
+    projectMember: {
+      findMany: jest.fn()
+    },
+    documentPermission: {
+      findMany: jest.fn()
+    },
+    user: {
+      findFirst: jest.fn()
     }
   };
   const permissions = {
@@ -148,5 +157,33 @@ describe("WorkItemsService permissions", () => {
 
     await expect(service.removeComment("wi-1", "comment-1", owner)).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.workItemComment.delete).not.toHaveBeenCalled();
+  });
+
+  it("allows assigning a user who has direct permission on the linked document", async () => {
+    const { service, prisma } = serviceHarness();
+    prisma.projectMember.findMany.mockResolvedValue([]);
+    prisma.documentPermission.findMany.mockResolvedValue([
+      {
+        userId: "doc-user-1",
+        user: { id: "doc-user-1", name: "Doc User", email: "doc@example.com" }
+      }
+    ]);
+
+    await expect((service as any).resolveAssignableUsers("project-1", ["doc-user-1"], owner, "doc-1")).resolves.toEqual([
+      { id: "doc-user-1", name: "Doc User", email: "doc@example.com" }
+    ]);
+    expect(prisma.documentPermission.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ projectId: "project-1", documentId: "doc-1" })
+      })
+    );
+  });
+
+  it("denies assigning a document-only user when the ticket is not linked to that document", async () => {
+    const { service, prisma } = serviceHarness();
+    prisma.projectMember.findMany.mockResolvedValue([]);
+
+    await expect((service as any).resolveAssignableUsers("project-1", ["doc-user-1"], owner, null)).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.documentPermission.findMany).not.toHaveBeenCalled();
   });
 });

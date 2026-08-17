@@ -48,7 +48,7 @@ export class WorkItemsService {
     await this.assertLinkedEntitiesBelongToProject(dto.projectId, dto.documentId, dto.sourceCommentId);
     await this.assertDependenciesBelongToProject(dto.projectId, dto.dependencyIds);
 
-    const assigneeUsers = await this.resolveAssignableUsers(dto.projectId, this.workItemAssigneeIds(dto), user);
+    const assigneeUsers = await this.resolveAssignableUsers(dto.projectId, this.workItemAssigneeIds(dto), user, dto.documentId);
     const labels = await this.ensureLabels(dto.projectId, dto.labelNames ?? []);
     const column = await this.workboardColumns.resolveColumnForWorkItem(dto.projectId, dto.columnId, dto.status);
 
@@ -153,17 +153,20 @@ export class WorkItemsService {
     if (!onlyStatusChange) {
       this.assertOwnedByCurrentUser(existing, user, "Bạn chỉ có thể sửa ticket do chính mình tạo");
     }
+    const nextDocumentId = dto.documentId === undefined ? existing.documentId ?? undefined : dto.documentId ?? undefined;
+    const nextSourceCommentId = dto.sourceCommentId === undefined ? existing.sourceCommentId ?? undefined : dto.sourceCommentId ?? undefined;
+
     await this.assertLinkedEntitiesBelongToProject(
       existing.projectId,
-      dto.documentId === undefined ? existing.documentId ?? undefined : dto.documentId ?? undefined,
-      dto.sourceCommentId === undefined ? existing.sourceCommentId ?? undefined : dto.sourceCommentId ?? undefined
+      nextDocumentId,
+      nextSourceCommentId
     );
     await this.assertDependenciesBelongToProject(existing.projectId, dto.dependencyIds);
     if (dto.documentId !== undefined && dto.documentId) {
       await this.permissions.assertDocumentRole(user, dto.documentId, ["REVIEWER", "EDITOR", "MANAGER"]);
     }
     const assigneeUsers = dto.assigneeIds !== undefined || dto.assigneeId !== undefined
-      ? await this.resolveAssignableUsers(existing.projectId, this.workItemAssigneeIds(dto), user)
+      ? await this.resolveAssignableUsers(existing.projectId, this.workItemAssigneeIds(dto), user, nextDocumentId)
       : null;
     const labels = dto.labelNames !== undefined
       ? await this.ensureLabels(existing.projectId, dto.labelNames ?? [])
@@ -403,7 +406,7 @@ export class WorkItemsService {
     return Array.from(new Set(ids.map((id) => id?.trim()).filter((id): id is string => Boolean(id))));
   }
 
-  private async resolveAssignableUsers(projectId: string, userIds: string[], actor: AuthenticatedUser) {
+  private async resolveAssignableUsers(projectId: string, userIds: string[], actor: AuthenticatedUser, documentId?: string | null) {
     const ids = this.uniqueIds(userIds);
     if (!ids.length) return [];
 
@@ -412,6 +415,20 @@ export class WorkItemsService {
       include: { user: { select: { id: true, name: true, email: true } } }
     });
     const usersById = new Map(members.map((member) => [member.userId, member.user]));
+
+    if (documentId) {
+      const documentPermissionUsers = await this.prisma.documentPermission.findMany({
+        where: {
+          projectId,
+          documentId,
+          userId: { in: ids.filter((id) => !usersById.has(id)) },
+          user: { deletedAt: null, status: "ACTIVE" }
+        },
+        include: { user: { select: { id: true, name: true, email: true } } }
+      });
+      documentPermissionUsers.forEach((permission) => usersById.set(permission.userId, permission.user));
+    }
+
     const missingIds = ids.filter((id) => !usersById.has(id));
     if (missingIds.length === 1 && missingIds[0] === actor.id) {
       await this.permissions.assertProjectRole(actor, projectId, ["VIEWER"]);
@@ -423,7 +440,7 @@ export class WorkItemsService {
     }
 
     if (ids.some((id) => !usersById.has(id))) {
-      throw new BadRequestException("Người phụ trách phải là thành viên đang hoạt động trong dự án");
+      throw new BadRequestException("Người phụ trách phải là thành viên dự án hoặc người có quyền trên tài liệu liên quan");
     }
     return ids.map((id) => usersById.get(id)).filter((user): user is { id: string; name: string; email: string } => Boolean(user));
   }

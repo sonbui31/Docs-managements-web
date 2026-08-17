@@ -436,6 +436,15 @@ function joinAssigneeNames(names: string[]) {
   return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean))).join(", ");
 }
 
+function isProjectAssigneeOption(member: ProjectMemberOption) {
+  return Boolean(member.projectRole || member.projectRoles?.length || member.source === "PROJECT");
+}
+
+function canAssignMemberToWorkItem(member: ProjectMemberOption, draft?: Pick<WorkItemDraft, "documentId"> | null) {
+  if (isProjectAssigneeOption(member)) return true;
+  return Boolean(draft?.documentId && member.documentIds?.includes(draft.documentId));
+}
+
 function workItemAssigneeNames(item: WorkItem) {
   const names = item.assignees?.map((assignee) => assignee.user.name).filter(Boolean) ?? [];
   return names.length ? names : splitAssigneeNames(item.assigneeName ?? item.assignee?.name ?? "");
@@ -597,6 +606,8 @@ function App() {
   const [replyingWorkItemCommentId, setReplyingWorkItemCommentId] = useState<string | null>(null);
   const [workItemReplyText, setWorkItemReplyText] = useState<string>("");
   const [activeWorkItemMentionTarget, setActiveWorkItemMentionTarget] = useState<"comment" | "reply" | null>(null);
+  const commentEditorRef = useRef<HTMLDivElement>(null);
+  const replyEditorRef = useRef<HTMLDivElement>(null);
   const [editingWorkItemCommentId, setEditingWorkItemCommentId] = useState<string | null>(null);
   const [editingWorkItemCommentText, setEditingWorkItemCommentText] = useState<string>("");
   const [isUploadingWorkItemAttachment, setIsUploadingWorkItemAttachment] = useState<boolean>(false);
@@ -1709,17 +1720,18 @@ function App() {
   const workItemAssigneeOptions = useMemo(() => {
     const targetProjectId = workItemDraft?.projectId || selectedProjectId;
     const projectMembers = projectMembersByProject[targetProjectId] ?? [];
-    const options = [...projectMembers];
+    const options = projectMembers.filter((member) => canAssignMemberToWorkItem(member, workItemDraft));
     if (currentUser && !options.some((member) => member.id === currentUser.id || member.email?.toLowerCase() === currentUser.email.toLowerCase())) {
       options.push({
         id: currentUser.id,
         name: currentUser.name,
         email: currentUser.email,
-        role: currentUser.role
+        role: currentUser.role,
+        source: "PROJECT"
       });
     }
     return options.sort((a, b) => a.name.localeCompare(b.name, "vi"));
-  }, [currentUser, projectMembersByProject, selectedProjectId, workItemDraft?.projectId]);
+  }, [currentUser, projectMembersByProject, selectedProjectId, workItemDraft]);
 
   useEffect(() => {
     if (!isAssigneeMenuOpen) return;
@@ -1958,36 +1970,76 @@ function App() {
     return <CheckCircle2 size={13} />;
   }
 
-  function renderMentionedText(content: string) {
+  function renderMentionedText(content: string, isInputHighlight = false) {
     const mentionNames = workItemMentionOptions
       .map((member) => member.name.trim())
       .filter(Boolean)
       .sort((a, b) => b.length - a.length);
-    if (!mentionNames.length) return content;
+
+    if (!mentionNames.length) {
+      if (isInputHighlight) {
+        return <span className="workitem-mention-plain">{content}{content.endsWith("\n") ? "\u200B" : ""}</span>;
+      }
+      return content;
+    }
 
     const nodes: ReactNode[] = [];
     let cursor = 0;
     while (cursor < content.length) {
       const atIndex = content.indexOf("@", cursor);
       if (atIndex < 0) {
-        nodes.push(content.slice(cursor));
+        const remaining = content.slice(cursor);
+        nodes.push(
+          isInputHighlight ? (
+            <span className="workitem-mention-plain" key={`plain-${cursor}`}>
+              {remaining}
+            </span>
+          ) : (
+            remaining
+          )
+        );
         break;
       }
 
       const matchedName = mentionNames.find((name) => content.slice(atIndex + 1).startsWith(name));
       if (!matchedName) {
-        nodes.push(content.slice(cursor, atIndex + 1));
+        const textChunk = content.slice(cursor, atIndex + 1);
+        nodes.push(
+          isInputHighlight ? (
+            <span className="workitem-mention-plain" key={`plain-${cursor}`}>
+              {textChunk}
+            </span>
+          ) : (
+            textChunk
+          )
+        );
         cursor = atIndex + 1;
         continue;
       }
 
-      if (atIndex > cursor) nodes.push(content.slice(cursor, atIndex));
+      if (atIndex > cursor) {
+        const textChunk = content.slice(cursor, atIndex);
+        nodes.push(
+          isInputHighlight ? (
+            <span className="workitem-mention-plain" key={`plain-${cursor}`}>
+              {textChunk}
+            </span>
+          ) : (
+            textChunk
+          )
+        );
+      }
+
       nodes.push(
-        <span className="workitem-mentioned-user" key={`${atIndex}-${matchedName}`}>
+        <span className={isInputHighlight ? "workitem-mention-pill" : "workitem-mentioned-user"} key={`${atIndex}-${matchedName}`}>
           @{matchedName}
         </span>
       );
       cursor = atIndex + matchedName.length + 1;
+    }
+
+    if (isInputHighlight && content.endsWith("\n")) {
+      nodes.push(<span className="workitem-mention-plain" key="trailing-newline">{"\u200B"}</span>);
     }
 
     return nodes;
@@ -2435,15 +2487,106 @@ function App() {
       .slice(0, 6);
   }
 
+  function getEditorText(el: HTMLElement): string {
+    let text = "";
+    el.childNodes.forEach((node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        text += node.textContent;
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const element = node as HTMLElement;
+        if (element.classList.contains("workitem-mention-pill")) {
+          text += element.textContent;
+        } else if (element.tagName === "BR") {
+          text += "\n";
+        } else if (element.tagName === "DIV" || element.tagName === "P") {
+          text += (text ? "\n" : "") + getEditorText(element);
+        } else {
+          text += element.textContent;
+        }
+      }
+    });
+    return text.replace(/\u00A0/g, " ");
+  }
+
+  function insertPillAtCursor(editorEl: HTMLElement, memberName: string) {
+    const sel = window.getSelection();
+    let range: Range | null = null;
+    if (sel && sel.rangeCount > 0) {
+      const candidateRange = sel.getRangeAt(0);
+      if (editorEl.contains(candidateRange.commonAncestorContainer)) {
+        range = candidateRange;
+      }
+    }
+
+    const pill = document.createElement("span");
+    pill.className = "workitem-mention-pill";
+    pill.setAttribute("contenteditable", "false");
+    pill.textContent = `@${memberName}`;
+    const spaceNode = document.createTextNode("\u00A0");
+
+    if (range) {
+      const textNode = range.startContainer;
+      if (textNode.nodeType === Node.TEXT_NODE && textNode.textContent) {
+        const text = textNode.textContent;
+        const offset = range.startOffset;
+        const atIndex = text.lastIndexOf("@", offset - 1);
+        if (atIndex >= 0) {
+          const beforeText = text.slice(0, atIndex);
+          const afterText = text.slice(offset);
+          textNode.textContent = beforeText;
+
+          const parent = textNode.parentNode || editorEl;
+          const nextSibling = textNode.nextSibling;
+
+          parent.insertBefore(pill, nextSibling);
+          parent.insertBefore(spaceNode, pill.nextSibling);
+
+          if (afterText) {
+            const afterNode = document.createTextNode(afterText);
+            parent.insertBefore(afterNode, spaceNode.nextSibling);
+          }
+
+          const newRange = document.createRange();
+          newRange.setStartAfter(spaceNode);
+          newRange.setEndAfter(spaceNode);
+          sel?.removeAllRanges();
+          sel?.addRange(newRange);
+          return;
+        }
+      }
+    }
+
+    // Fallback: append pill to editor
+    editorEl.appendChild(pill);
+    editorEl.appendChild(spaceNode);
+    const newRange = document.createRange();
+    newRange.setStartAfter(spaceNode);
+    newRange.setEndAfter(spaceNode);
+    if (sel) {
+      sel.removeAllRanges();
+      sel.addRange(newRange);
+    }
+  }
+
   function insertWorkItemMention(target: "comment" | "reply", member: ProjectMemberOption) {
-    const value = target === "comment" ? workItemCommentText : workItemReplyText;
-    const trigger = getMentionTrigger(value);
-    if (!trigger) return;
-    const nextValue = `${value.slice(0, trigger.atIndex)}@${member.name} `;
-    if (target === "comment") {
-      setWorkItemCommentText(nextValue);
+    const editorEl = target === "comment" ? commentEditorRef.current : replyEditorRef.current;
+    if (editorEl) {
+      editorEl.focus();
+      insertPillAtCursor(editorEl, member.name);
+      const text = getEditorText(editorEl);
+      if (target === "comment") {
+        setWorkItemCommentText(text);
+      } else {
+        setWorkItemReplyText(text);
+      }
     } else {
-      setWorkItemReplyText(nextValue);
+      const value = target === "comment" ? workItemCommentText : workItemReplyText;
+      const trigger = getMentionTrigger(value);
+      if (trigger) {
+        const nextValue = `${value.slice(0, trigger.atIndex)}@${member.name} `;
+        if (target === "comment") setWorkItemCommentText(nextValue);
+        else setWorkItemReplyText(nextValue);
+      }
     }
     setActiveWorkItemMentionTarget(null);
   }
@@ -2485,8 +2628,10 @@ function App() {
       if (parentId) {
         setReplyingWorkItemCommentId(null);
         setWorkItemReplyText("");
+        if (replyEditorRef.current) replyEditorRef.current.innerHTML = "";
       } else {
         setWorkItemCommentText("");
+        if (commentEditorRef.current) commentEditorRef.current.innerHTML = "";
       }
       await loadWorkItemComments(viewingWorkItem.id);
       await loadWorkItemActivity(viewingWorkItem.id);
@@ -2581,15 +2726,16 @@ function App() {
         }
       }
 
-      const validProjectMemberIds = new Set(projectMembers.map((member) => member.id));
+      const assignableMembers = projectMembers.filter((member) => canAssignMemberToWorkItem(member, workItemDraft));
+      const validProjectMemberIds = new Set(assignableMembers.map((member) => member.id));
       if (currentUser) validProjectMemberIds.add(currentUser.id);
       const assigneeIds = Array.from(new Set(workItemDraft.assigneeIds)).filter((id) => validProjectMemberIds.has(id));
       if (workItemDraft.assigneeIds.length !== assigneeIds.length) {
-        addToast("error", "Người phụ trách không hợp lệ", "Chỉ có thể gán ticket cho thành viên đang hoạt động trong dự án.");
+        addToast("error", "Người phụ trách không hợp lệ", "Chỉ có thể gán ticket cho thành viên dự án hoặc người có quyền trên tài liệu liên quan.");
         return;
       }
       const assigneeName = assigneeIds
-        .map((id) => projectMembers.find((member) => member.id === id)?.name ?? (id === currentUser?.id ? currentUser.name : undefined))
+        .map((id) => assignableMembers.find((member) => member.id === id)?.name ?? (id === currentUser?.id ? currentUser.name : undefined))
         .filter((name): name is string => Boolean(name))
         .join(", ");
 
@@ -5225,8 +5371,7 @@ function App() {
               <div className="panel library">
                 <div className="panel-header">
                   <div className="panel-title">
-                    <p className="eyebrow">{`Thư viện • ${selectedProject.code}`}</p>
-                    <h2>Tài liệu ({filteredDocuments.length})</h2>
+                    <h2>Tài liệu <span className="title-count">({filteredDocuments.length})</span></h2>
                   </div>
                   <div className="panel-action-group">
                     <button
@@ -5258,14 +5403,18 @@ function App() {
                     type="button"
                     onClick={() => setLeftPanelMode("docs")}
                   >
-                    <FileText size={12} /> Tài liệu ({filteredDocuments.length})
+                    <FileText size={13} />
+                    <span>Tài liệu</span>
+                    <span className="mode-count">{filteredDocuments.length}</span>
                   </button>
                   <button
                     className={leftPanelMode === "toc" ? "mode-tab active" : "mode-tab"}
                     type="button"
                     onClick={() => setLeftPanelMode("toc")}
                   >
-                    <ListTree size={12} /> Mục lục ({selectedDocument.id === "empty-document" ? 0 : tocItems.length})
+                    <ListTree size={13} />
+                    <span>Mục lục</span>
+                    <span className="mode-count">{selectedDocument.id === "empty-document" ? 0 : tocItems.length}</span>
                   </button>
                 </div>
 
@@ -5287,13 +5436,15 @@ function App() {
                     {/* Documents List */}
                     <div className="document-table">
                       {filteredDocuments.length === 0 ? (
-                        <div style={{ padding: 16, textAlign: "center", color: "var(--text-muted)", fontSize: "0.78rem" }}>
-                          Không có tài liệu nào phù hợp.
+                        <div className="document-empty-state">
+                          <BookOpen size={24} />
+                          <p>Không có tài liệu nào phù hợp.</p>
                         </div>
                       ) : (
                         filteredDocuments.map((doc) => {
                           const docCommentsCount = documentCommentCounts[doc.id] ?? doc.openCommentsCount ?? 0;
                           const fullTitle = normalizeVietnameseText(doc.title);
+                          const fileKind = doc.fileType === "pdf" ? "pdf" : doc.fileType === "md" ? "md" : "doc";
                           return (
                             <button
                               key={doc.id}
@@ -5305,13 +5456,13 @@ function App() {
                                 setSelectedDocumentId(doc.id);
                               }}
                             >
-                              <div className="doc-icon">
+                              <div className={`doc-icon ${fileKind}`}>
                                 {doc.fileType === "pdf" ? (
-                                  <FileText size={16} />
+                                  <FileText size={15} />
                                 ) : doc.fileType === "md" ? (
-                                  <FileCode size={16} />
+                                  <FileCode size={15} />
                                 ) : (
-                                  <FileCheck2 size={16} />
+                                  <FileCheck2 size={15} />
                                 )}
                               </div>
                               <div className="doc-info">
@@ -6698,12 +6849,22 @@ function App() {
 
                 <div className="workitem-comment-composer">
                   <div className="workitem-mention-input">
-                    <textarea
-                      rows={3}
-                      value={workItemCommentText}
-                      onChange={(event) => handleWorkItemCommentTextChange(event.target.value, "comment")}
-                      onBlur={() => window.setTimeout(() => setActiveWorkItemMentionTarget(null), 120)}
-                      placeholder="Nhập comment... Gõ @ để mention người xử lý"
+                    <div
+                      ref={commentEditorRef}
+                      className="workitem-mention-editor"
+                      contentEditable
+                      onInput={() => {
+                        if (commentEditorRef.current) {
+                          const text = getEditorText(commentEditorRef.current);
+                          handleWorkItemCommentTextChange(text, "comment");
+                        }
+                      }}
+                      onFocus={() => {
+                        const text = commentEditorRef.current ? getEditorText(commentEditorRef.current) : workItemCommentText;
+                        setActiveWorkItemMentionTarget(getMentionTrigger(text) ? "comment" : null);
+                      }}
+                      onBlur={() => window.setTimeout(() => setActiveWorkItemMentionTarget(null), 150)}
+                      data-placeholder="Nhập comment... Gõ @ để mention người xử lý"
                     />
                     {renderWorkItemMentionMenu("comment")}
                   </div>
@@ -6819,12 +6980,22 @@ function App() {
                       {replyingWorkItemCommentId === comment.id && (
                         <div className="workitem-reply-composer">
                           <div className="workitem-mention-input">
-                            <textarea
-                              rows={2}
-                              value={workItemReplyText}
-                              onChange={(event) => handleWorkItemCommentTextChange(event.target.value, "reply")}
-                              onBlur={() => window.setTimeout(() => setActiveWorkItemMentionTarget(null), 120)}
-                              placeholder="Nhập reply... Gõ @ để mention"
+                            <div
+                              ref={replyEditorRef}
+                              className="workitem-mention-editor"
+                              contentEditable
+                              onInput={() => {
+                                if (replyEditorRef.current) {
+                                  const text = getEditorText(replyEditorRef.current);
+                                  handleWorkItemCommentTextChange(text, "reply");
+                                }
+                              }}
+                              onFocus={() => {
+                                const text = replyEditorRef.current ? getEditorText(replyEditorRef.current) : workItemReplyText;
+                                setActiveWorkItemMentionTarget(getMentionTrigger(text) ? "reply" : null);
+                              }}
+                              onBlur={() => window.setTimeout(() => setActiveWorkItemMentionTarget(null), 150)}
+                              data-placeholder="Nhập reply... Gõ @ để mention"
                             />
                             {renderWorkItemMentionMenu("reply")}
                           </div>
@@ -7150,7 +7321,10 @@ function App() {
                               />
                               <span>
                                 <strong>{member.name}</strong>
-                                <small>{member.email}</small>
+                                <small>
+                                  {member.email}
+                                  {!isProjectAssigneeOption(member) ? " · Quyền tài liệu" : ""}
+                                </small>
                               </span>
                             </label>
                           );

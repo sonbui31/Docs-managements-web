@@ -14,7 +14,8 @@ const user: AuthenticatedUser = {
 describe("ProjectsService permissions", () => {
   it("requires project-level VIEWER permission before exposing project members", async () => {
     const prisma = {
-      projectMember: { findMany: jest.fn() }
+      projectMember: { findMany: jest.fn() },
+      documentPermission: { findMany: jest.fn() }
     };
     const permissions = {
       assertProjectRole: jest.fn().mockRejectedValue(new ForbiddenException("denied")),
@@ -43,6 +44,22 @@ describe("ProjectsService permissions", () => {
             user: { id: "u2", name: "Disabled", email: "disabled@example.com", globalRole: "EMPLOYEE", status: "DISABLED" }
           }
         ])
+      },
+      documentPermission: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            documentId: "doc-1",
+            role: "EDITOR",
+            roles: ["VIEWER", "EDITOR"],
+            user: { id: "u3", name: "Doc User", email: "doc@example.com", globalRole: "EMPLOYEE", status: "ACTIVE" }
+          },
+          {
+            documentId: "doc-2",
+            role: "VIEWER",
+            roles: ["VIEWER"],
+            user: { id: "u4", name: "Disabled Doc", email: "disabled-doc@example.com", globalRole: "EMPLOYEE", status: "DISABLED" }
+          }
+        ])
       }
     };
     const permissions = {
@@ -57,7 +74,21 @@ describe("ProjectsService permissions", () => {
         email: "active@example.com",
         role: "EMPLOYEE",
         projectRole: "MANAGER",
-        projectRoles: ["VIEWER", "MANAGER"]
+        projectRoles: ["VIEWER", "MANAGER"],
+        documentIds: [],
+        documentRoles: [],
+        source: "PROJECT"
+      },
+      {
+        id: "u3",
+        name: "Doc User",
+        email: "doc@example.com",
+        role: "EMPLOYEE",
+        projectRole: undefined,
+        projectRoles: undefined,
+        documentIds: ["doc-1"],
+        documentRoles: ["VIEWER", "EDITOR"],
+        source: "DOCUMENT"
       }
     ]);
   });
