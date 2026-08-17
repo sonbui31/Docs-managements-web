@@ -157,10 +157,37 @@ export class WorkItemsService {
       { url: media.url, name: media.cloudinaryPublicId.split("/").pop() ?? "Attachment", mimeType: media.mimeType ?? undefined }
     ];
 
-    return this.prisma.workItem.update({
+    const updated = await this.prisma.workItem.update({
       where: { id },
       data: { attachments: nextAttachments },
       include: this.includeRelations()
+    });
+
+    await this.collaboration.log(user, "WORK_ITEM_ATTACHMENT_ADDED", "Project", item.projectId, {
+      workItemId: id,
+      documentId: item.documentId,
+      attachmentUrl: media.url,
+      mimeType: media.mimeType
+    });
+
+    return updated;
+  }
+
+  async activity(id: string, user: AuthenticatedUser) {
+    const item = await this.prisma.workItem.findUnique({ where: { id }, select: { id: true, projectId: true, documentId: true } });
+    if (!item) throw new NotFoundException("Work item not found");
+    await this.assertWorkItemRole(item, user, ["VIEWER"]);
+
+    return this.prisma.auditLog.findMany({
+      where: {
+        metadata: {
+          path: ["workItemId"],
+          equals: id
+        }
+      },
+      include: { actor: { select: { name: true, email: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 60
     });
   }
 
@@ -186,7 +213,7 @@ export class WorkItemsService {
       if (!parent || parent.workItemId !== id) throw new BadRequestException("Reply parent does not belong to work item");
     }
 
-    return this.prisma.workItemComment.create({
+    const comment = await this.prisma.workItemComment.create({
       data: {
         workItemId: id,
         parentId: dto.parentId || null,
@@ -197,23 +224,42 @@ export class WorkItemsService {
       },
       include: { createdBy: { select: { id: true, name: true, email: true } } }
     });
+
+    await this.collaboration.log(user, dto.parentId ? "WORK_ITEM_REPLY_CREATED" : "WORK_ITEM_COMMENT_CREATED", "Project", item.projectId, {
+      workItemId: id,
+      commentId: comment.id,
+      parentId: comment.parentId
+    });
+
+    return comment;
   }
 
   async updateComment(workItemId: string, commentId: string, dto: UpdateWorkItemCommentDto, user: AuthenticatedUser) {
-    await this.assertCanChangeWorkItemComment(workItemId, commentId, user);
+    const comment = await this.assertCanChangeWorkItemComment(workItemId, commentId, user);
 
-    return this.prisma.workItemComment.update({
+    const updated = await this.prisma.workItemComment.update({
       where: { id: commentId },
       data: { content: dto.content.trim() },
       include: { createdBy: { select: { id: true, name: true, email: true } } }
     });
+
+    await this.collaboration.log(user, "WORK_ITEM_COMMENT_UPDATED", "Project", comment.workItem.projectId, {
+      workItemId,
+      commentId
+    });
+
+    return updated;
   }
 
   async removeComment(workItemId: string, commentId: string, user: AuthenticatedUser) {
-    await this.assertCanChangeWorkItemComment(workItemId, commentId, user);
+    const comment = await this.assertCanChangeWorkItemComment(workItemId, commentId, user);
     await this.assertNoOtherUserWorkItemReplies(commentId, user);
 
     await this.prisma.workItemComment.delete({ where: { id: commentId } });
+    await this.collaboration.log(user, "WORK_ITEM_COMMENT_DELETED", "Project", comment.workItem.projectId, {
+      workItemId,
+      commentId
+    });
     return { ok: true };
   }
 
@@ -266,6 +312,7 @@ export class WorkItemsService {
     if (!isOwner) {
       throw new BadRequestException("Bạn chỉ có thể sửa hoặc xóa comment của chính mình");
     }
+    return comment;
   }
 
   private async assertNoOtherUserWorkItemReplies(parentId: string, user: AuthenticatedUser) {

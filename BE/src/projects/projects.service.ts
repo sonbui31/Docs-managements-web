@@ -50,7 +50,7 @@ export class ProjectsService {
   }
 
   async findMembers(id: string, user: AuthenticatedUser) {
-    await this.permissions.assertProjectVisible(user, id);
+    await this.permissions.assertProjectRole(user, id, ["VIEWER"]);
 
     const members = await this.prisma.projectMember.findMany({
       where: { projectId: id },

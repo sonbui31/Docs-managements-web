@@ -48,6 +48,8 @@ type Props = {
   documents: ProjectDocument[];
   currentUser: User;
   onToast: (type: "success" | "info" | "warning" | "error", title: string, message: string) => void;
+  triggerCreate?: number;
+  triggerRefresh?: number;
 };
 
 const roleLabels: Record<UserRole, string> = {
@@ -220,7 +222,7 @@ export function SearchableMultiSelect({
   );
 }
 
-export function AdminPanel({ projects, documents, currentUser, onToast }: Props) {
+export function AdminPanel({ projects, documents, currentUser, onToast, triggerCreate, triggerRefresh }: Props) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(false);
   const canManageAccounts = currentUser.role === "ADMIN";
@@ -230,6 +232,29 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
   const [roleFilter, setRoleFilter] = useState<"ALL" | UserRole>("ALL");
   const [statusFilter, setStatusFilter] = useState<"ALL" | UserStatus>("ALL");
   const [activeTab, setActiveTab] = useState<"users" | "projects" | "documents">("users");
+
+  // Topbar Trigger Handlers
+  const isFirstCreateMount = useRef(true);
+  useEffect(() => {
+    if (isFirstCreateMount.current) {
+      isFirstCreateMount.current = false;
+      return;
+    }
+    if (triggerCreate && triggerCreate > 0) {
+      setShowCreateModal(true);
+    }
+  }, [triggerCreate]);
+
+  const isFirstRefreshMount = useRef(true);
+  useEffect(() => {
+    if (isFirstRefreshMount.current) {
+      isFirstRefreshMount.current = false;
+      return;
+    }
+    if (triggerRefresh && triggerRefresh > 0) {
+      void loadUsers(true);
+    }
+  }, [triggerRefresh]);
 
   // Modal Visibility States
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -548,42 +573,6 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
 
   return (
     <div className="admin-dashboard">
-      {/* Top Header Banner */}
-      <header className="admin-header">
-        <div className="admin-header-title">
-          <div className="admin-header-icon-badge">
-            <ShieldCheck size={24} />
-          </div>
-          <div>
-            <h2>Quản lý Người dùng & Phân quyền</h2>
-            <p>Quản trị tài khoản người dùng. Quyền dự án/tài liệu được chia sẻ trực tiếp từ nút Chia sẻ.</p>
-          </div>
-        </div>
-
-        <div className="admin-header-actions">
-          <button
-            type="button"
-            className="btn-admin-secondary"
-            onClick={() => void loadUsers(true)}
-            disabled={loading}
-            title="Tải lại danh sách"
-          >
-            <RefreshCw size={16} className={loading ? "spin-icon" : ""} />
-            <span>{loading ? "Đang tải..." : "Làm mới"}</span>
-          </button>
-
-          {canManageAccounts && (
-            <button
-              type="button"
-              className="btn-admin-primary"
-              onClick={() => setShowCreateModal(true)}
-            >
-              <UserPlus size={16} />
-              <span>+ Tạo Tài khoản</span>
-            </button>
-          )}
-        </div>
-      </header>
 
       {/* KPI Stats Overview Cards */}
       <div className="admin-stats-grid">
@@ -725,7 +714,8 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
             <table className="admin-users-table">
               <thead>
                 <tr>
-                  <th>THÔNG TIN NGUỜI DÙNG</th>
+                  <th className="col-stt">STT</th>
+                  <th>THÔNG TIN NGƯỜI DÙNG</th>
                   <th>VAI TRÒ HỆ THỐNG</th>
                   <th>TRẠNG THÁI</th>
                   <th>DỰ ÁN & TÀI LIỆU ĐƯỢC GÁN</th>
@@ -733,13 +723,16 @@ export function AdminPanel({ projects, documents, currentUser, onToast }: Props)
                 </tr>
               </thead>
               <tbody>
-                {filteredUsers.map((user) => {
+                {filteredUsers.map((user, index) => {
                   const isSystemAdmin = user.role === "ADMIN";
                   const initial = user.name.trim().charAt(0).toUpperCase() || "U";
                   const currentStatus = user.status ?? "ACTIVE";
 
                   return (
                     <tr key={user.id} className={`user-row ${isSystemAdmin ? "is-admin" : ""}`}>
+                      {/* STT */}
+                      <td className="col-stt">{index + 1}</td>
+
                       {/* User Info */}
                       <td className="col-user">
                         <div className="user-profile">

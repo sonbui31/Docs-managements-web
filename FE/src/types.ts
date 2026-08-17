@@ -130,6 +130,19 @@ export type WorkItemComment = {
   replies?: WorkItemComment[];
 };
 
+export type WorkItemActivity = {
+  id: string;
+  action: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
+  actor?: {
+    name?: string | null;
+    email?: string | null;
+  } | null;
+};
+
 export type ToastMessage = {
   id: string;
   type: "success" | "info" | "warning" | "error";

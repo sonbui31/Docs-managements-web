@@ -15,6 +15,7 @@ import type {
   TraceLink,
   VersionDiff,
   WorkItem,
+  WorkItemActivity,
   WorkItemComment,
   WorkItemPriority,
   WorkItemStatus,
@@ -476,6 +477,10 @@ export async function uploadMediaAsset(payload: { projectId: string; documentId?
 
 export async function fetchWorkItemComments(workItemId: string) {
   return apiFetch<WorkItemComment[]>(`/work-items/${workItemId}/comments`);
+}
+
+export async function fetchWorkItemActivity(workItemId: string) {
+  return apiFetch<WorkItemActivity[]>(`/work-items/${workItemId}/activity`);
 }
 
 export async function createWorkItemComment(workItemId: string, payload: { content: string; parentId?: string }) {

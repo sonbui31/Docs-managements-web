@@ -4,9 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "vite --host 0.0.0.0 --mode development",
+    "dev:prod": "vite --host 0.0.0.0 --mode production",
     "build": "tsc -b && vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "build:dev": "tsc -b && vite build --mode development",
+    "build:prod": "tsc -b && vite build --mode production",
+    "preview": "vite preview --host 0.0.0.0",
+    "preview:prod": "vite preview --host 0.0.0.0 --mode production"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

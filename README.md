@@ -40,6 +40,10 @@ PORT=3000
 
 Swagger: `http://localhost:3000/api/docs`
 
+## Moi truong
+
+Toan bo cau hinh dev/prod nam trong [ENVIRONMENT.md](./ENVIRONMENT.md).
+
 ## API Chinh
 
 - `GET /api/v1/projects`

@@ -1,6 +1,9 @@
 node_modules/
 dist/
 .env
+.env.*
+!.env.example
+!.env.*.example
 .DS_Store
 .agents
 .claude
@@ -10,10 +13,16 @@ dist/
 FE/node_modules/
 FE/dist/
 FE/.env
+FE/.env.*
+!FE/.env.example
+!FE/.env.*.example
 FE/vite.config.js
 FE/vite.config.d.ts
 
 BE/node_modules/
 BE/dist/
 BE/.env
+BE/.env.*
+!BE/.env.example
+!BE/.env.*.example
 /Integrated API

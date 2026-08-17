@@ -47,6 +47,11 @@ export class WorkItemsController {
     return this.workItemsService.uploadAttachment(id, file, user);
   }
 
+  @Get(":id/activity")
+  activity(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.workItemsService.activity(id, user);
+  }
+
   @Get(":id/comments")
   comments(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.workItemsService.comments(id, user);
