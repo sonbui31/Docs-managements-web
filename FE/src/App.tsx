@@ -14,6 +14,7 @@ import {
   Copy,
   Download,
   Eraser,
+  ExternalLink,
   Eye,
   File,
   FileCheck2,
@@ -500,7 +501,7 @@ function App() {
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>(projectsList[0]?.id ?? "");
   const [selectedDocumentId, setSelectedDocumentId] = useState<string>(documentsList[0]?.id ?? "");
-  const [activeTabNav, setActiveTabNav] = useState<"dashboard" | "projects" | "review" | "admin">("dashboard");
+  const [activeTabNav, setActiveTabNav] = useState<"dashboard" | "projects" | "documents" | "review" | "admin">("dashboard");
 
   // Left Panel Tab Mode ("docs" vs "toc")
   const [leftPanelMode, setLeftPanelMode] = useState<"docs" | "toc">("docs");
@@ -612,6 +613,7 @@ function App() {
   const [editingWorkItemCommentText, setEditingWorkItemCommentText] = useState<string>("");
   const [isUploadingWorkItemAttachment, setIsUploadingWorkItemAttachment] = useState<boolean>(false);
   const [commentFilter, setCommentFilter] = useState<"all" | "open" | "resolved" | "mine">("all");
+  const [projectHubSearch, setProjectHubSearch] = useState<string>("");
   const [collabPanelTab, setCollabPanelTab] = useState<"comments" | "diff" | "tags" | "trace" | "activity" | "notifications">("comments");
   const [projectDashboard, setProjectDashboard] = useState<ProjectDashboard | null>(null);
   const [roleDashboard, setRoleDashboard] = useState<RoleDashboard | null>(null);
@@ -783,7 +785,7 @@ function App() {
   }, [currentUser?.role, activeTabNav]);
 
   useEffect(() => {
-    if (activeTabNav !== "projects" || !selectedProjectId) return;
+    if ((activeTabNav !== "projects" && activeTabNav !== "documents") || !selectedProjectId) return;
     const currentDocument = documentsList.find((document) => document.id === selectedDocumentId);
     if (currentDocument?.projectId === selectedProjectId) return;
 
@@ -1749,7 +1751,6 @@ function App() {
   // Handle project change: auto select first document of new project
   const handleSelectProject = (projectId: string) => {
     setSelectedProjectId(projectId);
-    setActiveTabNav("projects");
     const firstDoc = documentsList.find((doc) => doc.projectId === projectId);
     if (firstDoc) {
       setSelectedDocumentId(firstDoc.id);
@@ -2639,6 +2640,23 @@ function App() {
       console.error("Create work item comment error:", error);
       addToast("error", "Không gửi được comment", "BE chưa lưu được trao đổi ticket.");
     }
+  }
+
+  const filteredProjectsHub = useMemo(() => {
+    if (!projectHubSearch.trim()) return projectsList;
+    const q = projectHubSearch.toLowerCase().trim();
+    return projectsList.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)
+    );
+  }, [projectsList, projectHubSearch]);
+
+  function handleOpenProjectWorkspace(projectId: string) {
+    setSelectedProjectId(projectId);
+    const firstDoc = documentsList.find((doc) => doc.projectId === projectId);
+    setSelectedDocumentId(firstDoc?.id ?? "empty-document");
+    void loadProjectWorkItems(projectId);
+    setActiveTabNav("documents");
+    addToast("info", "Đã mở không gian dự án", "Đã chuyển đến giao diện tài liệu của dự án.");
   }
 
   function openEditWorkItemComment(comment: WorkItemComment) {
@@ -4457,6 +4475,19 @@ function App() {
             </button>
 
             <button
+              className={activeTabNav === "documents" ? "nav-item active" : "nav-item"}
+              type="button"
+              title="Tài liệu"
+              data-tooltip="Tài liệu"
+              onClick={() => setActiveTabNav("documents")}
+            >
+              <div className="nav-item-content">
+                <FileText size={17} />
+                <span>Tài liệu</span>
+              </div>
+            </button>
+
+            <button
               className={activeTabNav === "review" ? "nav-item active" : "nav-item"}
               type="button"
               title="Workboard"
@@ -4484,67 +4515,6 @@ function App() {
               </button>
             )}
           </nav>
-        </div>
-
-        <div className="sidebar-projects-section">
-          <div className="nav-section-title">
-            <span>Danh sách Dự án</span>
-            <button
-              className="btn-add-mini"
-              type="button"
-              title="Tạo dự án mới"
-              onClick={() => setIsCreateProjectModalOpen(true)}
-            >
-              <FolderPlus size={13} /> Tạo mới
-            </button>
-          </div>
-
-          {/* Project List with Edit & Delete Action Buttons */}
-          <section className="project-list" aria-label="Projects">
-            {projectsList.map((project) => {
-              const projectOpenComments = getProjectOpenCommentsCount(project.id);
-
-              return (
-                <div
-                  key={project.id}
-                  className={project.id === selectedProjectId && (activeTabNav === "projects" || activeTabNav === "review") ? "project-card selected" : "project-card"}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => handleSelectProject(project.id)}
-                  onKeyDown={(event) => handleProjectCardKeyDown(event, project.id)}
-                >
-                  <div className="project-card-header">
-                    <span className="project-code">{project.code}</span>
-                    <div className="project-action-group">
-                      <button
-                        className="project-action-btn"
-                        type="button"
-                        title="Sửa thông tin dự án"
-                        onClick={(e) => openEditProjectModal(project, e)}
-                      >
-                        <Pencil size={11} />
-                      </button>
-                      <button
-                        className="project-action-btn danger"
-                        type="button"
-                        title="Xóa dự án này"
-                        onClick={(e) => requestDeleteProject(project.id, e)}
-                      >
-                        <Trash2 size={11} />
-                      </button>
-                    </div>
-                  </div>
-                  <strong>{project.name}</strong>
-                  <div className="project-card-meta">
-                    <span>
-                      {documentsList.filter((d) => d.projectId === project.id).length} tài liệu
-                    </span>
-                    {projectOpenComments > 0 && <span>{projectOpenComments} trao đổi</span>}
-                  </div>
-                </div>
-              );
-            })}
-          </section>
         </div>
 
         <div className="sidebar-footer">
@@ -4594,9 +4564,11 @@ function App() {
                 ? `${currentUser.role === "ADMIN" ? "Admin" : currentUser.role === "MANAGER" ? "Manager" : "Nhân viên"} • ${roleDashboard?.scopeLabel ?? "Dashboard"}`
                 : activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
                   ? "Quản trị hệ thống • Users & Permissions"
-                  : activeTabNav === "review"
-                    ? `Project Workboard • ${selectedProject.code}`
-                    : `${selectedProject.code} / ${selectedProject.client}`}
+                  : activeTabNav === "projects"
+                    ? "Tổng quan danh mục dự án • Vận hành nội bộ"
+                    : activeTabNav === "review"
+                      ? `Project Workboard • ${selectedProject.code}`
+                      : `${selectedProject.code} / ${selectedProject.client}`}
             </p>
             <h1>
               {activeTabNav === "dashboard"
@@ -4607,9 +4579,11 @@ function App() {
                 })()
                 : activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
                   ? "Quản Lý User & Phân Quyền"
-                  : activeTabNav === "review"
-                    ? selectedProject.name
-                    : selectedProject.name}
+                  : activeTabNav === "projects"
+                    ? <>Quản Lý Dự Án <span className="hub-count">({filteredProjectsHub.length})</span></>
+                    : activeTabNav === "review"
+                      ? (selectedProject?.name ?? "Workboard")
+                      : (selectedProject?.name ?? "Không gian làm việc")}
             </h1>
           </div>
 
@@ -4631,6 +4605,37 @@ function App() {
               >
                 <RefreshCw size={14} className={isRefreshingDashboard ? "animate-spin" : ""} />
                 <span>{isRefreshingDashboard ? "Đang làm mới..." : "Làm mới"}</span>
+              </button>
+            </div>
+          )}
+
+          {activeTabNav === "projects" && (
+            <div className="topbar-actions">
+              <label className="project-hub-search">
+                <Search size={15} />
+                <input
+                  value={projectHubSearch}
+                  onChange={(e) => setProjectHubSearch(e.target.value)}
+                  placeholder="Tìm tên hoặc mã dự án..."
+                />
+                {projectHubSearch && (
+                  <button
+                    className="search-clear-btn"
+                    type="button"
+                    onClick={() => setProjectHubSearch("")}
+                    title="Xóa tìm kiếm"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </label>
+              <button
+                className="exec-action primary"
+                type="button"
+                onClick={() => setIsCreateProjectModalOpen(true)}
+              >
+                <FolderPlus size={15} />
+                <span>Tạo dự án mới</span>
               </button>
             </div>
           )}
@@ -4711,7 +4716,7 @@ function App() {
             </div>
           )}
 
-          {activeTabNav !== "admin" && activeTabNav !== "dashboard" && activeTabNav !== "review" && (
+          {activeTabNav !== "admin" && activeTabNav !== "dashboard" && activeTabNav !== "review" && activeTabNav !== "projects" && (
             <div className="topbar-actions">
               <label className="search-box">
                 <Search size={15} />
@@ -5074,45 +5079,148 @@ function App() {
                 </div>
               </section>
             </div>
-
-            <section className="exec-panel activity-feed-panel">
-              <div className="exec-panel-header">
-                <div>
-                  <span>Activity Feed</span>
-                  <h3>Hoạt động Workboard gần đây</h3>
+          </section>
+        ) : activeTabNav === "projects" ? (
+          <section className="project-hub-page">
+            {/* Executive Stats Strip */}
+            <div className="project-hub-stats-strip">
+              <div className="hub-stat-card">
+                <div className="hub-stat-icon indigo">
+                  <FolderKanban size={20} />
                 </div>
-                <strong>{executiveData.workboardFeed.length} hoạt động</strong>
+                <div className="hub-stat-info">
+                  <strong>{projectsList.length}</strong>
+                  <span>Tổng số dự án</span>
+                </div>
               </div>
-              <div className="exec-activity-feed">
-                {executiveData.workboardFeed.map((feed) => {
-                  const iconClass = feed.item.status === "DONE"
-                    ? "feed-icon resolve"
-                    : feed.item.status === "BLOCKED" || feed.item.priority === "CRITICAL"
-                      ? "feed-icon delete"
-                      : feed.action === "Tạo ticket"
-                        ? "feed-icon create"
-                        : "feed-icon update";
-                  const FeedIcon = feed.item.status === "DONE"
-                    ? CheckCheck
-                    : feed.item.status === "BLOCKED" || feed.item.priority === "CRITICAL"
-                      ? AlertTriangle
-                      : feed.action === "Tạo ticket"
-                        ? FilePlus
-                        : PenLine;
+              <div className="hub-stat-card">
+                <div className="hub-stat-icon emerald">
+                  <FileText size={20} />
+                </div>
+                <div className="hub-stat-info">
+                  <strong>{documentsList.length}</strong>
+                  <span>Tài liệu hệ thống</span>
+                </div>
+              </div>
+              <div className="hub-stat-card">
+                <div className="hub-stat-icon amber">
+                  <MessageSquareText size={20} />
+                </div>
+                <div className="hub-stat-info">
+                  <strong>{projectsList.reduce((acc, p) => acc + getProjectOpenCommentsCount(p.id), 0)}</strong>
+                  <span>Trao đổi cần xử lý</span>
+                </div>
+              </div>
+              <div className="hub-stat-card">
+                <div className="hub-stat-icon violet">
+                  <TrendingUp size={20} />
+                </div>
+                <div className="hub-stat-info">
+                  <strong>
+                    {projectsList.length > 0
+                      ? Math.round(projectsList.reduce((acc, p) => acc + (p.progress ?? 0), 0) / projectsList.length)
+                      : 0}%
+                  </strong>
+                  <span>Tiến độ trung bình</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Bento Grid Projects */}
+            <div className="project-hub-grid">
+              {filteredProjectsHub.length === 0 ? (
+                <div className="project-hub-empty">
+                  <div className="project-hub-empty-icon">
+                    <FolderKanban size={32} />
+                  </div>
+                  <h4>Không tìm thấy dự án phù hợp</h4>
+                  <p>Thử điều chỉnh từ khóa tìm kiếm hoặc tạo một không gian dự án mới cho team.</p>
+                  <button
+                    className="btn-primary"
+                    type="button"
+                    onClick={() => setIsCreateProjectModalOpen(true)}
+                  >
+                    <FolderPlus size={15} /> Tạo dự án mới
+                  </button>
+                </div>
+              ) : (
+                filteredProjectsHub.map((project) => {
+                  const projectDocs = documentsList.filter((d) => d.projectId === project.id);
+                  const docCount = projectDocs.length;
+                  const draftDocsCount = projectDocs.filter((d) => d.status === "Draft").length;
+                  const deployedDocsCount = projectDocs.filter((d) => d.status === "Triển khai").length;
+                  const openCommentsCount = getProjectOpenCommentsCount(project.id);
+                  const isSelected = selectedProjectId === project.id;
+
                   return (
-                    <button className="exec-feed-row" type="button" key={feed.id} onClick={() => openDashboardWorkItem(feed.item)}>
-                      <span className={iconClass}><FeedIcon size={13} /></span>
-                      <time>{parseDashboardDate(feed.happenedAt)?.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</time>
-                      <strong>{feed.summary}</strong>
-                      <span>{feed.project?.code ?? "Project"} · {feed.detail}</span>
-                    </button>
+                    <div
+                      className={`project-hub-card ${isSelected ? "selected" : ""}`}
+                      key={project.id}
+                    >
+                      <div className="project-hub-card-top">
+                        <div className="project-hub-card-code">
+                          <span className="code-tag">{project.code}</span>
+                          <span className="active-pill">
+                            <span className="active-dot"></span> Vận hành
+                          </span>
+                        </div>
+                        <div className="project-hub-card-actions">
+                          <button
+                            type="button"
+                            className="hub-card-btn"
+                            title="Sửa thông tin dự án"
+                            onClick={(e) => openEditProjectModal(project, e)}
+                          >
+                            <Pencil size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            className="hub-card-btn danger"
+                            title="Xóa dự án"
+                            onClick={(e) => requestDeleteProject(project.id, e)}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="project-hub-card-body">
+                        <h3>{project.name}</h3>
+                        <p className="project-hub-unit">
+                          <Layers size={13} /> {project.client || "Internal Team"} • Vận hành nội bộ
+                        </p>
+                      </div>
+
+                      <div className="project-hub-card-metrics">
+                        <div className="hub-metric-item" title="Số tài liệu Draft">
+                          <PenLine size={13} className="text-amber" />
+                          <span>Draft: <strong>{draftDocsCount}</strong></span>
+                        </div>
+                        <div className="hub-metric-item" title="Số tài liệu Triển khai">
+                          <FileCheck2 size={13} className="text-emerald" />
+                          <span>Triển khai: <strong>{deployedDocsCount}</strong></span>
+                        </div>
+                        <div className="hub-metric-item" title="Số trao đổi mở">
+                          <MessageSquareText size={13} className="text-indigo" />
+                          <span>Trao đổi: <strong>{openCommentsCount}</strong></span>
+                        </div>
+                      </div>
+
+                      <div className="project-hub-card-footer">
+                        <button
+                          type="button"
+                          className="btn-secondary full-w"
+                          onClick={() => handleOpenProjectWorkspace(project.id)}
+                        >
+                          <span>Truy cập không gian dự án</span>
+                          <ExternalLink size={14} />
+                        </button>
+                      </div>
+                    </div>
                   );
-                })}
-                {executiveData.workboardFeed.length === 0 && (
-                  <div className="empty-collab-state">Chưa có hoạt động Workboard gần đây.</div>
-                )}
-              </div>
-            </section>
+                })
+              )}
+            </div>
           </section>
         ) : activeTabNav === "admin" ? (
           <Suspense fallback={<div className="content-loading">Đang tải quản trị user...</div>}>
@@ -5295,21 +5403,21 @@ function App() {
                     </div>
                     <div className="workboard-card-list">
                       {columnItems.map((item) => (
-	                        <article
-	                          className={`workboard-card priority-${item.priority.toLowerCase()} ${draggingWorkItemId === item.id ? "dragging" : ""}`}
-	                          key={item.id}
-	                          draggable
-	                          onDragStart={() => setDraggingWorkItemId(item.id)}
-	                          onDragEnd={() => setDraggingWorkItemId(null)}
-	                          onDragOver={(event) => event.preventDefault()}
-	                          onDrop={(event) => {
-	                            event.preventDefault();
-	                            event.stopPropagation();
-	                            const rect = event.currentTarget.getBoundingClientRect();
-	                            const placement = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
-	                            void handleDropWorkItem(column, item.id, placement);
-	                          }}
-	                        >
+                        <article
+                          className={`workboard-card priority-${item.priority.toLowerCase()} ${draggingWorkItemId === item.id ? "dragging" : ""}`}
+                          key={item.id}
+                          draggable
+                          onDragStart={() => setDraggingWorkItemId(item.id)}
+                          onDragEnd={() => setDraggingWorkItemId(null)}
+                          onDragOver={(event) => event.preventDefault()}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            const rect = event.currentTarget.getBoundingClientRect();
+                            const placement = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+                            void handleDropWorkItem(column, item.id, placement);
+                          }}
+                        >
                           <button className="workboard-card-main" type="button" onClick={() => openViewWorkItemModal(item)}>
                             <div className="workboard-card-badges">
                               <span className={`workitem-type type-${item.type.toLowerCase()}`}>
@@ -5395,6 +5503,24 @@ function App() {
                       <PanelLeftClose size={14} />
                     </button>
                   </div>
+                </div>
+
+                <div className="library-project-bar">
+                  <label className="library-project-select">
+                    <FolderKanban size={14} />
+                    <select
+                      value={selectedProjectId}
+                      onChange={(e) => handleSelectProject(e.target.value)}
+                      disabled={projectsList.length === 0}
+                    >
+                      {projectsList.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.code} - {project.name}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={13} className="select-arrow" />
+                  </label>
                 </div>
 
                 <div className="panel-mode-tabs">
