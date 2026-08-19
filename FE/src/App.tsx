@@ -5636,60 +5636,52 @@ function App() {
             {/* Executive Hero Stats Strip */}
             <div className="project-hub-hero">
               <div className="hub-hero-card hero-primary">
-                <div className="hub-hero-icon">
-                  <FolderKanban size={24} />
-                </div>
-                <div className="hub-hero-data">
+                <div className="hub-card-header">
+                  <span className="hub-hero-icon"><FolderKanban size={18} /></span>
                   <span className="hub-hero-label">Tổng số dự án</span>
-                  <div className="hub-hero-value-wrap">
-                    <strong className="hub-hero-value">{projectsList.length}</strong>
-                    <span className="hub-hero-sub">Đang vận hành</span>
-                  </div>
+                </div>
+                <div className="hub-card-body">
+                  <strong className="hub-hero-value">{projectsList.length}</strong>
+                  <span className="hub-hero-sub-pill">Đang vận hành</span>
                 </div>
               </div>
 
               <div className="hub-hero-card hero-emerald">
-                <div className="hub-hero-icon">
-                  <FileText size={24} />
-                </div>
-                <div className="hub-hero-data">
+                <div className="hub-card-header">
+                  <span className="hub-hero-icon"><FileText size={18} /></span>
                   <span className="hub-hero-label">Tài liệu hệ thống</span>
-                  <div className="hub-hero-value-wrap">
-                    <strong className="hub-hero-value">{documentsList.length}</strong>
-                    <span className="hub-hero-sub">
-                      {documentsList.filter((d) => d.status === "Triển khai").length} triển khai · {documentsList.filter((d) => d.status === "Draft").length} draft
-                    </span>
-                  </div>
+                </div>
+                <div className="hub-card-body">
+                  <strong className="hub-hero-value">{documentsList.length}</strong>
+                  <span className="hub-hero-sub-pill">
+                    {documentsList.filter((d) => d.status === "Triển khai").length} triển khai · {documentsList.filter((d) => d.status === "Draft").length} draft
+                  </span>
                 </div>
               </div>
 
               <div className="hub-hero-card hero-amber">
-                <div className="hub-hero-icon">
-                  <MessageSquareText size={24} />
-                </div>
-                <div className="hub-hero-data">
+                <div className="hub-card-header">
+                  <span className="hub-hero-icon"><MessageSquareText size={18} /></span>
                   <span className="hub-hero-label">Trao đổi cần xử lý</span>
-                  <div className="hub-hero-value-wrap">
-                    <strong className="hub-hero-value">
-                      {projectsList.reduce((acc, p) => acc + getProjectOpenCommentsCount(p.id), 0)}
-                    </strong>
-                    <span className="hub-hero-sub">Comment đang mở</span>
-                  </div>
+                </div>
+                <div className="hub-card-body">
+                  <strong className="hub-hero-value">
+                    {projectsList.reduce((acc, p) => acc + getProjectOpenCommentsCount(p.id), 0)}
+                  </strong>
+                  <span className="hub-hero-sub-pill">Comment đang mở</span>
                 </div>
               </div>
 
               <div className="hub-hero-card hero-indigo">
-                <div className="hub-hero-icon">
-                  <Kanban size={24} />
-                </div>
-                <div className="hub-hero-data">
+                <div className="hub-card-header">
+                  <span className="hub-hero-icon"><Kanban size={18} /></span>
                   <span className="hub-hero-label">Workboard Tickets</span>
-                  <div className="hub-hero-value-wrap">
-                    <strong className="hub-hero-value">{dashboardWorkItems.length}</strong>
-                    <span className="hub-hero-sub">
-                      {dashboardWorkItems.filter((i) => i.status === "DONE").length} đã hoàn thành
-                    </span>
-                  </div>
+                </div>
+                <div className="hub-card-body">
+                  <strong className="hub-hero-value">{dashboardWorkItems.length}</strong>
+                  <span className="hub-hero-sub-pill">
+                    {dashboardWorkItems.filter((i) => i.status === "DONE").length} đã hoàn thành
+                  </span>
                 </div>
               </div>
             </div>
