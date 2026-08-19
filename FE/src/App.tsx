@@ -6204,7 +6204,7 @@ function App() {
               <div className="panel library">
                 <div className="panel-header">
                   <div className="panel-title">
-                    <h2>Tài liệu <span className="title-count">({filteredDocuments.length})</span></h2>
+                    <h2>Tài liệu</h2>
                   </div>
                   <div className="panel-action-group">
                     <button
