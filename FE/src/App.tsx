@@ -1879,6 +1879,10 @@ function App() {
     return documentsList.filter((doc) => doc.projectId === selectedProjectId);
   }, [documentsList, selectedProjectId]);
 
+  const projectDeployedDocuments = useMemo(() => {
+    return projectDocuments.filter((doc) => doc.status === "Triển khai");
+  }, [projectDocuments]);
+
   const selectedWorkItemAssignees = useMemo(
     () => {
       if (!workItemDraft) return [];
@@ -2403,7 +2407,7 @@ function App() {
   function buildWorkItemDraft(overrides: Partial<WorkItemDraft> = {}): WorkItemDraft {
     return {
       projectId: selectedProject.id,
-      documentId: selectedDocument.id !== "empty-document" ? selectedDocument.id : "",
+      documentId: selectedDocument.id !== "empty-document" && selectedDocument.status === "Triển khai" ? selectedDocument.id : "",
       type: "TASK",
       status: selectedDefaultWorkboardColumn ? statusForWorkboardColumn(selectedDefaultWorkboardColumn) : "BACKLOG",
       columnId: selectedDefaultWorkboardColumn?.id ?? "BACKLOG",
@@ -5878,27 +5882,27 @@ function App() {
                                 setSelectedDocumentId(doc.id);
                               }}
                             >
-                              <div className={`doc-icon ${fileKind}`}>
-                                {doc.fileType === "pdf" ? (
-                                  <FileText size={15} />
-                                ) : doc.fileType === "md" ? (
-                                  <FileCode size={15} />
-                                ) : (
-                                  <FileCheck2 size={15} />
-                                )}
-                              </div>
-                              <div className="doc-info">
-                                <strong title={fullTitle}>{fullTitle}</strong>
-                                <small>{doc.type} • {doc.owner}</small>
-                              </div>
-                              <div className="doc-status-col">
-                                <div className="doc-status-top">
-                                  <span className="version-tag">{doc.version}</span>
-                                  <span className={`status-pill ${doc.status === "Triển khai" ? "deployed" : "draft"}`}>
-                                    <span className="status-dot" />
-                                    {doc.status}
-                                  </span>
+                              <div className="doc-row-top">
+                                <div className={`doc-icon ${fileKind}`}>
+                                  {doc.fileType === "pdf" ? (
+                                    <FileText size={15} />
+                                  ) : doc.fileType === "md" ? (
+                                    <FileCode size={15} />
+                                  ) : (
+                                    <FileCheck2 size={15} />
+                                  )}
                                 </div>
+                                <div className="doc-info">
+                                  <strong title={fullTitle}>{fullTitle}</strong>
+                                  <small>{doc.type} • {doc.owner}</small>
+                                </div>
+                              </div>
+                              <div className="doc-row-bottom">
+                                <span className="version-tag">{doc.version}</span>
+                                <span className={`status-pill ${doc.status === "Triển khai" ? "deployed" : "draft"}`}>
+                                  <span className="status-dot" />
+                                  {doc.status}
+                                </span>
                                 {docCommentsCount > 0 && (
                                   <span className="doc-comments-badge">
                                     <MessageSquareText size={10} /> {docCommentsCount} trao đổi
@@ -7732,7 +7736,7 @@ function App() {
                     onChange={(docId) => setWorkItemDraft({ ...workItemDraft, documentId: docId })}
                     options={[
                       { value: "", label: "Không gắn tài liệu" },
-                      ...projectDocuments.map((doc) => ({
+                      ...projectDeployedDocuments.map((doc) => ({
                         value: doc.id,
                         label: doc.title
                       }))

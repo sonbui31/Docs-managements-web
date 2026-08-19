@@ -1741,8 +1741,8 @@ button {
 
 .document-row {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
   padding: 10px 12px;
   border-radius: 12px;
   background: #ffffff;
@@ -1779,6 +1779,14 @@ button {
   width: 3.5px;
   border-radius: 0 4px 4px 0;
   background: linear-gradient(180deg, #6366f1 0%, #4f46e5 100%);
+}
+
+/* Top row: icon + title/meta */
+.doc-row-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
 }
 
 /* File Icon Badges - Distinct Color Coding */
@@ -1838,6 +1846,15 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Bottom row: version + status + comments */
+.doc-row-bottom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-left: 44px;
 }
 
 .doc-status-col {
@@ -1911,7 +1928,6 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-top: 1px;
   padding: 2px 7px;
   border-radius: 999px;
   background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);

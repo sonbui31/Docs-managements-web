@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { Prisma, ProjectRole, WorkItemPriority, WorkItemStatus, WorkItemType } from "@prisma/client";
+import { DocumentStatus, Prisma, ProjectRole, WorkItemPriority, WorkItemStatus, WorkItemType } from "@prisma/client";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { CollaborationService } from "../collaboration/collaboration.service";
 import { MediaService } from "../media/media.service";
@@ -599,9 +599,10 @@ export class WorkItemsService {
 
   private async assertLinkedEntitiesBelongToProject(projectId: string, documentId?: string | null, sourceCommentId?: string | null) {
     if (documentId) {
-      const document = await this.prisma.document.findUnique({ where: { id: documentId }, select: { projectId: true } });
+      const document = await this.prisma.document.findUnique({ where: { id: documentId }, select: { projectId: true, status: true } });
       if (!document) throw new NotFoundException("Document not found");
       if (document.projectId !== projectId) throw new BadRequestException("Document does not belong to project");
+      if (!this.isDeployedDocumentStatus(document.status)) throw new BadRequestException("Chỉ có thể gắn ticket với tài liệu đã Triển khai");
     }
 
     if (sourceCommentId) {
@@ -612,6 +613,11 @@ export class WorkItemsService {
       if (!comment) throw new NotFoundException("Comment not found");
       if (comment.document.projectId !== projectId) throw new BadRequestException("Comment does not belong to project");
     }
+  }
+
+  private isDeployedDocumentStatus(status: DocumentStatus) {
+    const draftStatuses: DocumentStatus[] = [DocumentStatus.DRAFT, DocumentStatus.IN_REVIEW, DocumentStatus.CHANGES_REQUESTED];
+    return !draftStatuses.includes(status);
   }
 
   private async assertCanChangeWorkItemComment(workItemId: string, commentId: string, user: AuthenticatedUser) {

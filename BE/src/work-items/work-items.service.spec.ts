@@ -186,4 +186,18 @@ describe("WorkItemsService permissions", () => {
     await expect((service as any).resolveAssignableUsers("project-1", ["doc-user-1"], owner, null)).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.documentPermission.findMany).not.toHaveBeenCalled();
   });
+
+  it("denies linking work items to draft documents", async () => {
+    const { service, prisma } = serviceHarness();
+    prisma.document.findUnique.mockResolvedValue({ projectId: "project-1", status: "DRAFT" });
+
+    await expect((service as any).assertLinkedEntitiesBelongToProject("project-1", "doc-1", null)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("allows linking work items to deployed documents", async () => {
+    const { service, prisma } = serviceHarness();
+    prisma.document.findUnique.mockResolvedValue({ projectId: "project-1", status: "DEPLOYED" });
+
+    await expect((service as any).assertLinkedEntitiesBelongToProject("project-1", "doc-1", null)).resolves.toBeUndefined();
+  });
 });
