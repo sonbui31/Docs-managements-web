@@ -8,6 +8,7 @@ import {
   CheckCheck,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ChevronUp,
   Clock,
@@ -629,6 +630,198 @@ function CustomFormSelect<T extends string>({
   );
 }
 
+function CustomHeaderSelect<T extends string>({
+  value,
+  onChange,
+  options,
+  icon: IconComponent
+}: {
+  value: T;
+  onChange: (val: T) => void;
+  options: Array<{ value: T; label: string }>;
+  icon?: React.ElementType;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const selectedOption = useMemo(
+    () => options.find((o) => o.value === value) ?? options[0],
+    [options, value]
+  );
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  return (
+    <div className={`custom-header-select-wrapper ${isOpen ? "is-open" : ""}`} ref={dropdownRef}>
+      <button
+        type="button"
+        className="header-select-trigger"
+        onClick={() => setIsOpen((prev) => !prev)}
+      >
+        {IconComponent && <IconComponent size={14} className="header-select-icon" />}
+        <span className="trigger-label-text">{selectedOption.label}</span>
+        <ChevronDown size={13} className={`trigger-arrow-icon ${isOpen ? "rotate" : ""}`} />
+      </button>
+
+      {isOpen && (
+        <div className="custom-header-select-menu">
+          {options.map((opt) => {
+            const isSelected = opt.value === value;
+            return (
+              <button
+                key={String(opt.value)}
+                type="button"
+                className={`custom-select-option ${isSelected ? "selected" : ""}`}
+                onClick={() => {
+                  onChange(opt.value);
+                  setIsOpen(false);
+                }}
+              >
+                <span>{opt.label}</span>
+                {isSelected && <CheckCheck size={14} className="option-check-mark" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CustomDatePicker({
+  value,
+  onChange,
+  placeholder
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
+  const parsed = value ? new Date(value + "T00:00:00") : null;
+  const [viewYear, setViewYear] = useState(parsed?.getFullYear() ?? today.getFullYear());
+  const [viewMonth, setViewMonth] = useState(parsed?.getMonth() ?? today.getMonth());
+
+  useEffect(() => {
+    if (isOpen && parsed) {
+      setViewYear(parsed.getFullYear());
+      setViewMonth(parsed.getMonth());
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) setIsOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const dayNames = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
+  const monthNames = ["Tháng 1", "Tháng 2", "Tháng 3", "Tháng 4", "Tháng 5", "Tháng 6", "Tháng 7", "Tháng 8", "Tháng 9", "Tháng 10", "Tháng 11", "Tháng 12"];
+
+  const firstDay = new Date(viewYear, viewMonth, 1);
+  const startDay = (firstDay.getDay() + 6) % 7; // Monday = 0
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const daysInPrevMonth = new Date(viewYear, viewMonth, 0).getDate();
+
+  const cells: Array<{ day: number; current: boolean; dateStr: string }> = [];
+  for (let i = startDay - 1; i >= 0; i--) {
+    const d = daysInPrevMonth - i;
+    const m = viewMonth === 0 ? 11 : viewMonth - 1;
+    const y = viewMonth === 0 ? viewYear - 1 : viewYear;
+    cells.push({ day: d, current: false, dateStr: `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}` });
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    cells.push({ day: d, current: true, dateStr: `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}` });
+  }
+  const remaining = 7 - (cells.length % 7);
+  if (remaining < 7) {
+    for (let d = 1; d <= remaining; d++) {
+      const m = viewMonth === 11 ? 0 : viewMonth + 1;
+      const y = viewMonth === 11 ? viewYear + 1 : viewYear;
+      cells.push({ day: d, current: false, dateStr: `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}` });
+    }
+  }
+
+  const displayValue = parsed
+    ? `${String(parsed.getDate()).padStart(2, "0")}/${String(parsed.getMonth() + 1).padStart(2, "0")}/${parsed.getFullYear()}`
+    : "";
+
+  function prevMonth() {
+    if (viewMonth === 0) { setViewMonth(11); setViewYear((y) => y - 1); }
+    else setViewMonth((m) => m - 1);
+  }
+  function nextMonth() {
+    if (viewMonth === 11) { setViewMonth(0); setViewYear((y) => y + 1); }
+    else setViewMonth((m) => m + 1);
+  }
+
+  return (
+    <div className="custom-datepicker-wrapper" ref={ref}>
+      <button
+        type="button"
+        className="form-select-trigger datepicker-trigger"
+        onClick={() => setIsOpen((prev) => !prev)}
+      >
+        <span className={`trigger-label-text ${!value ? "placeholder" : ""}`}>
+          {displayValue || (placeholder ?? "dd/mm/yyyy")}
+        </span>
+        <Calendar size={14} className="trigger-arrow-icon" />
+      </button>
+
+      {isOpen && (
+        <div className="datepicker-popup">
+          <div className="datepicker-header">
+            <button type="button" className="dp-nav-btn" onClick={prevMonth}>
+              <ChevronLeft size={16} />
+            </button>
+            <span className="dp-month-label">{monthNames[viewMonth]}, {viewYear}</span>
+            <button type="button" className="dp-nav-btn" onClick={nextMonth}>
+              <ChevronRight size={16} />
+            </button>
+          </div>
+          <div className="datepicker-day-names">
+            {dayNames.map((d) => <span key={d}>{d}</span>)}
+          </div>
+          <div className="datepicker-grid">
+            {cells.map((cell, i) => (
+              <button
+                key={i}
+                type="button"
+                className={[
+                  "dp-day",
+                  !cell.current && "outside",
+                  cell.dateStr === value && "selected",
+                  cell.dateStr === todayStr && "today"
+                ].filter(Boolean).join(" ")}
+                onClick={() => {
+                  onChange(cell.dateStr);
+                  setIsOpen(false);
+                }}
+              >
+                {cell.day}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function parseChecklistText(value: string) {
   return value
     .split("\n")
@@ -788,6 +981,8 @@ function App() {
   const [isUploadingWorkItemAttachment, setIsUploadingWorkItemAttachment] = useState<boolean>(false);
   const [commentFilter, setCommentFilter] = useState<"all" | "open" | "resolved" | "mine">("all");
   const [projectHubSearch, setProjectHubSearch] = useState<string>("");
+  const [projectHubSort, setProjectHubSort] = useState<string>("newest");
+  const [projectHubFilter, setProjectHubFilter] = useState<string>("all");
   const [collabPanelTab, setCollabPanelTab] = useState<"comments" | "diff" | "tags" | "trace" | "activity" | "notifications">("comments");
   const [projectDashboard, setProjectDashboard] = useState<ProjectDashboard | null>(null);
   const [roleDashboard, setRoleDashboard] = useState<RoleDashboard | null>(null);
@@ -839,6 +1034,7 @@ function App() {
 
   // Create Project Modal state
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState<boolean>(false);
+  const [isCreatingProject, setIsCreatingProject] = useState<boolean>(false);
   const [newProjCode, setNewProjCode] = useState<string>("");
   const [newProjName, setNewProjName] = useState<string>("");
   const [newProjCustomer, setNewProjCustomer] = useState<string>("Internal Team");
@@ -846,6 +1042,7 @@ function App() {
 
   // Edit Project Modal state
   const [isEditProjectModalOpen, setIsEditProjectModalOpen] = useState<boolean>(false);
+  const [isSavingEditProject, setIsSavingEditProject] = useState<boolean>(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [editProjCode, setEditProjCode] = useState<string>("");
   const [editProjName, setEditProjName] = useState<string>("");
@@ -1169,8 +1366,22 @@ function App() {
     return "TODO";
   }
 
-  function workItemBelongsToColumn(item: WorkItem, column: WorkboardColumn) {
-    return item.columnId === column.id || (!item.columnId && item.status === column.key);
+  function resolveWorkItemColumn(item: WorkItem, columns: WorkboardColumn[]) {
+    const exactColumn = item.columnId ? columns.find((column) => column.id === item.columnId) : undefined;
+    if (exactColumn) return exactColumn;
+
+    const keyColumn = columns.find((column) => column.key === item.status);
+    if (keyColumn) return keyColumn;
+
+    const statusColumn = columns.find((column) => statusForWorkboardColumn(column) === item.status);
+    return statusColumn ?? columns[0] ?? null;
+  }
+
+  function workItemBelongsToColumn(item: WorkItem, column: WorkboardColumn, columns?: WorkboardColumn[]) {
+    if (item.columnId === column.id) return true;
+    if (columns?.some((entry) => entry.id === item.columnId)) return false;
+    if (columns) return resolveWorkItemColumn(item, columns)?.id === column.id;
+    return item.status === column.key || (!item.columnId && item.status === statusForWorkboardColumn(column));
   }
 
   function moveWorkItemToColumn(
@@ -2017,7 +2228,7 @@ function App() {
 
   function workboardColumnLabelForItem(item: WorkItem) {
     return item.column?.name ??
-      selectedWorkboardColumns.find((column) => workItemBelongsToColumn(item, column))?.name ??
+      resolveWorkItemColumn(item, selectedWorkboardColumns)?.name ??
       DEFAULT_WORKBOARD_COLUMNS.find((column) => column.key === item.status)?.name ??
       item.status;
   }
@@ -2028,7 +2239,7 @@ function App() {
 
   function dashboardColumnLabelForItem(item: WorkItem) {
     return item.column?.name ??
-      workboardColumnsByProject[item.projectId]?.find((column) => workItemBelongsToColumn(item, column))?.name ??
+      resolveWorkItemColumn(item, workboardColumnsByProject[item.projectId] ?? [])?.name ??
       DEFAULT_WORKBOARD_COLUMNS.find((column) => column.key === item.status)?.name ??
       item.status;
   }
@@ -2338,12 +2549,48 @@ function App() {
   function workItemActivityDetail(activity: WorkItemActivity) {
     const changes = activity.metadata?.changes;
     if (!changes || typeof changes !== "object" || Array.isArray(changes)) return "";
+
+    const fieldLabels: Record<string, string> = {
+      column: "Cột",
+      columnId: "Cột",
+      status: "Trạng thái",
+      priority: "Độ ưu tiên",
+      type: "Loại",
+      title: "Tiêu đề",
+      description: "Mô tả",
+      assigneeName: "Người phụ trách",
+      dueDate: "Hạn xử lý",
+      labelsText: "Labels",
+      checklistText: "Checklist",
+      documentId: "Tài liệu"
+    };
+
+    function resolveValue(field: string, val: unknown): string {
+      if (val === null || val === undefined || val === "") return "trống";
+      const s = Array.isArray(val) ? val.join(", ") : String(val);
+      // Resolve column IDs to names
+      if (field === "column" || field === "columnId") {
+        const col = selectedWorkboardColumns.find((c) => c.id === s);
+        if (col) return col.name;
+      }
+      // Resolve priority
+      if (field === "priority" && WORK_ITEM_PRIORITY_LABEL[s as keyof typeof WORK_ITEM_PRIORITY_LABEL]) {
+        return WORK_ITEM_PRIORITY_LABEL[s as keyof typeof WORK_ITEM_PRIORITY_LABEL];
+      }
+      // Resolve type
+      if (field === "type" && WORK_ITEM_TYPE_LABEL[s as keyof typeof WORK_ITEM_TYPE_LABEL]) {
+        return WORK_ITEM_TYPE_LABEL[s as keyof typeof WORK_ITEM_TYPE_LABEL];
+      }
+      return s;
+    }
+
     return Object.entries(changes as Record<string, { from?: unknown; to?: unknown }>)
       .slice(0, 4)
       .map(([field, value]) => {
-        const from = Array.isArray(value.from) ? value.from.join(", ") : value.from ?? "trống";
-        const to = Array.isArray(value.to) ? value.to.join(", ") : value.to ?? "trống";
-        return `${field}: ${from} → ${to}`;
+        const label = fieldLabels[field] ?? field;
+        const from = resolveValue(field, value.from);
+        const to = resolveValue(field, value.to);
+        return `${label}: ${from} → ${to}`;
       })
       .join(" · ");
   }
@@ -2375,7 +2622,7 @@ function App() {
     const previousStatus = item.status;
     const previousColumnId = item.columnId;
     const nextStatus = statusForWorkboardColumn(column);
-    if (workItemBelongsToColumn(item, column)) {
+    if (workItemBelongsToColumn(item, column, selectedWorkboardColumns)) {
       setWorkItems((prev) => moveWorkItemToColumn(prev, item.id, column, targetId, placement));
       setDashboardWorkItems((prev) => moveWorkItemToColumn(prev, item.id, column, targetId, placement));
       return;
@@ -2416,7 +2663,7 @@ function App() {
       description: "",
       assigneeName: "",
       assigneeIds: [],
-      dueDate: "",
+      dueDate: new Date().toISOString().slice(0, 10),
       attachmentsText: "",
       checklistText: "",
       labelsText: "",
@@ -2570,7 +2817,7 @@ function App() {
       documentId: item.documentId ?? "",
       type: item.type,
       status: item.status,
-      columnId: item.columnId ?? selectedWorkboardColumns.find((column) => workItemBelongsToColumn(item, column))?.id ?? item.status,
+      columnId: item.columnId ?? resolveWorkItemColumn(item, selectedWorkboardColumns)?.id ?? item.status,
       priority: item.priority,
       title: displayWorkItemTitle(item),
       description: item.description ?? "",
@@ -2828,12 +3075,58 @@ function App() {
   }
 
   const filteredProjectsHub = useMemo(() => {
-    if (!projectHubSearch.trim()) return projectsList;
-    const q = projectHubSearch.toLowerCase().trim();
-    return projectsList.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)
-    );
-  }, [projectsList, projectHubSearch]);
+    let result = [...projectsList];
+
+    // Search query
+    if (projectHubSearch.trim()) {
+      const q = projectHubSearch.toLowerCase().trim();
+      result = result.filter(
+        (p) => p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)
+      );
+    }
+
+    // Filter by criteria
+    if (projectHubFilter === "active") {
+      result = result.filter((p) => documentsList.some((d) => d.projectId === p.id));
+    } else if (projectHubFilter === "has_comments") {
+      result = result.filter((p) => getProjectOpenCommentsCount(p.id) > 0);
+    }
+
+    const getTime = (p: Project) => {
+      if (p.createdAt) {
+        const t = new Date(p.createdAt).getTime();
+        if (!isNaN(t) && t > 0) return t;
+      }
+      if (p.updatedAt) {
+        const t = new Date(p.updatedAt).getTime();
+        if (!isNaN(t) && t > 0) return t;
+      }
+      const match = p.id.match(/\d+/);
+      return match ? parseInt(match[0], 10) : 0;
+    };
+
+    // Sort
+    result.sort((a, b) => {
+      if (projectHubSort === "name_asc") {
+        return a.name.localeCompare(b.name, "vi");
+      }
+      if (projectHubSort === "name_desc") {
+        return b.name.localeCompare(a.name, "vi");
+      }
+      if (projectHubSort === "oldest") {
+        return getTime(a) - getTime(b);
+      }
+      if (projectHubSort === "docs_desc") {
+        const countA = documentsList.filter((d) => d.projectId === a.id).length;
+        const countB = documentsList.filter((d) => d.projectId === b.id).length;
+        return countB - countA;
+      }
+      // "newest" default
+      return getTime(b) - getTime(a);
+    });
+
+    return result;
+  }, [projectsList, projectHubSearch, projectHubFilter, projectHubSort, documentsList, getProjectOpenCommentsCount]);
 
   function handleOpenProjectWorkspace(projectId: string) {
     setSelectedProjectId(projectId);
@@ -3050,6 +3343,7 @@ function App() {
 
   // Create New Project Handler
   async function handleCreateProject() {
+    if (isCreatingProject) return;
     if (!newProjName.trim()) {
       addToast("warning", "Thiếu thông tin", "Vui lòng nhập Tên dự án.");
       return;
@@ -3057,6 +3351,7 @@ function App() {
     const projectCode = newProjCode.trim()
       ? newProjCode.trim().toUpperCase()
       : generateProjectCode(newProjName, projectsList.map((project) => project.code));
+    setIsCreatingProject(true);
     try {
       const newProj = await createProject({
         code: projectCode,
@@ -3076,6 +3371,8 @@ function App() {
     } catch (error) {
       console.error("Create project error:", error);
       addToast("error", "Không tạo được dự án", "BE từ chối request hoặc mã dự án đã tồn tại.");
+    } finally {
+      setIsCreatingProject(false);
     }
   }
 
@@ -3093,7 +3390,7 @@ function App() {
 
   // Save Edit Project Handler
   async function handleSaveEditProject() {
-    if (!editingProject) return;
+    if (!editingProject || isSavingEditProject) return;
     if (!editProjName.trim()) {
       addToast("warning", "Thiếu thông tin", "Vui lòng nhập Tên dự án.");
       return;
@@ -3105,6 +3402,7 @@ function App() {
         projectsList.filter((project) => project.id !== editingProject.id).map((project) => project.code)
       );
 
+    setIsSavingEditProject(true);
     try {
       const updatedProject = await updateProject(editingProject.id, {
         code: projectCode,
@@ -3118,6 +3416,8 @@ function App() {
     } catch (error) {
       console.error("Update project error:", error);
       addToast("error", "Không cập nhật được dự án", "BE chưa lưu được thay đổi dự án.");
+    } finally {
+      setIsSavingEditProject(false);
     }
   }
 
@@ -4374,6 +4674,8 @@ function App() {
           ? new Date(Math.max(...updatedCandidates.map((date) => date.getTime())))
           : null;
         const inactiveDays = updatedAt ? Math.max(Math.floor((Date.now() - updatedAt.getTime()) / 86400000), 0) : null;
+        const projectInProgressItems = projectItems.filter((item) => item.status === "IN_PROGRESS");
+        const projectBugItems = projectItems.filter((item) => item.type === "BUG" && item.status !== "DONE");
         const riskScore = projectBlockedItems.length * 5 + projectCriticalBugs.length * 4 + projectOverdueItems.length * 3 + projectOpenItems.length;
         return {
           ...project,
@@ -4383,6 +4685,8 @@ function App() {
           blockedItems: projectBlockedItems.length,
           criticalBugs: projectCriticalBugs.length,
           overdueItems: projectOverdueItems.length,
+          inProgressItems: projectInProgressItems.length,
+          bugItems: projectBugItems.length,
           completionRate: projectItems.length ? Math.round((projectDoneItems.length / projectItems.length) * 100) : 0,
           inactiveDays,
           riskScore,
@@ -4408,22 +4712,33 @@ function App() {
       )
       .slice(0, 6);
     const riskItems = [...dashboardItems]
-      .filter((item) =>
-        item.status !== "DONE" &&
-        (
-          item.status === "BLOCKED" ||
-          isWorkItemOverdue(item) ||
-          (item.type === "BUG" && item.priority === "CRITICAL") ||
-          item.priority === "HIGH" ||
-          item.priority === "CRITICAL"
-        )
-      )
+      .filter((item) => {
+        const assignees = workItemAssigneeNames(item);
+        const isUnassigned = !assignees || assignees.length === 0;
+        return (
+          item.status !== "DONE" &&
+          (
+            item.status === "BLOCKED" ||
+            isWorkItemOverdue(item) ||
+            (item.type === "BUG" && item.priority === "CRITICAL") ||
+            isUnassigned ||
+            item.priority === "HIGH" ||
+            item.priority === "CRITICAL"
+          )
+        );
+      })
       .sort((first, second) => {
-        const score = (item: WorkItem) =>
-          (item.status === "BLOCKED" ? 50 : 0) +
-          (isWorkItemOverdue(item) ? 30 : 0) +
-          (item.type === "BUG" && item.priority === "CRITICAL" ? 25 : 0) +
-          (item.priority === "HIGH" ? 10 : 0);
+        const score = (item: WorkItem) => {
+          const assignees = workItemAssigneeNames(item);
+          const isUnassigned = !assignees || assignees.length === 0;
+          return (
+            (item.status === "BLOCKED" ? 50 : 0) +
+            (isWorkItemOverdue(item) ? 30 : 0) +
+            (item.type === "BUG" && item.priority === "CRITICAL" ? 25 : 0) +
+            (isUnassigned ? 20 : 0) +
+            (item.priority === "HIGH" ? 10 : 0)
+          );
+        };
         return score(second) - score(first);
       })
       .slice(0, 5);
@@ -4476,18 +4791,24 @@ function App() {
     const workloadRows = Array.from(
       dashboardItems.reduce((map, item) => {
         const assignees = workItemAssigneeNames(item) || [];
-        const targetNames = assignees.length ? assignees : ["Chưa giao"];
-        targetNames.forEach((name) => {
-          const current = map.get(name) ?? { name, open: 0, done: 0, blocked: 0, overdue: 0, critical: 0 };
+        assignees.forEach((name) => {
+          if (!name || name === "Chưa giao") return;
+          const current = map.get(name) ?? { name, open: 0, done: 0, blocked: 0, overdue: 0, critical: 0, backlog: 0, todo: 0, inProgress: 0, review: 0, bug: 0, total: 0 };
+          current.total += 1;
           if (item.status === "DONE") current.done += 1;
           else current.open += 1;
           if (item.status === "BLOCKED") current.blocked += 1;
+          if (item.status === "BACKLOG") current.backlog += 1;
+          if (item.status === "TODO") current.todo += 1;
+          if (item.status === "IN_PROGRESS") current.inProgress += 1;
+          if (item.status === "REVIEW") current.review += 1;
           if (isWorkItemOverdue(item)) current.overdue += 1;
           if (item.type === "BUG" && item.priority === "CRITICAL" && item.status !== "DONE") current.critical += 1;
+          if (item.type === "BUG" && item.status !== "DONE") current.bug += 1;
           map.set(name, current);
         });
         return map;
-      }, new Map<string, { name: string; open: number; done: number; blocked: number; overdue: number; critical: number }>())
+      }, new Map<string, { name: string; open: number; done: number; blocked: number; overdue: number; critical: number; backlog: number; todo: number; inProgress: number; review: number; bug: number; total: number }>())
         .values()
     )
       .sort((first, second) =>
@@ -4605,17 +4926,17 @@ function App() {
           <button
             className="sidebar-logo-button"
             type="button"
-            title={isSidebarCollapsed ? "Mở rộng thanh menu" : "DocSpace"}
-            aria-label={isSidebarCollapsed ? "Mở rộng thanh menu" : "DocSpace"}
-            data-tooltip="DocSpace"
+            title={isSidebarCollapsed ? "Mở rộng thanh menu" : "ProjectSpace"}
+            aria-label={isSidebarCollapsed ? "Mở rộng thanh menu" : "ProjectSpace"}
+            data-tooltip="ProjectSpace"
             onClick={() => {
               if (isSidebarCollapsed) toggleSidebar();
             }}
           >
-            <img src="/logo.png" alt="DocSpace" className="sidebar-logo-img" />
+            <img src="/logo.png" alt="ProjectSpace" className="sidebar-logo-img" />
           </button>
           <div className="brand-info">
-            <strong>DocSpace</strong>
+            <strong>ProjectSpace</strong>
           </div>
           <button
             className="sidebar-toggle-btn"
@@ -4774,11 +5095,6 @@ function App() {
 
           {activeTabNav === "dashboard" && (
             <div className="topbar-actions">
-              {(currentUser.role === "ADMIN" || currentUser.role === "MANAGER") && (
-                <button className="exec-action primary" type="button" onClick={() => setIsCreateProjectModalOpen(true)}>
-                  <Plus size={15} /> Tạo dự án mới
-                </button>
-              )}
               <button
                 className="exec-action secondary"
                 type="button"
@@ -4791,29 +5107,28 @@ function App() {
                 <RefreshCw size={14} className={isRefreshingDashboard ? "animate-spin" : ""} />
                 <span>{isRefreshingDashboard ? "Đang làm mới..." : "Làm mới"}</span>
               </button>
+              {(currentUser.role === "ADMIN" || currentUser.role === "MANAGER") && (
+                <button className="exec-action primary" type="button" onClick={() => setIsCreateProjectModalOpen(true)}>
+                  <Plus size={15} /> Tạo dự án mới
+                </button>
+              )}
             </div>
           )}
 
           {activeTabNav === "projects" && (
             <div className="topbar-actions">
-              <label className="project-hub-search">
-                <Search size={15} />
-                <input
-                  value={projectHubSearch}
-                  onChange={(e) => setProjectHubSearch(e.target.value)}
-                  placeholder="Tìm tên hoặc mã dự án..."
-                />
-                {projectHubSearch && (
-                  <button
-                    className="search-clear-btn"
-                    type="button"
-                    onClick={() => setProjectHubSearch("")}
-                    title="Xóa tìm kiếm"
-                  >
-                    <X size={12} />
-                  </button>
-                )}
-              </label>
+              <button
+                className="exec-action secondary"
+                type="button"
+                disabled={isRefreshingDashboard}
+                onClick={async () => {
+                  await loadRoleDashboard();
+                  addToast("success", "Đã làm mới dữ liệu", "Cập nhật dữ liệu danh sách dự án thành công.");
+                }}
+              >
+                <RefreshCw size={14} className={isRefreshingDashboard ? "animate-spin" : ""} />
+                <span>{isRefreshingDashboard ? "Đang làm mới..." : "Làm mới"}</span>
+              </button>
               <button
                 className="exec-action primary"
                 type="button"
@@ -4864,20 +5179,20 @@ function App() {
               <button
                 className="exec-action secondary"
                 type="button"
-                onClick={() => void loadProjectWorkItems(selectedProject.id)}
-                disabled={!selectedProject.id || isLoadingWorkItems}
-              >
-                <RefreshCw size={14} className={isLoadingWorkItems ? "animate-spin" : ""} />
-                <span>{isLoadingWorkItems ? "Đang tải" : "Làm mới"}</span>
-              </button>
-              <button
-                className="exec-action secondary"
-                type="button"
                 onClick={openWorkboardConfigModal}
                 disabled={!selectedProject.id}
               >
                 <SlidersHorizontal size={14} />
                 <span>Tùy chỉnh board</span>
+              </button>
+              <button
+                className="exec-action secondary"
+                type="button"
+                onClick={() => void loadProjectWorkItems(selectedProject.id)}
+                disabled={!selectedProject.id || isLoadingWorkItems}
+              >
+                <RefreshCw size={14} className={isLoadingWorkItems ? "animate-spin" : ""} />
+                <span>{isLoadingWorkItems ? "Đang tải" : "Làm mới"}</span>
               </button>
               <button
                 className="exec-action primary"
@@ -4973,7 +5288,19 @@ function App() {
 
 
               <button
-                className="icon-btn"
+                className="exec-action secondary"
+                type="button"
+                disabled={isRefreshingDashboard}
+                onClick={async () => {
+                  await loadRoleDashboard();
+                  addToast("success", "Đã làm mới dữ liệu", "Cập nhật dữ liệu thành công.");
+                }}
+              >
+                <RefreshCw size={14} className={isRefreshingDashboard ? "animate-spin" : ""} />
+                <span>{isRefreshingDashboard ? "Đang làm mới..." : "Làm mới"}</span>
+              </button>
+              <button
+                className="exec-action primary"
                 type="button"
                 title="Import file vào dự án"
                 disabled={!selectedProjectId}
@@ -4982,7 +5309,8 @@ function App() {
                   setIsImportModalOpen(true);
                 }}
               >
-                <UploadCloud size={15} /> Import File
+                <UploadCloud size={15} />
+                <span>Import File</span>
               </button>
             </div>
           )}
@@ -5012,6 +5340,51 @@ function App() {
             </div>
 
             <div className="exec-main-grid">
+              <section className="exec-panel doc-stats-panel">
+                <div className="exec-panel-header">
+                  <div>
+                    <span>Tổng quan</span>
+                    <h3>Tài liệu theo dự án</h3>
+                  </div>
+                  <strong>{projectsList.length} dự án · {documentsList.length} tài liệu</strong>
+                </div>
+                <div className="doc-project-list">
+                  {projectsList.map((project) => {
+                    const projectDocs = documentsList.filter((d) => d.projectId === project.id);
+                    const draftCount = projectDocs.filter((d) => d.status === "Draft").length;
+                    const deployedCount = projectDocs.filter((d) => d.status === "Triển khai").length;
+                    return (
+                      <button
+                        className="exec-item-row"
+                        type="button"
+                        key={project.id}
+                        onClick={() => {
+                          setSelectedProjectId(project.id);
+                          const firstDoc = documentsList.find((d) => d.projectId === project.id);
+                          if (firstDoc) setSelectedDocumentId(firstDoc.id);
+                          setActiveTabNav("documents");
+                        }}
+                      >
+                        <div className="exec-item-left">
+                          <span className="exec-item-icon-box">
+                            <FileText size={13} />
+                          </span>
+                          <strong className="exec-item-name">{project.name}</strong>
+                        </div>
+                        <div className="exec-item-right">
+                          <div className="exec-item-chips">
+                            {draftCount > 0 && <span className="pr-chip pr-chip-progress">{draftCount} Draft</span>}
+                            {deployedCount > 0 && <span className="pr-chip pr-chip-done">{deployedCount} Triển khai</span>}
+                          </div>
+                          <span className="exec-item-count">{projectDocs.length} tài liệu</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {projectsList.length === 0 && <div className="empty-collab-state">Chưa có dự án nào.</div>}
+                </div>
+              </section>
+
               <section className="exec-panel project-volume">
                 <div className="exec-panel-header">
                   <div>
@@ -5020,10 +5393,10 @@ function App() {
                   </div>
                   <strong>{executiveData.projectRows.length} project</strong>
                 </div>
-                <div className="exec-project-bars">
-                  {executiveData.projectRows.slice(0, 8).map((project) => (
+                <div className="exec-project-list-v2">
+                  {executiveData.projectRows.slice(0, 8).map((project, idx) => (
                     <button
-                      className="exec-project-bar-row"
+                      className="exec-item-row"
                       type="button"
                       key={project.id}
                       onClick={() => {
@@ -5031,37 +5404,23 @@ function App() {
                         setActiveTabNav("review");
                       }}
                     >
-                      <div className="project-bar-label">
-                        <strong>{project.name}</strong>
-                        <small>{project.completionRate}% done · {project.overdueItems} quá hạn · {relativeDashboardTime(project.updatedAt)}</small>
+                      <div className="exec-item-left">
+                        <span className="project-row-idx">{idx + 1}</span>
+                        <strong className="exec-item-name">{project.name}</strong>
                       </div>
-                      <div className="project-bar-track">
-                        <span style={{ width: `${project.width}%` }}></span>
+                      <div className="exec-item-right">
+                        <div className="exec-item-chips">
+                          {project.inProgressItems > 0 && <span className="pr-chip pr-chip-progress">{project.inProgressItems} đang làm</span>}
+                          {project.bugItems > 0 && <span className="pr-chip pr-chip-bug">{project.bugItems} Bug</span>}
+                          {project.doneItems > 0 && <span className="pr-chip pr-chip-done">{project.doneItems} done</span>}
+                        </div>
+                        <span className="exec-item-count">{project.items} ticket</span>
                       </div>
-                      <b>{project.openItems}</b>
                     </button>
                   ))}
-                </div>
-              </section>
-
-              <section className="exec-panel activity-chart">
-                <div className="exec-panel-header">
-                  <div>
-                    <span>Hoạt động</span>
-                    <h3>Biến động Workboard 7 ngày</h3>
-                  </div>
-                  <strong>7 ngày</strong>
-                </div>
-                <div className="exec-activity-bars">
-                  {executiveData.activitySeries.map((item) => (
-                    <div className="activity-bar-column" key={item.label}>
-                      <div className="activity-bar-track">
-                        <span style={{ height: `${Math.max((item.value / executiveData.maxActivity) * 100, item.value > 0 ? 8 : 0)}%` }}></span>
-                      </div>
-                      <strong>{item.value}</strong>
-                      <small>{item.label}</small>
-                    </div>
-                  ))}
+                  {executiveData.projectRows.length === 0 && (
+                    <div className="empty-collab-state">Chưa có project nào.</div>
+                  )}
                 </div>
               </section>
             </div>
@@ -5095,63 +5454,36 @@ function App() {
                   <strong>{executiveData.workloadRows.length} người</strong>
                 </div>
                 <div className="workload-list">
-                  {executiveData.workloadRows.map((row) => (
-                    <button className="workload-row" type="button" key={row.name} onClick={() => {
-                      setActiveTabNav("review");
-                      setWorkboardAssigneeFilter(row.name);
-                    }}>
-                      <strong>{row.name}</strong>
-                      <div className="workload-track">
-                        <span className="open" style={{ width: `${Math.max((row.open / executiveData.maxWorkload) * 100, row.open > 0 ? 8 : 0)}%` }} />
-                        <span className="done" style={{ width: `${Math.max((row.done / executiveData.maxWorkload) * 100, row.done > 0 ? 8 : 0)}%` }} />
-                      </div>
-                      <small>{row.open} mở · {row.done} done · {row.blocked} blocked · {row.overdue} quá hạn</small>
-                    </button>
-                  ))}
+                  {executiveData.workloadRows.map((row) => {
+                    const donePercent = row.total ? Math.round((row.done / row.total) * 100) : 0;
+                    return (
+                      <button className="wl-person" type="button" key={row.name} onClick={() => {
+                        setActiveTabNav("review");
+                        setWorkboardAssigneeFilter(row.name);
+                      }}>
+                        <div className="wl-person-header">
+                          <strong>{row.name}</strong>
+                          <span className="wl-person-meta">{row.done}/{row.total} done · <em className="wl-done-pct">{donePercent}%</em></span>
+                        </div>
+                        <div className="wl-bar-track">
+                          <div className="wl-bar-fill" style={{ width: `${donePercent}%` }} />
+                        </div>
+                        <div className="wl-stat-row">
+                          {row.backlog > 0 && <span className="wl-chip wl-chip-neutral">{row.backlog} Backlog</span>}
+                          {row.todo > 0 && <span className="wl-chip wl-chip-blue">{row.todo} To Do</span>}
+                          {row.inProgress > 0 && <span className="wl-chip wl-chip-amber">{row.inProgress} In Progress</span>}
+                          {row.blocked > 0 && <span className="wl-chip wl-chip-red">{row.blocked} Blocked</span>}
+                          {row.bug > 0 && <span className="wl-chip wl-chip-rose">{row.bug} Bug</span>}
+                          {row.overdue > 0 && <span className="wl-chip wl-chip-danger">{row.overdue} Quá hạn</span>}
+                          {row.done > 0 && <span className="wl-chip wl-chip-green">{row.done} Done</span>}
+                        </div>
+                      </button>
+                    );
+                  })}
                   {executiveData.workloadRows.length === 0 && <div className="empty-collab-state">Chưa có workload.</div>}
                 </div>
               </section>
 
-              <section className="exec-panel">
-                <div className="exec-panel-header">
-                  <div>
-                    <span>Bug critical</span>
-                    <h3>Theo thời gian</h3>
-                  </div>
-                  <strong>7 ngày</strong>
-                </div>
-                <div className="critical-bug-bars">
-                  {executiveData.criticalBugSeries.map((item) => (
-                    <div className="critical-bug-column" key={item.label}>
-                      <div><span style={{ height: `${Math.max((item.value / executiveData.maxCriticalBugSeries) * 100, item.value > 0 ? 8 : 0)}%` }} /></div>
-                      <strong>{item.value}</strong>
-                      <small>{item.label}</small>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              <section className="exec-panel">
-                <div className="exec-panel-header">
-                  <div>
-                    <span>Health score</span>
-                    <h3>Project health</h3>
-                  </div>
-                  <strong>Score</strong>
-                </div>
-                <div className="project-health-list">
-                  {executiveData.projectHealthRows.map((project) => (
-                    <button type="button" key={project.id} onClick={() => {
-                      setSelectedProjectId(project.id);
-                      setActiveTabNav("review");
-                    }}>
-                      <span className={project.healthScore < 55 ? "health-score risk" : project.healthScore < 80 ? "health-score warn" : "health-score good"}>{project.healthScore}</span>
-                      <strong>{project.name}</strong>
-                      <small>{project.openItems} mở · {project.blockedItems} blocked · {project.overdueItems} quá hạn</small>
-                    </button>
-                  ))}
-                </div>
-              </section>
             </div>
 
             <div className="exec-secondary-grid">
@@ -5163,13 +5495,17 @@ function App() {
                   </div>
                   <strong>Risk</strong>
                 </div>
-                <div className="exec-compact-list">
+                <div className="exec-project-list-v2">
                   {executiveData.projectRows
-                    .filter((project) => project.riskScore > 0)
-                    .sort((first, second) => second.riskScore - first.riskScore || second.openItems - first.openItems)
+                    .filter((project) => project.blockedItems > 0 || project.overdueItems > 0 || project.criticalBugs > 0)
+                    .sort((first, second) =>
+                      (second.blockedItems * 5 + second.criticalBugs * 4 + second.overdueItems * 3) -
+                      (first.blockedItems * 5 + first.criticalBugs * 4 + first.overdueItems * 3)
+                    )
                     .slice(0, 5)
                     .map((project) => (
                       <button
+                        className="exec-item-row"
                         type="button"
                         key={project.id}
                         onClick={() => {
@@ -5177,17 +5513,21 @@ function App() {
                           setActiveTabNav("review");
                         }}
                       >
-                        <span className="ops-code-chip">{project.code}</span>
-                        <strong>{project.name}</strong>
-                        <small>{[
-                          project.blockedItems ? `${project.blockedItems} blocked` : "",
-                          project.overdueItems ? `${project.overdueItems} quá hạn` : "",
-                          project.criticalBugs ? `${project.criticalBugs} critical bug` : ""
-                        ].filter(Boolean).join(" · ")}</small>
+                        <div className="exec-item-left">
+                          <span className="ops-code-chip">{project.code}</span>
+                          <strong className="exec-item-name">{project.name}</strong>
+                        </div>
+                        <div className="exec-item-right">
+                          <div className="exec-item-chips">
+                            {project.blockedItems > 0 && <span className="pr-chip pr-chip-bug">{project.blockedItems} blocked</span>}
+                            {project.overdueItems > 0 && <span className="pr-chip pr-chip-bug">{project.overdueItems} quá hạn</span>}
+                            {project.criticalBugs > 0 && <span className="pr-chip pr-chip-bug">{project.criticalBugs} critical bug</span>}
+                          </div>
+                        </div>
                       </button>
                     ))}
-                  {executiveData.projectRows.filter((project) => project.riskScore > 0).length === 0 && (
-                    <div className="empty-collab-state">Không có project cần cảnh báo.</div>
+                  {executiveData.projectRows.filter((project) => project.blockedItems > 0 || project.overdueItems > 0 || project.criticalBugs > 0).length === 0 && (
+                    <div className="empty-collab-state">Không có project nào cần cảnh báo rủi ro.</div>
                   )}
                 </div>
               </section>
@@ -5200,18 +5540,31 @@ function App() {
                   </div>
                   <strong>{executiveData.recentWorkItems.length} item</strong>
                 </div>
-                <div className="exec-compact-list docs">
+                <div className="exec-project-list-v2">
                   {executiveData.recentWorkItems.map((item) => {
                     const project = projectsList.find((project) => project.id === item.projectId);
                     return (
                       <button
+                        className="exec-item-row"
                         type="button"
                         key={item.id}
                         onClick={() => openDashboardWorkItem(item)}
                       >
-                        {workItemTypeIcon(item.type)}
-                        <strong>{displayWorkItemTitle(item)}</strong>
-                        <small>{project?.code ?? "Project"} · {dashboardColumnLabelForItem(item)} · {relativeDashboardTime(item.updatedAt ?? item.createdAt)}</small>
+                        <div className="exec-item-left">
+                          <span className="exec-item-icon-box">
+                            {workItemTypeIcon(item.type)}
+                          </span>
+                          <div className="exec-item-title-group">
+                            <strong className="exec-item-name">{displayWorkItemTitle(item)}</strong>
+                            <small className="exec-item-sub">{project?.code ?? "Project"}</small>
+                          </div>
+                        </div>
+                        <div className="exec-item-right">
+                          <span className={`pr-chip ${item.status === "DONE" ? "pr-chip-done" : item.status === "IN_PROGRESS" ? "pr-chip-progress" : "pr-chip-total"}`}>
+                            {dashboardColumnLabelForItem(item)}
+                          </span>
+                          <span className="exec-item-count">{relativeDashboardTime(item.updatedAt ?? item.createdAt)}</span>
+                        </div>
                       </button>
                     );
                   })}
@@ -5229,22 +5582,45 @@ function App() {
                   </div>
                   <strong>{executiveData.riskItems.length} item</strong>
                 </div>
-                <div className="exec-compact-list quiet">
+                <div className="exec-project-list-v2">
                   {executiveData.riskItems.map((item) => {
                     const project = projectsList.find((project) => project.id === item.projectId);
+                    const assignees = workItemAssigneeNames(item);
+                    const isUnassigned = !assignees || assignees.length === 0;
                     const riskReason = item.status === "BLOCKED"
                       ? "Blocked"
                       : isWorkItemOverdue(item)
                         ? "Quá hạn"
                         : item.type === "BUG" && item.priority === "CRITICAL"
                           ? "Critical bug"
-                          : `${WORK_ITEM_PRIORITY_LABEL[item.priority]} priority`;
-                    const isHighRisk = item.status === "BLOCKED" || item.priority === "CRITICAL" || isWorkItemOverdue(item);
+                          : isUnassigned
+                            ? "Chưa giao"
+                            : `${WORK_ITEM_PRIORITY_LABEL[item.priority]} priority`;
+                    const isHighRisk = item.status === "BLOCKED" || item.priority === "CRITICAL" || isWorkItemOverdue(item) || isUnassigned;
+                    const riskChipClass = item.status === "BLOCKED" || isWorkItemOverdue(item) || (item.type === "BUG" && item.priority === "CRITICAL")
+                      ? "pr-chip-bug"
+                      : isUnassigned
+                        ? "pr-chip-progress"
+                        : "pr-chip-total";
+
                     return (
-                      <button type="button" key={item.id} onClick={() => openDashboardWorkItem(item)}>
-                        <span className={isHighRisk ? "quiet-dot high" : "quiet-dot"}></span>
-                        <strong>{displayWorkItemTitle(item)}</strong>
-                        <small>{project?.code ?? "Project"} · {riskReason} · Hạn {formatWorkItemDate(item.dueDate)}</small>
+                      <button
+                        className="exec-item-row"
+                        type="button"
+                        key={item.id}
+                        onClick={() => openDashboardWorkItem(item)}
+                      >
+                        <div className="exec-item-left">
+                          <span className={isHighRisk ? "quiet-dot high" : "quiet-dot"}></span>
+                          <div className="exec-item-title-group">
+                            <strong className="exec-item-name">{displayWorkItemTitle(item)}</strong>
+                            <small className="exec-item-sub">{project?.code ?? "Project"}</small>
+                          </div>
+                        </div>
+                        <div className="exec-item-right">
+                          <span className={`pr-chip ${riskChipClass}`}>{riskReason}</span>
+                          <span className="exec-item-count">{formatWorkItemDate(item.dueDate)}</span>
+                        </div>
                       </button>
                     );
                   })}
@@ -5318,13 +5694,60 @@ function App() {
               </div>
             </div>
 
-            {/* Bento Grid Projects */}
+            {/* Bento Grid Projects Header with Filter & Sort */}
             <div className="project-hub-section-header">
-              <div className="section-title-wrap">
-                <h3>Danh sách dự án</h3>
-                <span className="project-count-badge">{filteredProjectsHub.length} dự án</span>
+              <div className="section-header-left">
+                <div className="section-title-wrap">
+                  <h3>Danh sách dự án</h3>
+                  <span className="project-count-badge">{filteredProjectsHub.length} dự án</span>
+                </div>
+                <p className="section-subtitle">Không gian làm việc & quản lý tài liệu chi tiết cho từng dự án</p>
               </div>
-              <p className="section-subtitle">Không gian làm việc & quản lý tài liệu chi tiết cho từng dự án</p>
+
+              <div className="project-hub-filter-bar">
+                <label className="project-hub-search">
+                  <Search size={15} />
+                  <input
+                    value={projectHubSearch}
+                    onChange={(e) => setProjectHubSearch(e.target.value)}
+                    placeholder="Tìm tên hoặc mã dự án..."
+                  />
+                  {projectHubSearch && (
+                    <button
+                      className="search-clear-btn"
+                      type="button"
+                      onClick={() => setProjectHubSearch("")}
+                      title="Xóa tìm kiếm"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </label>
+
+                <CustomHeaderSelect
+                  value={projectHubFilter}
+                  onChange={setProjectHubFilter}
+                  icon={Filter}
+                  options={[
+                    { value: "all", label: "Tất cả dự án" },
+                    { value: "active", label: "Dự án có tài liệu" },
+                    { value: "has_comments", label: "Có trao đổi chưa xử lý" }
+                  ]}
+                />
+
+                <CustomHeaderSelect
+                  value={projectHubSort}
+                  onChange={setProjectHubSort}
+                  icon={SlidersHorizontal}
+                  options={[
+                    { value: "newest", label: "Sắp xếp: Mới nhất" },
+                    { value: "oldest", label: "Sắp xếp: Cũ nhất" },
+                    { value: "name_asc", label: "Tên: A → Z" },
+                    { value: "name_desc", label: "Tên: Z → A" },
+                    { value: "docs_desc", label: "Nhiều tài liệu nhất" }
+                  ]}
+                />
+              </div>
             </div>
 
             <div className="project-hub-grid">
@@ -5390,7 +5813,7 @@ function App() {
                       <div className="project-hub-card-body">
                         <h3>{project.name}</h3>
                         <p className="project-hub-unit">
-                          <Layers size={13} /> {project.client || "Internal Team"} • Vận hành nội bộ
+                          <Layers size={13} /> {project.client || "Internal Team • Vận hành nội bộ"}
                         </p>
                       </div>
 
@@ -5682,7 +6105,7 @@ function App() {
 
             <div className="workboard-kanban" aria-label="Project workboard">
               {selectedWorkboardColumns.map((column) => {
-                const columnItems = visibleWorkItems.filter((item) => workItemBelongsToColumn(item, column));
+                const columnItems = visibleWorkItems.filter((item) => workItemBelongsToColumn(item, column, selectedWorkboardColumns));
                 return (
                   <section
                     className={`workboard-column status-${statusForWorkboardColumn(column).toLowerCase()} ${draggingWorkItemId ? "drop-ready" : ""}`}
@@ -6749,11 +7172,29 @@ function App() {
             </div>
 
             <div className="modal-footer">
-              <button className="btn-secondary" type="button" onClick={() => setIsCreateProjectModalOpen(false)}>
+              <button
+                className="btn-secondary"
+                type="button"
+                disabled={isCreatingProject}
+                onClick={() => setIsCreateProjectModalOpen(false)}
+              >
                 Hủy
               </button>
-              <button className="btn-primary" type="button" onClick={handleCreateProject}>
-                <FolderPlus size={16} /> Tạo Dự Án
+              <button
+                className="btn-primary"
+                type="button"
+                disabled={isCreatingProject}
+                onClick={handleCreateProject}
+              >
+                {isCreatingProject ? (
+                  <>
+                    <Loader2 className="spin-icon" size={16} /> Đang tạo...
+                  </>
+                ) : (
+                  <>
+                    <FolderPlus size={16} /> Tạo Dự Án
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -6774,7 +7215,7 @@ function App() {
                   <p className="modal-subtitle">Cập nhật thông tin mã dự án, khách hàng và khối nghiệp vụ</p>
                 </div>
               </div>
-              <button className="icon-btn" type="button" onClick={() => setIsEditProjectModalOpen(false)}>
+              <button className="icon-btn" type="button" disabled={isSavingEditProject} onClick={() => setIsEditProjectModalOpen(false)}>
                 <X size={18} />
               </button>
             </div>
@@ -6784,6 +7225,7 @@ function App() {
                 <input
                   className="form-input"
                   value={editProjName}
+                  disabled={isSavingEditProject}
                   onChange={(e) => setEditProjName(e.target.value)}
                 />
               </div>
@@ -6794,6 +7236,7 @@ function App() {
                   className="form-input"
                   placeholder="Để trống hệ thống sẽ tự sinh mã"
                   value={editProjCode}
+                  disabled={isSavingEditProject}
                   onChange={(e) => setEditProjCode(e.target.value)}
                 />
                 <small className="field-hint">Có thể nhập mã riêng, hoặc bỏ trống để tự tạo từ tên dự án.</small>
@@ -6805,6 +7248,7 @@ function App() {
                   <select
                     className="form-select"
                     value={editProjCustomer}
+                    disabled={isSavingEditProject}
                     onChange={(e) => setEditProjCustomer(e.target.value)}
                   >
                     {[...new Set([editProjCustomer, ...PROJECT_CUSTOMER_OPTIONS])].map((option) => (
@@ -6818,6 +7262,7 @@ function App() {
                   <select
                     className="form-select"
                     value={editProjBusinessUnit}
+                    disabled={isSavingEditProject}
                     onChange={(e) => setEditProjBusinessUnit(e.target.value)}
                   >
                     {[...new Set([editProjBusinessUnit, ...BUSINESS_UNIT_OPTIONS])].map((option) => (
@@ -6829,11 +7274,29 @@ function App() {
             </div>
 
             <div className="modal-footer">
-              <button className="btn-secondary" type="button" onClick={() => setIsEditProjectModalOpen(false)}>
+              <button
+                className="btn-secondary"
+                type="button"
+                disabled={isSavingEditProject}
+                onClick={() => setIsEditProjectModalOpen(false)}
+              >
                 Hủy
               </button>
-              <button className="btn-primary" type="button" onClick={handleSaveEditProject}>
-                <Pencil size={16} /> Lưu Thay Đổi
+              <button
+                className="btn-primary"
+                type="button"
+                disabled={isSavingEditProject}
+                onClick={handleSaveEditProject}
+              >
+                {isSavingEditProject ? (
+                  <>
+                    <Loader2 className="spin-icon" size={16} /> Đang lưu...
+                  </>
+                ) : (
+                  <>
+                    <Pencil size={16} /> Lưu Thay Đổi
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -7254,10 +7717,10 @@ function App() {
                     (showAllWorkItemActivity ? workItemActivity : workItemActivity.slice(0, 3)).map((activity) => (
                       <div className="workitem-activity-row" key={activity.id}>
                         <span className="activity-dot"></span>
-                        <div>
+                        <div className="activity-row-content">
                           <strong>{workItemActivityLabel(activity)}</strong>
                           <small>{activity.actor?.name ?? activity.actor?.email ?? "Hệ thống"} · {relativeDashboardTime(activity.createdAt)}</small>
-                          {workItemActivityDetail(activity) && <small>{workItemActivityDetail(activity)}</small>}
+                          {workItemActivityDetail(activity) && <small className="activity-detail-text">{workItemActivityDetail(activity)}</small>}
                         </div>
                       </div>
                     ))
@@ -7721,11 +8184,9 @@ function App() {
 
                 <div className="form-group">
                   <label><Calendar size={13} /> Hạn xử lý</label>
-                  <input
-                    className="form-input"
-                    type="date"
+                  <CustomDatePicker
                     value={workItemDraft.dueDate}
-                    onChange={(event) => setWorkItemDraft({ ...workItemDraft, dueDate: event.target.value })}
+                    onChange={(val) => setWorkItemDraft({ ...workItemDraft, dueDate: val })}
                   />
                 </div>
 

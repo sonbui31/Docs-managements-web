@@ -35,6 +35,8 @@ type BackendProject = {
   description?: string | null;
   externalCompanyId?: string | null;
   externalDepartmentId?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
   _count?: {
     documents?: number;
     importJobs?: number;
@@ -153,7 +155,9 @@ export function mapProject(project: BackendProject): Project {
     externalDepartmentId: project.externalDepartmentId ?? null,
     progress: 0,
     openComments: 0,
-    documents: project._count?.documents ?? 0
+    documents: project._count?.documents ?? 0,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt
   };
 }
 

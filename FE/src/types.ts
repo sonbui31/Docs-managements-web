@@ -10,6 +10,8 @@ export type Project = {
   progress: number;
   openComments: number;
   documents: number;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type ReqBlockData = {

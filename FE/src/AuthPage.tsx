@@ -323,14 +323,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
               <div className="logo-aura-ring ring-1"></div>
               <div className="logo-aura-ring ring-2"></div>
               <div className="logo-floating-box">
-                <img src="/logo.png" alt="DocSpace Animated Logo" className="animated-hero-logo" />
+                <img src="/logo.png" alt="ProjectSpace Animated Logo" className="animated-hero-logo" />
                 <div className="sparkle-particle p1"><Sparkles size={16} /></div>
                 <div className="sparkle-particle p2"><Zap size={14} /></div>
               </div>
             </div>
 
             <div className="hero-brand-details">
-              <h1 className="hero-brand-name">DocSpace</h1>
+              <h1 className="hero-brand-name">ProjectSpace</h1>
               <p className="hero-brand-subtitle">Nền tảng quản lý dự án</p>
               <div className="hero-status-badge">
                 <span className="pulse-dot"></span> System Operational
