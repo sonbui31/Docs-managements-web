@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BadgeCheck,
   Check,
+  CheckCheck,
   ChevronDown,
   ChevronRight,
   Eye,
@@ -53,8 +54,8 @@ type Props = {
 };
 
 const roleLabels: Record<UserRole, string> = {
-  ADMIN: "Admin Quản trị",
-  MANAGER: "Manager Quản lý",
+  ADMIN: "Quản trị",
+  MANAGER: "Quản lý",
   EMPLOYEE: "Nhân viên"
 };
 
@@ -232,6 +233,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
   const [roleFilter, setRoleFilter] = useState<"ALL" | UserRole>("ALL");
   const [statusFilter, setStatusFilter] = useState<"ALL" | UserStatus>("ALL");
   const [activeTab, setActiveTab] = useState<"users" | "projects" | "documents">("users");
+  const [openAdminDropdown, setOpenAdminDropdown] = useState<string | null>(null);
 
   // Topbar Trigger Handlers
   const isFirstCreateMount = useRef(true);
@@ -665,27 +667,59 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
             </div>
 
             <div className="admin-filter-selects">
-              <select
-                value={roleFilter}
-                onChange={(e) => setRoleFilter(e.target.value as any)}
-                title="Lọc theo Vai trò Hệ thống"
-              >
-                <option value="ALL">Tất cả Vai trò</option>
-                <option value="ADMIN">Admin Quản trị</option>
-                <option value="MANAGER">Manager Quản lý</option>
-                <option value="EMPLOYEE">Nhân viên</option>
-              </select>
+              <div className="custom-form-select-wrapper admin-filter-select-item" style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  className="form-select-trigger"
+                  onClick={() => setOpenAdminDropdown(openAdminDropdown === "filter-role" ? null : "filter-role")}
+                >
+                  <span className="trigger-label-text">{roleFilter === "ALL" ? "Tất cả Vai trò" : roleLabels[roleFilter]}</span>
+                  <ChevronDown size={13} className={`trigger-arrow-icon${openAdminDropdown === "filter-role" ? " rotate" : ""}`} />
+                </button>
+                {openAdminDropdown === "filter-role" && (
+                  <>
+                    <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenAdminDropdown(null)} />
+                    <div className="custom-form-select-menu">
+                      {[{ value: "ALL", label: "Tất cả Vai trò" }, ...Object.entries(roleLabels).map(([v, l]) => ({ value: v, label: l }))].map(({ value, label }) => {
+                        const isSelected = roleFilter === value;
+                        return (
+                          <button key={value} type="button" className={`custom-select-option${isSelected ? " selected" : ""}`} onClick={() => { setRoleFilter(value as any); setOpenAdminDropdown(null); }}>
+                            <span>{label}</span>
+                            {isSelected && <CheckCheck size={14} className="option-check-mark" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
 
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as any)}
-                title="Lọc theo Trạng thái"
-              >
-                <option value="ALL">Tất cả Trạng thái</option>
-                <option value="ACTIVE">Hoạt động</option>
-                <option value="DISABLED">Vô hiệu hóa</option>
-                <option value="LOCKED">Khóa tạm</option>
-              </select>
+              <div className="custom-form-select-wrapper admin-filter-select-item" style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  className="form-select-trigger"
+                  onClick={() => setOpenAdminDropdown(openAdminDropdown === "filter-status" ? null : "filter-status")}
+                >
+                  <span className="trigger-label-text">{statusFilter === "ALL" ? "Tất cả Trạng thái" : statusLabels[statusFilter]}</span>
+                  <ChevronDown size={13} className={`trigger-arrow-icon${openAdminDropdown === "filter-status" ? " rotate" : ""}`} />
+                </button>
+                {openAdminDropdown === "filter-status" && (
+                  <>
+                    <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenAdminDropdown(null)} />
+                    <div className="custom-form-select-menu">
+                      {[{ value: "ALL", label: "Tất cả Trạng thái" }, ...Object.entries(statusLabels).map(([v, l]) => ({ value: v, label: l }))].map(({ value, label }) => {
+                        const isSelected = statusFilter === value;
+                        return (
+                          <button key={value} type="button" className={`custom-select-option${isSelected ? " selected" : ""}`} onClick={() => { setStatusFilter(value as any); setOpenAdminDropdown(null); }}>
+                            <span>{label}</span>
+                            {isSelected && <CheckCheck size={14} className="option-check-mark" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
 
               {(searchQuery || roleFilter !== "ALL" || statusFilter !== "ALL") && (
                 <button
@@ -755,37 +789,79 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
 
                       {/* System Role */}
                       <td className="col-role">
-                        <div className="select-role-wrapper">
-                          <select
-                            value={user.role}
+                        <div className="custom-form-select-wrapper select-role-wrapper" style={{ position: "relative" }}>
+                          <button
+                            type="button"
+                            className={`form-select-trigger role-select role-${user.role.toLowerCase()}`}
                             disabled={!canManageAccounts || isSystemAdmin}
-                            className={`role-select role-${user.role.toLowerCase()}`}
-                            onChange={(e) => void handleUpdateUser(user.id, { role: e.target.value as UserRole })}
+                            onClick={() => setOpenAdminDropdown(openAdminDropdown === `role-${user.id}` ? null : `role-${user.id}`)}
                           >
-                            {Object.entries(roleLabels).map(([val, lbl]) => (
-                              <option key={val} value={val}>
-                                {lbl}
-                              </option>
-                            ))}
-                          </select>
+                            <span className="trigger-label-text">{roleLabels[user.role]}</span>
+                            <ChevronDown size={13} className={`trigger-arrow-icon${openAdminDropdown === `role-${user.id}` ? " rotate" : ""}`} />
+                          </button>
+                          {openAdminDropdown === `role-${user.id}` && (
+                            <>
+                              <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenAdminDropdown(null)} />
+                              <div className="custom-form-select-menu">
+                                {Object.entries(roleLabels).map(([val, lbl]) => {
+                                  const isSelected = user.role === val;
+                                  return (
+                                    <button
+                                      key={val}
+                                      type="button"
+                                      className={`custom-select-option${isSelected ? " selected" : ""}`}
+                                      onClick={() => {
+                                        void handleUpdateUser(user.id, { role: val as UserRole });
+                                        setOpenAdminDropdown(null);
+                                      }}
+                                    >
+                                      <span>{lbl}</span>
+                                      {isSelected && <CheckCheck size={14} className="option-check-mark" />}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          )}
                         </div>
                       </td>
 
                       {/* Status */}
                       <td className="col-status">
-                        <div className="select-status-wrapper">
-                          <select
-                            value={currentStatus}
+                        <div className="custom-form-select-wrapper select-status-wrapper" style={{ position: "relative" }}>
+                          <button
+                            type="button"
+                            className={`form-select-trigger status-select status-${currentStatus.toLowerCase()}`}
                             disabled={!canManageAccounts || isSystemAdmin}
-                            className={`status-select status-${currentStatus.toLowerCase()}`}
-                            onChange={(e) => void handleUpdateUser(user.id, { status: e.target.value as UserStatus })}
+                            onClick={() => setOpenAdminDropdown(openAdminDropdown === `status-${user.id}` ? null : `status-${user.id}`)}
                           >
-                            {Object.entries(statusLabels).map(([val, lbl]) => (
-                              <option key={val} value={val}>
-                                {lbl}
-                              </option>
-                            ))}
-                          </select>
+                            <span className="trigger-label-text">{statusLabels[currentStatus]}</span>
+                            <ChevronDown size={13} className={`trigger-arrow-icon${openAdminDropdown === `status-${user.id}` ? " rotate" : ""}`} />
+                          </button>
+                          {openAdminDropdown === `status-${user.id}` && (
+                            <>
+                              <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenAdminDropdown(null)} />
+                              <div className="custom-form-select-menu">
+                                {Object.entries(statusLabels).map(([val, lbl]) => {
+                                  const isSelected = currentStatus === val;
+                                  return (
+                                    <button
+                                      key={val}
+                                      type="button"
+                                      className={`custom-select-option${isSelected ? " selected" : ""}`}
+                                      onClick={() => {
+                                        void handleUpdateUser(user.id, { status: val as UserStatus });
+                                        setOpenAdminDropdown(null);
+                                      }}
+                                    >
+                                      <span>{lbl}</span>
+                                      {isSelected && <CheckCheck size={14} className="option-check-mark" />}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          )}
                         </div>
                       </td>
 

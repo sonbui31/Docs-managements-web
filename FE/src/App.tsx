@@ -764,6 +764,7 @@ function App() {
   const [workboardCreatorFilter, setWorkboardCreatorFilter] = useState<string>("ALL");
   const [workboardSortBy, setWorkboardSortBy] = useState<"BOARD_ORDER" | "UPDATED_DESC" | "DUE_ASC" | "PRIORITY_DESC">("BOARD_ORDER");
   const [isWorkboardConfigOpen, setIsWorkboardConfigOpen] = useState<boolean>(false);
+  const [openFilterDropdown, setOpenFilterDropdown] = useState<string | null>(null);
   const [workboardColumnDrafts, setWorkboardColumnDrafts] = useState<WorkboardColumnDraft[]>([]);
   const [isSavingWorkboardColumns, setIsSavingWorkboardColumns] = useState<boolean>(false);
   const [isWorkItemModalOpen, setIsWorkItemModalOpen] = useState<boolean>(false);
@@ -2462,6 +2463,7 @@ function App() {
   }
 
   const wbcfgDragRef = useRef<{ fromIndex: number; toIndex: number } | null>(null);
+  const [wbcfgOpenDropdown, setWbcfgOpenDropdown] = useState<number | null>(null);
 
   function reorderWorkboardColumnDraft(fromIndex: number, toIndex: number) {
     if (fromIndex === toIndex) return;
@@ -2511,35 +2513,41 @@ function App() {
     try {
       const realExistingColumns = workboardColumnsByProject[selectedProject.id] ?? [];
       const existingIds = new Set(realExistingColumns.map((column) => column.id));
-      const nextIds: string[] = [];
-      for (const [index, draft] of normalizedDrafts.entries()) {
-        if (draft.id && existingIds.has(draft.id)) {
-          const updated = await updateWorkboardColumn(selectedProject.id, draft.id, {
-            name: draft.name,
-            color: draft.color,
-            type: draft.type,
-            position: index,
-            isDefault: draft.isDefault,
-            isDone: draft.isDone
-          });
-          nextIds.push(updated.id);
-        } else {
-          const created = await createWorkboardColumn(selectedProject.id, {
-            name: draft.name,
-            color: draft.color,
-            type: draft.type,
-            position: index,
-            isDefault: draft.isDefault,
-            isDone: draft.isDone
-          });
-          nextIds.push(created.id);
-        }
+
+      // Run all update/create calls in parallel
+      const results = await Promise.all(
+        normalizedDrafts.map(async (draft, index) => {
+          if (draft.id && existingIds.has(draft.id)) {
+            const updated = await updateWorkboardColumn(selectedProject.id, draft.id, {
+              name: draft.name,
+              color: draft.color,
+              type: draft.type,
+              position: index,
+              isDefault: draft.isDefault,
+              isDone: draft.isDone
+            });
+            return updated.id;
+          } else {
+            const created = await createWorkboardColumn(selectedProject.id, {
+              name: draft.name,
+              color: draft.color,
+              type: draft.type,
+              position: index,
+              isDefault: draft.isDefault,
+              isDone: draft.isDone
+            });
+            return created.id;
+          }
+        })
+      );
+
+      // Run all delete calls in parallel
+      const removed = realExistingColumns.filter((column) => !results.includes(column.id));
+      if (removed.length > 0) {
+        await Promise.all(removed.map((column) => deleteWorkboardColumn(selectedProject.id, column.id)));
       }
-      const removed = realExistingColumns.filter((column) => !nextIds.includes(column.id));
-      for (const column of removed) {
-        await deleteWorkboardColumn(selectedProject.id, column.id);
-      }
-      const columns = await reorderWorkboardColumns(selectedProject.id, nextIds);
+
+      const columns = await reorderWorkboardColumns(selectedProject.id, results);
       setWorkboardColumnsByProject((prev) => ({ ...prev, [selectedProject.id]: columns }));
       setIsWorkboardConfigOpen(false);
       addToast("success", "Đã cập nhật board", "Mô hình Kanban của project đã được lưu.");
@@ -4738,7 +4746,7 @@ function App() {
                 : activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
                   ? "Quản trị hệ thống • Users & Permissions"
                   : activeTabNav === "projects"
-                    ? "Tổng quan danh mục dự án • Vận hành nội bộ"
+                    ? "Tổng quan danh mục dự án"
                     : activeTabNav === "review"
                       ? `Project Workboard • ${selectedProject.code}`
                       : `${selectedProject.code} / ${selectedProject.client}`}
@@ -4753,7 +4761,7 @@ function App() {
                 : activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
                   ? "Quản Lý User & Phân Quyền"
                   : activeTabNav === "projects"
-                    ? <>Quản Lý Dự Án <span className="hub-count">({filteredProjectsHub.length})</span></>
+                    ? "Quản Lý Dự Án"
                     : activeTabNav === "review"
                       ? (selectedProject?.name ?? "Workboard")
                       : (selectedProject?.name ?? "Không gian làm việc")}
@@ -5514,79 +5522,130 @@ function App() {
                   />
                 </label>
 
-                <label className="filter-select-wrapper">
+                {/* LOẠI filter */}
+                <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
                   <span className="select-label">Loại:</span>
-                  <select
-                    value={workboardTypeFilter}
-                    onChange={(event) => setWorkboardTypeFilter(event.target.value as any)}
-                  >
-                    <option value="ALL">Tất cả loại ({workItems.length})</option>
-                    {(["TASK", "BUG", "REVIEW", "CHANGE_REQUEST", "QUESTION"] as const).map((type) => (
-                      <option key={type} value={type}>
-                        {WORK_ITEM_TYPE_LABEL[type]}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={13} className="select-arrow" />
-                </label>
+                  <button type="button" className="form-select-trigger" onClick={() => setOpenFilterDropdown(openFilterDropdown === "type" ? null : "type")}>
+                    <span className="trigger-label-text">{workboardTypeFilter === "ALL" ? `Tất cả loại (${workItems.length})` : WORK_ITEM_TYPE_LABEL[workboardTypeFilter]}</span>
+                    <ChevronDown size={13} className={`trigger-arrow-icon${openFilterDropdown === "type" ? " rotate" : ""}`} />
+                  </button>
+                  {openFilterDropdown === "type" && (
+                    <>
+                      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenFilterDropdown(null)} />
+                      <div className="custom-form-select-menu">
+                        {(["ALL", "TASK", "BUG", "REVIEW", "CHANGE_REQUEST", "QUESTION"] as const).map((v) => {
+                          const isSelected = workboardTypeFilter === v;
+                          return (
+                            <button key={v} type="button" className={`custom-select-option${isSelected ? " selected" : ""}`} onClick={() => { setWorkboardTypeFilter(v as any); setOpenFilterDropdown(null); }}>
+                              <span>{v === "ALL" ? `Tất cả loại (${workItems.length})` : WORK_ITEM_TYPE_LABEL[v]}</span>
+                              {isSelected && <CheckCheck size={14} className="option-check-mark" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
 
-                <label className="filter-select-wrapper">
+                {/* PRIORITY filter */}
+                <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
                   <span className="select-label">Priority:</span>
-                  <select
-                    value={workboardPriorityFilter}
-                    onChange={(event) => setWorkboardPriorityFilter(event.target.value as any)}
-                  >
-                    <option value="ALL">Tất cả độ ưu tiên</option>
-                    {(["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const).map((priority) => (
-                      <option key={priority} value={priority}>
-                        {WORK_ITEM_PRIORITY_LABEL[priority]}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={13} className="select-arrow" />
-                </label>
+                  <button type="button" className="form-select-trigger" onClick={() => setOpenFilterDropdown(openFilterDropdown === "priority" ? null : "priority")}>
+                    <span className="trigger-label-text">{workboardPriorityFilter === "ALL" ? "Tất cả độ ưu tiên" : WORK_ITEM_PRIORITY_LABEL[workboardPriorityFilter]}</span>
+                    <ChevronDown size={13} className={`trigger-arrow-icon${openFilterDropdown === "priority" ? " rotate" : ""}`} />
+                  </button>
+                  {openFilterDropdown === "priority" && (
+                    <>
+                      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenFilterDropdown(null)} />
+                      <div className="custom-form-select-menu">
+                        {(["ALL", "LOW", "MEDIUM", "HIGH", "CRITICAL"] as const).map((v) => {
+                          const isSelected = workboardPriorityFilter === v;
+                          return (
+                            <button key={v} type="button" className={`custom-select-option${isSelected ? " selected" : ""}`} onClick={() => { setWorkboardPriorityFilter(v as any); setOpenFilterDropdown(null); }}>
+                              <span>{v === "ALL" ? "Tất cả độ ưu tiên" : WORK_ITEM_PRIORITY_LABEL[v]}</span>
+                              {isSelected && <CheckCheck size={14} className="option-check-mark" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
 
-                <label className="filter-select-wrapper">
+                {/* GIAO filter */}
+                <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
                   <span className="select-label">Giao:</span>
-                  <select
-                    value={workboardAssigneeFilter}
-                    onChange={(event) => setWorkboardAssigneeFilter(event.target.value)}
-                  >
-                    <option value="ALL">Tất cả người phụ trách</option>
-                    {workboardAssigneeOptions.map((name) => (
-                      <option key={name} value={name}>{name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={13} className="select-arrow" />
-                </label>
+                  <button type="button" className="form-select-trigger" onClick={() => setOpenFilterDropdown(openFilterDropdown === "assignee" ? null : "assignee")}>
+                    <span className="trigger-label-text">{workboardAssigneeFilter === "ALL" ? "Tất cả người phụ trách" : workboardAssigneeFilter}</span>
+                    <ChevronDown size={13} className={`trigger-arrow-icon${openFilterDropdown === "assignee" ? " rotate" : ""}`} />
+                  </button>
+                  {openFilterDropdown === "assignee" && (
+                    <>
+                      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenFilterDropdown(null)} />
+                      <div className="custom-form-select-menu">
+                        {["ALL", ...workboardAssigneeOptions].map((v) => {
+                          const isSelected = workboardAssigneeFilter === v;
+                          return (
+                            <button key={v} type="button" className={`custom-select-option${isSelected ? " selected" : ""}`} onClick={() => { setWorkboardAssigneeFilter(v); setOpenFilterDropdown(null); }}>
+                              <span>{v === "ALL" ? "Tất cả người phụ trách" : v}</span>
+                              {isSelected && <CheckCheck size={14} className="option-check-mark" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
 
-                <label className="filter-select-wrapper">
+                {/* NGƯỜI TẠO filter */}
+                <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
                   <span className="select-label">Người tạo:</span>
-                  <select
-                    value={workboardCreatorFilter}
-                    onChange={(event) => setWorkboardCreatorFilter(event.target.value)}
-                  >
-                    <option value="ALL">Tất cả người tạo</option>
-                    {workboardCreatorOptions.map((name) => (
-                      <option key={name} value={name}>{name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={13} className="select-arrow" />
-                </label>
+                  <button type="button" className="form-select-trigger" onClick={() => setOpenFilterDropdown(openFilterDropdown === "creator" ? null : "creator")}>
+                    <span className="trigger-label-text">{workboardCreatorFilter === "ALL" ? "Tất cả người tạo" : workboardCreatorFilter}</span>
+                    <ChevronDown size={13} className={`trigger-arrow-icon${openFilterDropdown === "creator" ? " rotate" : ""}`} />
+                  </button>
+                  {openFilterDropdown === "creator" && (
+                    <>
+                      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenFilterDropdown(null)} />
+                      <div className="custom-form-select-menu">
+                        {["ALL", ...workboardCreatorOptions].map((v) => {
+                          const isSelected = workboardCreatorFilter === v;
+                          return (
+                            <button key={v} type="button" className={`custom-select-option${isSelected ? " selected" : ""}`} onClick={() => { setWorkboardCreatorFilter(v); setOpenFilterDropdown(null); }}>
+                              <span>{v === "ALL" ? "Tất cả người tạo" : v}</span>
+                              {isSelected && <CheckCheck size={14} className="option-check-mark" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
 
-                <label className="filter-select-wrapper">
+                {/* SẮP XẾP filter */}
+                <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
                   <span className="select-label">Sắp xếp:</span>
-                  <select
-                    value={workboardSortBy}
-                    onChange={(event) => setWorkboardSortBy(event.target.value as typeof workboardSortBy)}
-                  >
-                    <option value="BOARD_ORDER">Thứ tự board</option>
-                    <option value="UPDATED_DESC">Mới cập nhật</option>
-                    <option value="DUE_ASC">Hạn gần nhất</option>
-                    <option value="PRIORITY_DESC">Priority cao nhất</option>
-                  </select>
-                  <ChevronDown size={13} className="select-arrow" />
-                </label>
+                  <button type="button" className="form-select-trigger" onClick={() => setOpenFilterDropdown(openFilterDropdown === "sort" ? null : "sort")}>
+                    <span className="trigger-label-text">{({ BOARD_ORDER: "Thứ tự board", UPDATED_DESC: "Mới cập nhật", DUE_ASC: "Hạn gần nhất", PRIORITY_DESC: "Priority cao nhất" } as Record<string, string>)[workboardSortBy]}</span>
+                    <ChevronDown size={13} className={`trigger-arrow-icon${openFilterDropdown === "sort" ? " rotate" : ""}`} />
+                  </button>
+                  {openFilterDropdown === "sort" && (
+                    <>
+                      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenFilterDropdown(null)} />
+                      <div className="custom-form-select-menu">
+                        {([{ value: "BOARD_ORDER", label: "Thứ tự board" }, { value: "UPDATED_DESC", label: "Mới cập nhật" }, { value: "DUE_ASC", label: "Hạn gần nhất" }, { value: "PRIORITY_DESC", label: "Priority cao nhất" }]).map(({ value, label }) => {
+                          const isSelected = workboardSortBy === value;
+                          return (
+                            <button key={value} type="button" className={`custom-select-option${isSelected ? " selected" : ""}`} onClick={() => { setWorkboardSortBy(value as typeof workboardSortBy); setOpenFilterDropdown(null); }}>
+                              <span>{label}</span>
+                              {isSelected && <CheckCheck size={14} className="option-check-mark" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
 
                 {(workboardTypeFilter !== "ALL" ||
                   workboardPriorityFilter !== "ALL" ||
@@ -7480,15 +7539,42 @@ function App() {
                       </div>
                       <div className="wbcfg-field wbcfg-field-type">
                         <label>Nhóm trạng thái</label>
-                        <select
-                          className="form-select"
-                          value={draft.type}
-                          onChange={(event) => updateWorkboardColumnDraft(index, { type: event.target.value as WorkboardColumnType })}
-                        >
-                          {WORKBOARD_COLUMN_TYPE_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
-                        </select>
+                        <div className="custom-form-select-wrapper" style={{ position: "relative" }}>
+                          <button
+                            type="button"
+                            className="form-select-trigger"
+                            onClick={() => setWbcfgOpenDropdown(wbcfgOpenDropdown === index ? null : index)}
+                          >
+                            <span className="trigger-label-text">
+                              {WORKBOARD_COLUMN_TYPE_OPTIONS.find((o) => o.value === draft.type)?.label ?? "Chọn..."}
+                            </span>
+                            <ChevronDown size={14} className={`trigger-arrow-icon${wbcfgOpenDropdown === index ? " rotate" : ""}`} />
+                          </button>
+                          {wbcfgOpenDropdown === index && (
+                            <>
+                              <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setWbcfgOpenDropdown(null)} />
+                              <div className="custom-form-select-menu">
+                                {WORKBOARD_COLUMN_TYPE_OPTIONS.map((option) => {
+                                  const isSelected = draft.type === option.value;
+                                  return (
+                                    <button
+                                      key={option.value}
+                                      type="button"
+                                      className={`custom-select-option${isSelected ? " selected" : ""}`}
+                                      onClick={() => {
+                                        updateWorkboardColumnDraft(index, { type: option.value });
+                                        setWbcfgOpenDropdown(null);
+                                      }}
+                                    >
+                                      <span>{option.label}</span>
+                                      {isSelected && <CheckCheck size={14} className="option-check-mark" />}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          )}
+                        </div>
                       </div>
                       <div className="wbcfg-field wbcfg-field-flags">
                         <label className={`wbcfg-pill${draft.isDefault ? " active" : ""}`}>
