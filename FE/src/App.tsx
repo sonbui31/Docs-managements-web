@@ -1453,6 +1453,15 @@ function App() {
     }
   }
 
+  async function handleShareAccessChanged(scope: "document" | "project", targetId: string) {
+    const projectIdToRefresh =
+      scope === "project"
+        ? targetId
+        : documentsList.find((document) => document.id === targetId)?.projectId ?? selectedProject.id;
+    await loadProjectMembers(projectIdToRefresh);
+    await loadRoleDashboard();
+  }
+
   async function loadRoleDashboard() {
     setIsRefreshingDashboard(true);
     try {
@@ -2070,10 +2079,28 @@ function App() {
     );
   }
 
+  const visibleProjectsList = useMemo(() => {
+    const projectsById = new Map(projectsList.map((project) => [project.id, project]));
+    (roleDashboard?.projectBreakdown ?? []).forEach((project) => {
+      if (projectsById.has(project.id)) return;
+      projectsById.set(project.id, {
+        id: project.id,
+        code: project.code,
+        name: project.name,
+        client: project.client ?? "Internal Team • Vận hành nội bộ",
+        progress: project.documents > 0 ? 100 : 0,
+        openComments: project.openComments,
+        documents: project.documents,
+        updatedAt: project.updatedAt
+      });
+    });
+    return Array.from(projectsById.values());
+  }, [projectsList, roleDashboard?.projectBreakdown]);
+
   const selectedProject = useMemo(
     () =>
-      projectsList.find((p) => p.id === selectedProjectId) ??
-      projectsList[0] ?? {
+      visibleProjectsList.find((p) => p.id === selectedProjectId) ??
+      visibleProjectsList[0] ?? {
         id: "",
         code: "NO-PROJECT",
         name: "Chưa có dự án",
@@ -2082,7 +2109,7 @@ function App() {
         openComments: 0,
         documents: 0
       },
-    [projectsList, selectedProjectId]
+    [visibleProjectsList, selectedProjectId]
   );
 
   // Documents for current scope
@@ -3075,7 +3102,7 @@ function App() {
   }
 
   const filteredProjectsHub = useMemo(() => {
-    let result = [...projectsList];
+    let result = [...visibleProjectsList];
 
     // Search query
     if (projectHubSearch.trim()) {
@@ -3126,7 +3153,7 @@ function App() {
     });
 
     return result;
-  }, [projectsList, projectHubSearch, projectHubFilter, projectHubSort, documentsList, getProjectOpenCommentsCount]);
+  }, [visibleProjectsList, projectHubSearch, projectHubFilter, projectHubSort, documentsList, getProjectOpenCommentsCount]);
 
   function handleOpenProjectWorkspace(projectId: string) {
     setSelectedProjectId(projectId);
@@ -5641,7 +5668,7 @@ function App() {
                   <span className="hub-hero-label">Tổng số dự án</span>
                 </div>
                 <div className="hub-card-body">
-                  <strong className="hub-hero-value">{projectsList.length}</strong>
+                  <strong className="hub-hero-value">{visibleProjectsList.length}</strong>
                   <span className="hub-hero-sub-pill">Đang vận hành</span>
                 </div>
               </div>
@@ -5666,7 +5693,7 @@ function App() {
                 </div>
                 <div className="hub-card-body">
                   <strong className="hub-hero-value">
-                    {projectsList.reduce((acc, p) => acc + getProjectOpenCommentsCount(p.id), 0)}
+                    {visibleProjectsList.reduce((acc, p) => acc + (getProjectOpenCommentsCount(p.id) || p.openComments || 0), 0)}
                   </strong>
                   <span className="hub-hero-sub-pill">Comment đang mở</span>
                 </div>
@@ -5764,7 +5791,7 @@ function App() {
                   const docCount = projectDocs.length;
                   const draftDocsCount = projectDocs.filter((d) => d.status === "Draft").length;
                   const deployedDocsCount = projectDocs.filter((d) => d.status === "Triển khai").length;
-                  const openCommentsCount = getProjectOpenCommentsCount(project.id);
+                  const openCommentsCount = getProjectOpenCommentsCount(project.id) || project.openComments || 0;
                   const isSelected = selectedProjectId === project.id;
                   const progressPct = docCount > 0 ? Math.round((deployedDocsCount / docCount) * 100) : 0;
                   const members = projectMembersByProject[project.id] ?? [];
@@ -8527,6 +8554,7 @@ function App() {
             projectId={selectedProject.id}
             projectTitle={selectedProject.name}
             onClose={() => setIsShareModalOpen(false)}
+            onAccessChanged={handleShareAccessChanged}
             onToast={addToast}
           />
         </Suspense>

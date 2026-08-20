@@ -20,6 +20,7 @@ type ShareAccessModalProps = {
   projectId: string;
   projectTitle: string;
   onClose: () => void;
+  onAccessChanged?: (scope: ShareScope, targetId: string) => void | Promise<void>;
   onToast: (type: "success" | "info" | "warning" | "error", title: string, message: string) => void;
 };
 
@@ -40,6 +41,7 @@ export function ShareAccessModal({
   projectId,
   projectTitle,
   onClose,
+  onAccessChanged,
   onToast
 }: ShareAccessModalProps) {
   const [scope, setScope] = useState<ShareScope>(initialScope);
@@ -150,6 +152,7 @@ export function ShareAccessModal({
       );
       setSelectedUserIds([]);
       await loadUsers();
+      await onAccessChanged?.(scope, targetId);
       onToast("success", "Đã chia sẻ quyền", `Đã cấp ${selectedRoles.join(", ")} cho ${selectedUserIds.length} người trên ${targetLabel}.`);
     } catch (error: any) {
       onToast("error", "Chia sẻ thất bại", error?.message || "Vui lòng thử lại.");
@@ -168,6 +171,7 @@ export function ShareAccessModal({
         await assignUserToProject(userId, targetId, roles);
       }
       await loadUsers();
+      await onAccessChanged?.(scope, targetId);
       onToast("success", "Đã cập nhật quyền", `Quyền ${targetLabel} đã đổi thành ${roles.join(", ")}.`);
     } catch (error: any) {
       onToast("error", "Không đổi được quyền", error?.message || "Vui lòng thử lại.");
@@ -186,6 +190,7 @@ export function ShareAccessModal({
         await removeUserFromProject(userId, targetId);
       }
       await loadUsers();
+      await onAccessChanged?.(scope, targetId);
       onToast("info", "Đã gỡ quyền", `Người dùng đã được gỡ khỏi ${targetLabel}.`);
     } catch (error: any) {
       onToast("error", "Không gỡ được quyền", error?.message || "Vui lòng thử lại.");
