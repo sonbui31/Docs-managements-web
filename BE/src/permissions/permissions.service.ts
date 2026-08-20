@@ -116,7 +116,7 @@ export class PermissionsService {
   }
 
   async assertCanCreateProject(user: AuthenticatedUser) {
-    if (user.role !== "ADMIN" && user.role !== "MANAGER") {
+    if (user.role !== "ADMIN" && user.role !== "MANAGER" && user.role !== "EMPLOYEE") {
       throw new ForbiddenException("Bạn không có quyền tạo dự án");
     }
   }

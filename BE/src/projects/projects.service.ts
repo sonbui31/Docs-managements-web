@@ -146,6 +146,7 @@ export class ProjectsService {
     try {
       return await this.prisma.$transaction(async (tx) => {
       const projectCode = await this.generateUniqueProjectCode(tx, dto.code, dto.name);
+      const scope = this.projectScopeForCreate(dto, user);
       const project = await tx.project.create({
         data: {
           ...dto,
@@ -153,20 +154,19 @@ export class ProjectsService {
           name: dto.name.trim(),
           client: dto.client?.trim(),
           description: dto.description?.trim(),
-          externalCompanyId: dto.externalCompanyId?.trim() || user.externalCompanyId || null,
-          externalDepartmentId: dto.externalDepartmentId?.trim() || user.externalDepartmentId || null
+          externalCompanyId: scope.externalCompanyId,
+          externalDepartmentId: scope.externalDepartmentId
         }
       });
-      if (user.role === "MANAGER") {
-        await tx.projectMember.create({
-          data: {
-            projectId: project.id,
-            userId: user.id,
-            role: "MANAGER",
-            assignedBy: user.id
-          }
-        });
-      }
+      await tx.projectMember.create({
+        data: {
+          projectId: project.id,
+          userId: user.id,
+          role: "MANAGER",
+          roles: ["MANAGER"],
+          assignedBy: user.id
+        }
+      });
       await tx.auditLog.create({
         data: {
           actorId: user.id,
@@ -283,5 +283,26 @@ export class ProjectsService {
       .toUpperCase()
       .slice(0, 24);
     return normalized || "PROJECT";
+  }
+
+  private projectScopeForCreate(dto: CreateProjectDto, user: AuthenticatedUser) {
+    if (user.externalRole === "sadmin") {
+      return {
+        externalCompanyId: dto.externalCompanyId?.trim() || user.externalCompanyId || null,
+        externalDepartmentId: dto.externalDepartmentId?.trim() || user.externalDepartmentId || null
+      };
+    }
+
+    if (user.role === "ADMIN") {
+      return {
+        externalCompanyId: dto.externalCompanyId?.trim() || user.externalCompanyId || null,
+        externalDepartmentId: dto.externalDepartmentId?.trim() || user.externalDepartmentId || null
+      };
+    }
+
+    return {
+      externalCompanyId: user.externalCompanyId || null,
+      externalDepartmentId: user.externalDepartmentId || null
+    };
   }
 }

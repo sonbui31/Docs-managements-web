@@ -3371,6 +3371,7 @@ function App() {
   // Create New Project Handler
   async function handleCreateProject() {
     if (isCreatingProject) return;
+    if (!currentUser) return;
     if (!newProjName.trim()) {
       addToast("warning", "Thiếu thông tin", "Vui lòng nhập Tên dự án.");
       return;
@@ -3386,9 +3387,24 @@ function App() {
         client: buildProjectClientLabel(newProjCustomer, newProjBusinessUnit)
       });
       setProjectsList((prev) => [...prev, newProj]);
+      setProjectMembersByProject((prev) => ({
+        ...prev,
+        [newProj.id]: [{
+          id: currentUser.id,
+          name: currentUser.name,
+          email: currentUser.email,
+          role: currentUser.role,
+          projectRole: "MANAGER",
+          projectRoles: ["MANAGER"],
+          documentIds: [],
+          documentRoles: [],
+          source: "PROJECT"
+        }]
+      }));
       setSelectedProjectId(newProj.id);
       setSelectedDocumentId("empty-document");
       setActiveTabNav("projects");
+      void loadRoleDashboard();
       setNewProjCode("");
       setNewProjName("");
       setNewProjCustomer("Internal Team");
@@ -5134,11 +5150,9 @@ function App() {
                 <RefreshCw size={14} className={isRefreshingDashboard ? "animate-spin" : ""} />
                 <span>{isRefreshingDashboard ? "Đang làm mới..." : "Làm mới"}</span>
               </button>
-              {(currentUser.role === "ADMIN" || currentUser.role === "MANAGER") && (
-                <button className="exec-action primary" type="button" onClick={() => setIsCreateProjectModalOpen(true)}>
-                  <Plus size={15} /> Tạo dự án mới
-                </button>
-              )}
+              <button className="exec-action primary" type="button" onClick={() => setIsCreateProjectModalOpen(true)}>
+                <Plus size={15} /> Tạo dự án mới
+              </button>
             </div>
           )}
 
@@ -7131,8 +7145,8 @@ function App() {
                   <FolderPlus size={20} />
                 </div>
                 <div>
-                  <h3>Tạo Dự Án Quản Lý Mới</h3>
-                  <p className="modal-subtitle">Nhập tên dự án, mã dự án và khối nghiệp vụ tương ứng</p>
+                  <h3>Tạo Dự Án Mới</h3>
+                  <p className="modal-subtitle">Dự án sẽ nằm trong phạm vi công ty/phòng ban của tài khoản hiện tại</p>
                 </div>
               </div>
               <button className="icon-btn" type="button" onClick={() => setIsCreateProjectModalOpen(false)}>

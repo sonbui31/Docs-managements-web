@@ -199,7 +199,9 @@ export class UsersService {
       await this.permissions.assertProjectRole(actor, dto.projectId, ["MANAGER"]);
     }
 
-    const user = await this.prisma.user.findFirst({ where: { id: userId, deletedAt: null } });
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null, ...this.accessibleUserScope(actor) }
+    });
     if (!user) throw new NotFoundException("User not found");
 
     return this.prisma.projectMember.upsert({
@@ -223,7 +225,7 @@ export class UsersService {
     }
 
     const [usersCount, projectsCount] = await Promise.all([
-      this.prisma.user.count({ where: { id: { in: userIds }, deletedAt: null } }),
+      this.prisma.user.count({ where: { id: { in: userIds }, deletedAt: null, ...this.accessibleUserScope(actor) } }),
       this.prisma.project.count({ where: { id: { in: projectIds } } })
     ]);
     if (usersCount !== userIds.length) throw new NotFoundException("Một hoặc nhiều người dùng không tồn tại");
@@ -264,7 +266,9 @@ export class UsersService {
       await this.permissions.assertDocumentRole(actor, dto.documentId, ["MANAGER"]);
     }
 
-    const user = await this.prisma.user.findFirst({ where: { id: userId, deletedAt: null } });
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null, ...this.accessibleUserScope(actor) }
+    });
     if (!user) throw new NotFoundException("User not found");
 
     return this.prisma.documentPermission.upsert({
@@ -296,7 +300,7 @@ export class UsersService {
     }
 
     const [usersCount, documents] = await Promise.all([
-      this.prisma.user.count({ where: { id: { in: userIds }, deletedAt: null } }),
+      this.prisma.user.count({ where: { id: { in: userIds }, deletedAt: null, ...this.accessibleUserScope(actor) } }),
       this.prisma.document.findMany({
         where: { id: { in: documentIds } },
         select: { id: true, projectId: true }
@@ -451,7 +455,8 @@ export class UsersService {
 
   private accessibleUserScope(actor: AuthenticatedUser): Prisma.UserWhereInput {
     if (actor.externalRole === "sadmin" || !actor.externalCompanyId) return {};
-    if (actor.role === "MANAGER" && actor.externalDepartmentId) {
+    if (actor.role === "ADMIN") return { externalCompanyId: actor.externalCompanyId };
+    if (actor.externalDepartmentId) {
       return {
         externalCompanyId: actor.externalCompanyId,
         externalDepartmentId: actor.externalDepartmentId

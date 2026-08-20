@@ -68,20 +68,22 @@ export class AuthController {
   }
 
   private setRefreshCookie(response: Response, refreshToken: string) {
+    const isProduction = process.env.NODE_ENV === "production";
     response.cookie(REFRESH_COOKIE_NAME, refreshToken, {
       httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      sameSite: isProduction ? "none" : "lax",
+      secure: isProduction,
       path: "/api/v1/auth",
       maxAge: 30 * 24 * 60 * 60 * 1000
     });
   }
 
   private clearRefreshCookie(response: Response) {
+    const isProduction = process.env.NODE_ENV === "production";
     response.clearCookie(REFRESH_COOKIE_NAME, {
       httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      sameSite: isProduction ? "none" : "lax",
+      secure: isProduction,
       path: "/api/v1/auth"
     });
   }
