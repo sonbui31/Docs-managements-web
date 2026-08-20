@@ -34,14 +34,12 @@ export class AuthController {
     return this.authService.refresh(readCookie(request, REFRESH_COOKIE_NAME), this.meta(request));
   }
 
-  @UseGuards(JwtAuthGuard)
   @Post("logout")
   async logout(
-    @CurrentUser() user: AuthenticatedUser,
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response
   ) {
-    await this.authService.logout(readCookie(request, REFRESH_COOKIE_NAME), user.id, this.meta(request));
+    await this.authService.logout(readCookie(request, REFRESH_COOKIE_NAME), undefined, this.meta(request));
     this.clearRefreshCookie(response);
     return { ok: true };
   }

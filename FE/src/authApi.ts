@@ -85,11 +85,19 @@ export async function fetchCurrentUser() {
 }
 
 export async function logout() {
-  try {
-    await authFetch<{ ok: boolean }>("/auth/logout", { method: "POST" }, false);
-  } finally {
-    clearAuthSession();
-  }
+  const token = getAccessToken();
+  clearAuthSession();
+  void fetch(`${API_BASE}/auth/logout`, {
+    method: "POST",
+    credentials: "include",
+    keepalive: true,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    }
+  }).catch((error) => {
+    console.warn("Background logout request failed:", error);
+  });
 }
 
 export async function forgotPassword(email: string) {

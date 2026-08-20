@@ -243,7 +243,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
       return;
     }
     if (triggerCreate && triggerCreate > 0) {
-      setShowCreateModal(true);
+      openCreateUserModal();
     }
   }, [triggerCreate]);
 
@@ -281,6 +281,70 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
   const [assignDocIds, setAssignDocIds] = useState<string[]>(documents[0]?.id ? [documents[0].id] : []);
   const [assignDocRoles, setAssignDocRoles] = useState<ProjectRole[]>(["VIEWER"]);
 
+  function resetCreateUserDraft() {
+    setNewName("");
+    setNewEmail("");
+    setNewPassword("");
+    setShowPassword(false);
+    setNewRole("EMPLOYEE");
+  }
+
+  function openCreateUserModal() {
+    resetCreateUserDraft();
+    setShowCreateModal(true);
+  }
+
+  function closeCreateUserModal() {
+    setShowCreateModal(false);
+    resetCreateUserDraft();
+  }
+
+  function resetAssignProjectDraft(userIds: string[] = []) {
+    setAssignUserIds(userIds);
+    setAssignProjectIds(projects[0]?.id ? [projects[0].id] : []);
+    setAssignRoles(["VIEWER"]);
+  }
+
+  function openAssignProjectModal(userIds: string[] = []) {
+    resetAssignProjectDraft(userIds);
+    setShowAssignProjectModal(true);
+  }
+
+  function closeAssignProjectModal() {
+    setShowAssignProjectModal(false);
+    resetAssignProjectDraft();
+  }
+
+  function resetAssignDocumentDraft(userIds: string[] = []) {
+    setAssignDocUserIds(userIds);
+    setAssignDocIds(documents[0]?.id ? [documents[0].id] : []);
+    setAssignDocRoles(["VIEWER"]);
+  }
+
+  function openAssignDocumentModal(userIds: string[] = []) {
+    resetAssignDocumentDraft(userIds);
+    setShowAssignDocModal(true);
+  }
+
+  function closeAssignDocumentModal() {
+    setShowAssignDocModal(false);
+    resetAssignDocumentDraft();
+  }
+
+  function resetAdminModalDrafts() {
+    setShowCreateModal(false);
+    resetCreateUserDraft();
+    setShowAssignProjectModal(false);
+    resetAssignProjectDraft();
+    setShowAssignDocModal(false);
+    resetAssignDocumentDraft();
+    setDeletingUser(null);
+  }
+
+  useEffect(() => {
+    resetAdminModalDrafts();
+  }, [currentUser.id]);
+
   useEffect(() => {
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== "Escape" && event.key !== "Esc") return;
@@ -291,17 +355,17 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
       }
       if (showAssignDocModal) {
         event.preventDefault();
-        setShowAssignDocModal(false);
+        closeAssignDocumentModal();
         return;
       }
       if (showAssignProjectModal) {
         event.preventDefault();
-        setShowAssignProjectModal(false);
+        closeAssignProjectModal();
         return;
       }
       if (showCreateModal) {
         event.preventDefault();
-        setShowCreateModal(false);
+        closeCreateUserModal();
         return;
       }
       if (showPassword) {
@@ -447,13 +511,11 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
   }
 
   function openQuickAssignProject(userId: string) {
-    setAssignUserIds([userId]);
-    setShowAssignProjectModal(true);
+    openAssignProjectModal([userId]);
   }
 
   function openQuickAssignDocument(userId: string) {
-    setAssignDocUserIds([userId]);
-    setShowAssignDocModal(true);
+    openAssignDocumentModal([userId]);
   }
 
   function toggleId(selectedIds: string[], id: string, setSelectedIds: (ids: string[]) => void) {
@@ -480,14 +542,12 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
     }
 
     try {
-      await createUser({ name: newName.trim(), email: newEmail.trim(), password: newPassword, role: newRole });
-      setNewName("");
-      setNewEmail("");
-      setNewPassword("");
-      setNewRole("EMPLOYEE");
-      setShowCreateModal(false);
+      const createdName = newName.trim();
+      const createdRole = newRole;
+      await createUser({ name: createdName, email: newEmail.trim(), password: newPassword, role: createdRole });
+      closeCreateUserModal();
       await loadUsers();
-      onToast("success", "Tạo tài khoản thành công", `Đã khởi tạo người dùng ${newName} với vai trò ${roleLabels[newRole]}.`);
+      onToast("success", "Tạo tài khoản thành công", `Đã khởi tạo người dùng ${createdName} với vai trò ${roleLabels[createdRole]}.`);
     } catch (error: any) {
       console.error("Create user failed:", error);
       onToast("error", "Không tạo được tài khoản", error?.message || "Email có thể đã được sử dụng hoặc chưa hợp lệ.");
@@ -525,7 +585,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
 
     try {
       const result = await assignUsersToProjects(assignUserIds, assignProjectIds, assignRoles);
-      setShowAssignProjectModal(false);
+      closeAssignProjectModal();
       await loadUsers();
       onToast("success", "Đã phân quyền dự án", `Đã áp dụng ${result.assigned} lượt quyền trực tiếp trên dự án.`);
     } catch (error: any) {
@@ -553,7 +613,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
 
     try {
       const result = await assignUsersToDocuments(assignDocUserIds, assignDocIds, assignDocRoles);
-      setShowAssignDocModal(false);
+      closeAssignDocumentModal();
       await loadUsers();
       onToast("success", "Đã phân quyền tài liệu", `Đã cập nhật ${result.assigned} lượt quyền riêng biệt trên tài liệu.`);
     } catch (error: any) {
@@ -965,6 +1025,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                       type="button"
                       className="btn-mini-primary"
                       onClick={() => {
+                        resetAssignProjectDraft();
                         setAssignProjectIds([project.id]);
                         setShowAssignProjectModal(true);
                       }}
@@ -1043,6 +1104,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                       type="button"
                       className="btn-mini-primary"
                       onClick={() => {
+                        resetAssignDocumentDraft();
                         setAssignDocIds([doc.id]);
                         setShowAssignDocModal(true);
                       }}
@@ -1116,7 +1178,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                   <p>Khởi tạo tài khoản hệ thống cho thành viên hoặc quản lý</p>
                 </div>
               </div>
-              <button type="button" className="modal-close-btn" onClick={() => setShowCreateModal(false)} title="Đóng">
+              <button type="button" className="modal-close-btn" onClick={closeCreateUserModal} title="Đóng">
                 <X size={18} />
               </button>
             </div>
@@ -1216,7 +1278,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
             </div>
 
             <div className="modal-footer">
-              <button type="button" className="btn-admin-secondary" onClick={() => setShowCreateModal(false)}>
+              <button type="button" className="btn-admin-secondary" onClick={closeCreateUserModal}>
                 Hủy bỏ
               </button>
               <button type="button" className="btn-admin-primary" onClick={() => void handleCreateUser()}>
@@ -1241,7 +1303,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                   <p>Cấp quyền truy cập dự án cụ thể cho người dùng</p>
                 </div>
               </div>
-              <button type="button" className="modal-close-btn" onClick={() => setShowAssignProjectModal(false)} title="Đóng">
+              <button type="button" className="modal-close-btn" onClick={closeAssignProjectModal} title="Đóng">
                 <X size={18} />
               </button>
             </div>
@@ -1295,7 +1357,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
             </div>
 
             <div className="modal-footer">
-              <button type="button" className="btn-admin-secondary" onClick={() => setShowAssignProjectModal(false)}>
+              <button type="button" className="btn-admin-secondary" onClick={closeAssignProjectModal}>
                 Hủy bỏ
               </button>
               <button type="button" className="btn-admin-primary" onClick={() => void handleAssignProject()}>
@@ -1320,7 +1382,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                   <p>Quyền tài liệu riêng có độ ưu tiên cao hơn quyền dự án chung</p>
                 </div>
               </div>
-              <button type="button" className="modal-close-btn" onClick={() => setShowAssignDocModal(false)} title="Đóng">
+              <button type="button" className="modal-close-btn" onClick={closeAssignDocumentModal} title="Đóng">
                 <X size={18} />
               </button>
             </div>
@@ -1374,7 +1436,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
             </div>
 
             <div className="modal-footer">
-              <button type="button" className="btn-admin-secondary" onClick={() => setShowAssignDocModal(false)}>
+              <button type="button" className="btn-admin-secondary" onClick={closeAssignDocumentModal}>
                 Hủy bỏ
               </button>
               <button type="button" className="btn-admin-primary" onClick={() => void handleAssignDocument()}>

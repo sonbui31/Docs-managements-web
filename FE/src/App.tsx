@@ -1128,12 +1128,14 @@ function App() {
 
   useEffect(() => {
     if (!currentUser) {
+      resetModalDraftsForAccountChange();
       setIsBackendConnected(false);
       setIsLoadingBackend(false);
       setProjectMembersByProject({});
       return;
     }
 
+    resetModalDraftsForAccountChange();
     void loadWorkspaceFromBackend();
   }, [currentUser?.id]);
 
@@ -2828,6 +2830,9 @@ function App() {
       const columns = await reorderWorkboardColumns(selectedProject.id, results);
       setWorkboardColumnsByProject((prev) => ({ ...prev, [selectedProject.id]: columns }));
       setIsWorkboardConfigOpen(false);
+      setWorkboardColumnDrafts([]);
+      setPendingDeleteColumnIndex(null);
+      setWbcfgOpenDropdown(null);
       addToast("success", "Đã cập nhật board", "Mô hình Kanban của project đã được lưu.");
     } catch (error) {
       console.error("Save workboard columns error:", error);
@@ -3368,6 +3373,138 @@ function App() {
     }, 4000);
   }
 
+  function resetCreateProjectDraft() {
+    setNewProjCode("");
+    setNewProjName("");
+    setNewProjCustomer("Internal Team");
+    setNewProjBusinessUnit("Vận hành nội bộ");
+  }
+
+  function openCreateProjectModal() {
+    resetCreateProjectDraft();
+    setIsCreateProjectModalOpen(true);
+  }
+
+  function closeCreateProjectModal() {
+    if (isCreatingProject) return;
+    setIsCreateProjectModalOpen(false);
+    resetCreateProjectDraft();
+  }
+
+  function resetCreateDocumentDraft(projectId = selectedProjectId) {
+    setNewDocProjectId(projectId);
+    setNewDocTitle("");
+    setNewDocType("BRD");
+    setNewDocOwner("BA Lead");
+  }
+
+  function openCreateDocumentModal(projectId = selectedProjectId) {
+    resetCreateDocumentDraft(projectId);
+    setIsCreateDocModalOpen(true);
+  }
+
+  function closeCreateDocumentModal() {
+    setIsCreateDocModalOpen(false);
+    resetCreateDocumentDraft();
+  }
+
+  function resetEditProjectDraft() {
+    setEditingProject(null);
+    setEditProjCode("");
+    setEditProjName("");
+    setEditProjCustomer("Internal Team");
+    setEditProjBusinessUnit("Vận hành nội bộ");
+  }
+
+  function closeEditProjectModal() {
+    if (isSavingEditProject) return;
+    setIsEditProjectModalOpen(false);
+    resetEditProjectDraft();
+  }
+
+  function resetEditDocumentDraft() {
+    setEditingDoc(null);
+    setEditDocTitle("");
+    setEditDocType("BRD");
+    setEditDocOwner("");
+    setEditDocStatus("Draft");
+    setEditDocVersion("v1.0");
+  }
+
+  function closeEditDocumentModal() {
+    setIsEditDocModalOpen(false);
+    resetEditDocumentDraft();
+  }
+
+  function resetImportDraft() {
+    setImportTargetProjectId(selectedProjectId);
+    setImportMode("create");
+    setImportTargetDocumentId(selectedDocumentId);
+    setImportStatusText("");
+    setIsDragOver(false);
+  }
+
+  function openImportModal() {
+    resetImportDraft();
+    setIsImportModalOpen(true);
+  }
+
+  function closeImportModal() {
+    if (isImporting) return;
+    setIsImportModalOpen(false);
+    resetImportDraft();
+  }
+
+  function closeWorkItemModal() {
+    if (isSavingWorkItem || isUploadingWorkItemAttachment) return;
+    setIsWorkItemModalOpen(false);
+    setWorkItemDraft(null);
+    setIsAssigneeMenuOpen(false);
+  }
+
+  function closeWorkboardConfigModal() {
+    if (isSavingWorkboardColumns) return;
+    setIsWorkboardConfigOpen(false);
+    setWorkboardColumnDrafts([]);
+    setPendingDeleteColumnIndex(null);
+    setWbcfgOpenDropdown(null);
+  }
+
+  function closeWorkItemDetailModal() {
+    setViewingWorkItemId(null);
+    setWorkItemComments([]);
+    setWorkItemActivity([]);
+    setWorkItemCommentText("");
+    setWorkItemReplyText("");
+    setReplyingWorkItemCommentId(null);
+    setEditingWorkItemCommentId(null);
+    setEditingWorkItemCommentText("");
+    setActiveWorkItemMentionTarget(null);
+  }
+
+  function resetModalDraftsForAccountChange() {
+    setIsCreateProjectModalOpen(false);
+    resetCreateProjectDraft();
+    setIsCreateDocModalOpen(false);
+    resetCreateDocumentDraft("");
+    setIsEditProjectModalOpen(false);
+    resetEditProjectDraft();
+    setIsEditDocModalOpen(false);
+    resetEditDocumentDraft();
+    setIsImportModalOpen(false);
+    resetImportDraft();
+    setIsShareModalOpen(false);
+    setIsExportModalOpen(false);
+    setIsVersionModalOpen(false);
+    setDocumentVersions([]);
+    setRestoringVersionId(null);
+    setConfirmDeleteModal({ isOpen: false, type: null, id: null, title: "", message: "" });
+    setIsLogoutConfirmOpen(false);
+    closeWorkItemModal();
+    closeWorkboardConfigModal();
+    closeWorkItemDetailModal();
+  }
+
   // Create New Project Handler
   async function handleCreateProject() {
     if (isCreatingProject) return;
@@ -3405,11 +3542,8 @@ function App() {
       setSelectedDocumentId("empty-document");
       setActiveTabNav("projects");
       void loadRoleDashboard();
-      setNewProjCode("");
-      setNewProjName("");
-      setNewProjCustomer("Internal Team");
-      setNewProjBusinessUnit("Vận hành nội bộ");
       setIsCreateProjectModalOpen(false);
+      resetCreateProjectDraft();
       addToast("success", "Đã tạo dự án mới", `Dự án "${newProj.name}" (${newProj.code}) đã được lưu vào Neon.`);
     } catch (error) {
       console.error("Create project error:", error);
@@ -3454,7 +3588,7 @@ function App() {
       });
       setProjectsList((prev) => prev.map((p) => (p.id === updatedProject.id ? { ...p, ...updatedProject } : p)));
       setIsEditProjectModalOpen(false);
-      setEditingProject(null);
+      resetEditProjectDraft();
       addToast("success", "Đã cập nhật dự án", `Dự án "${updatedProject.name}" đã lưu vào Neon.`);
     } catch (error) {
       console.error("Update project error:", error);
@@ -3532,8 +3666,8 @@ function App() {
 
       setSelectedProjectId(newDocProjectId);
       setSelectedDocumentId(newDoc.id);
-      setNewDocTitle("");
       setIsCreateDocModalOpen(false);
+      resetCreateDocumentDraft(newDocProjectId);
 
       addToast("success", "Đã tạo tài liệu mới", `Tài liệu "${newDoc.title}" đã được lưu vào Neon.`);
     } catch (error) {
@@ -3581,7 +3715,7 @@ function App() {
       );
 
       setIsEditDocModalOpen(false);
-      setEditingDoc(null);
+      resetEditDocumentDraft();
       addToast("success", "Đã cập nhật thuộc tính tài liệu", `Tài liệu "${updatedDocument.title}" đã lưu vào Neon.`);
     } catch (error) {
       console.error("Update document error:", error);
@@ -3732,6 +3866,7 @@ function App() {
       setSelectedProjectId(targetProject.id);
       setSelectedDocumentId(importedDoc.id);
       setIsImportModalOpen(false);
+      resetImportDraft();
       void loadProjectCollaboration(targetProject.id);
       void loadDocumentCollaboration(importedDoc.id);
 
@@ -3899,6 +4034,7 @@ function App() {
       setSelectedProjectId(document.projectId || selectedProject.id);
       setSelectedDocumentId(document.id);
       setIsCreateDocModalOpen(false);
+      resetCreateDocumentDraft(document.projectId || selectedProject.id);
       addToast("success", "Đã tạo từ mẫu", `"${document.title}" đã được tạo từ template.`);
       void loadProjectCollaboration(document.projectId || selectedProject.id);
     } catch (error) {
@@ -4083,28 +4219,27 @@ function App() {
       }
       if (isImportModalOpen && !isImporting) {
         e.preventDefault();
-        setIsImportModalOpen(false);
-        setIsDragOver(false);
+        closeImportModal();
         return;
       }
       if (isEditDocModalOpen) {
         e.preventDefault();
-        setIsEditDocModalOpen(false);
+        closeEditDocumentModal();
         return;
       }
       if (isCreateDocModalOpen) {
         e.preventDefault();
-        setIsCreateDocModalOpen(false);
+        closeCreateDocumentModal();
         return;
       }
       if (isEditProjectModalOpen) {
         e.preventDefault();
-        setIsEditProjectModalOpen(false);
+        closeEditProjectModal();
         return;
       }
       if (isCreateProjectModalOpen) {
         e.preventDefault();
-        setIsCreateProjectModalOpen(false);
+        closeCreateProjectModal();
         return;
       }
       if (isActionsDropdownOpen) {
@@ -5150,7 +5285,7 @@ function App() {
                 <RefreshCw size={14} className={isRefreshingDashboard ? "animate-spin" : ""} />
                 <span>{isRefreshingDashboard ? "Đang làm mới..." : "Làm mới"}</span>
               </button>
-              <button className="exec-action primary" type="button" onClick={() => setIsCreateProjectModalOpen(true)}>
+              <button className="exec-action primary" type="button" onClick={openCreateProjectModal}>
                 <Plus size={15} /> Tạo dự án mới
               </button>
             </div>
@@ -5173,7 +5308,7 @@ function App() {
               <button
                 className="exec-action primary"
                 type="button"
-                onClick={() => setIsCreateProjectModalOpen(true)}
+                onClick={openCreateProjectModal}
               >
                 <FolderPlus size={15} />
                 <span>Tạo dự án mới</span>
@@ -5345,10 +5480,7 @@ function App() {
                 type="button"
                 title="Import file vào dự án"
                 disabled={!selectedProjectId}
-                onClick={() => {
-                  setImportTargetProjectId(selectedProjectId);
-                  setIsImportModalOpen(true);
-                }}
+                onClick={openImportModal}
               >
                 <UploadCloud size={15} />
                 <span>Import File</span>
@@ -5794,7 +5926,7 @@ function App() {
                   <button
                     className="btn-primary"
                     type="button"
-                    onClick={() => setIsCreateProjectModalOpen(true)}
+                    onClick={openCreateProjectModal}
                   >
                     <FolderPlus size={16} /> Tạo dự án mới
                   </button>
@@ -5893,7 +6025,7 @@ function App() {
                                     {allMembers.map((m, idx) => {
                                       const roleStr = m.projectRole || m.role;
                                       const roleLabel = roleStr === "MANAGER" || roleStr === "ADMIN"
-                                        ? "Quản trị viên (Manager)"
+                                        ? "Quản trị viên dự án"
                                         : roleStr === "EDITOR"
                                           ? "Chỉnh sửa (Editor)"
                                           : roleStr === "REVIEWER"
@@ -6253,10 +6385,7 @@ function App() {
                       type="button"
                       title="Import tệp tài liệu mới vào dự án"
                       disabled={!selectedProjectId}
-                      onClick={() => {
-                        setImportTargetProjectId(selectedProjectId);
-                        setIsImportModalOpen(true);
-                      }}
+                      onClick={openImportModal}
                     >
                       <UploadCloud size={13} /> Import
                     </button>
@@ -7149,7 +7278,7 @@ function App() {
                   <p className="modal-subtitle">Dự án sẽ nằm trong phạm vi công ty/phòng ban của tài khoản hiện tại</p>
                 </div>
               </div>
-              <button className="icon-btn" type="button" onClick={() => setIsCreateProjectModalOpen(false)}>
+              <button className="icon-btn" type="button" onClick={closeCreateProjectModal}>
                 <X size={18} />
               </button>
             </div>
@@ -7209,7 +7338,7 @@ function App() {
                 className="btn-secondary"
                 type="button"
                 disabled={isCreatingProject}
-                onClick={() => setIsCreateProjectModalOpen(false)}
+                onClick={closeCreateProjectModal}
               >
                 Hủy
               </button>
@@ -7248,7 +7377,7 @@ function App() {
                   <p className="modal-subtitle">Cập nhật thông tin mã dự án, khách hàng và khối nghiệp vụ</p>
                 </div>
               </div>
-              <button className="icon-btn" type="button" disabled={isSavingEditProject} onClick={() => setIsEditProjectModalOpen(false)}>
+              <button className="icon-btn" type="button" disabled={isSavingEditProject} onClick={closeEditProjectModal}>
                 <X size={18} />
               </button>
             </div>
@@ -7311,7 +7440,7 @@ function App() {
                 className="btn-secondary"
                 type="button"
                 disabled={isSavingEditProject}
-                onClick={() => setIsEditProjectModalOpen(false)}
+                onClick={closeEditProjectModal}
               >
                 Hủy
               </button>
@@ -7350,7 +7479,7 @@ function App() {
                   <p className="modal-subtitle">Khởi tạo tài liệu nghiệp vụ mới vào dự án được chọn</p>
                 </div>
               </div>
-              <button className="icon-btn" type="button" onClick={() => setIsCreateDocModalOpen(false)}>
+              <button className="icon-btn" type="button" onClick={closeCreateDocumentModal}>
                 <X size={18} />
               </button>
             </div>
@@ -7428,7 +7557,7 @@ function App() {
             </div>
 
             <div className="modal-footer">
-              <button className="btn-secondary" type="button" onClick={() => setIsCreateDocModalOpen(false)}>
+              <button className="btn-secondary" type="button" onClick={closeCreateDocumentModal}>
                 Hủy
               </button>
               <button className="btn-primary" type="button" onClick={handleCreateDocument}>
@@ -7453,7 +7582,7 @@ function App() {
                   <p className="modal-subtitle">Cập nhật thông tin lưu trữ, phân loại và trạng thái tài liệu</p>
                 </div>
               </div>
-              <button className="icon-btn" type="button" onClick={() => setIsEditDocModalOpen(false)}>
+              <button className="icon-btn" type="button" onClick={closeEditDocumentModal}>
                 <X size={18} />
               </button>
             </div>
@@ -7538,7 +7667,7 @@ function App() {
             </div>
 
             <div className="modal-footer">
-              <button className="btn-secondary" type="button" onClick={() => setIsEditDocModalOpen(false)}>
+              <button className="btn-secondary" type="button" onClick={closeEditDocumentModal}>
                 Hủy
               </button>
               <button className="btn-primary" type="button" onClick={handleSaveEditDocument}>
@@ -7622,7 +7751,7 @@ function App() {
                     <Pencil size={14} /> Sửa
                   </button>
                 )}
-                <button className="icon-btn" type="button" onClick={() => setViewingWorkItemId(null)}>
+                <button className="icon-btn" type="button" onClick={closeWorkItemDetailModal}>
                   <X size={18} />
                 </button>
               </div>
@@ -7956,7 +8085,7 @@ function App() {
                   <p className="modal-subtitle">{selectedProject.code} • Cấu hình cột Kanban theo project</p>
                 </div>
               </div>
-              <button className="icon-btn" type="button" onClick={() => setIsWorkboardConfigOpen(false)}>
+              <button className="icon-btn" type="button" onClick={closeWorkboardConfigModal}>
                 <X size={18} />
               </button>
             </div>
@@ -8103,7 +8232,7 @@ function App() {
               </button>
             </div>
             <div className="modal-footer">
-              <button className="btn-secondary" type="button" onClick={() => setIsWorkboardConfigOpen(false)} disabled={isSavingWorkboardColumns}>
+              <button className="btn-secondary" type="button" onClick={closeWorkboardConfigModal} disabled={isSavingWorkboardColumns}>
                 Hủy
               </button>
               <button className="btn-primary" type="button" onClick={() => void handleSaveWorkboardColumns()} disabled={isSavingWorkboardColumns}>
@@ -8148,10 +8277,7 @@ function App() {
                   <p className="modal-subtitle">{selectedProject.code} • Task, bug, review và thay đổi phát sinh</p>
                 </div>
               </div>
-              <button className="icon-btn" type="button" onClick={() => {
-                setIsAssigneeMenuOpen(false);
-                setIsWorkItemModalOpen(false);
-              }}>
+              <button className="icon-btn" type="button" onClick={closeWorkItemModal}>
                 <X size={18} />
               </button>
             </div>
@@ -8353,10 +8479,7 @@ function App() {
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn-secondary" type="button" disabled={isSavingWorkItem} onClick={() => {
-                setIsAssigneeMenuOpen(false);
-                setIsWorkItemModalOpen(false);
-              }}>
+              <button className="btn-secondary" type="button" disabled={isSavingWorkItem} onClick={closeWorkItemModal}>
                 Hủy
               </button>
               <button className="btn-primary" type="button" disabled={isSavingWorkItem} onClick={() => void handleSaveWorkItem()}>
@@ -8431,7 +8554,7 @@ function App() {
                 className="icon-btn"
                 type="button"
                 disabled={isImporting}
-                onClick={() => setIsImportModalOpen(false)}
+                onClick={closeImportModal}
               >
                 <X size={18} />
               </button>
