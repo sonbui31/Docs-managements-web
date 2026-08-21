@@ -8,6 +8,7 @@ import { DocumentsModule } from "./documents/documents.module";
 import { ExportsModule } from "./exports/exports.module";
 import { ImportsModule } from "./imports/imports.module";
 import { MediaModule } from "./media/media.module";
+import { NotificationsModule } from "./notifications/notifications.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { PermissionsModule } from "./permissions/permissions.module";
 import { ProjectsModule } from "./projects/projects.module";
@@ -33,6 +34,7 @@ import { WorkItemsModule } from "./work-items/work-items.module";
     DocumentsModule,
     CollaborationModule,
     CommentsModule,
+    NotificationsModule,
     MediaModule,
     ImportsModule,
     ExportsModule,

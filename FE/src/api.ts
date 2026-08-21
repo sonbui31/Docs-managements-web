@@ -286,6 +286,11 @@ export async function fetchDocumentsByProject(projectId: string) {
   return documents.map(mapDocument);
 }
 
+export async function fetchDocumentById(documentId: string) {
+  const document = await apiFetch<BackendDocument>(`/documents/${documentId}`);
+  return mapDocument(document);
+}
+
 export async function createDocument(payload: {
   projectId: string;
   title: string;
@@ -393,6 +398,10 @@ export async function resolveComment(commentId: string) {
 
 export async function fetchProjectWorkItems(projectId: string) {
   return apiFetch<BackendWorkItem[]>(`/work-items/project/${projectId}`);
+}
+
+export async function fetchWorkItemById(workItemId: string) {
+  return apiFetch<BackendWorkItem>(`/work-items/${workItemId}`);
 }
 
 export async function fetchProjectMembers(projectId: string) {
@@ -640,6 +649,10 @@ export async function fetchNotifications() {
 
 export async function markNotificationRead(notificationId: string) {
   return apiFetch<NotificationItem>(`/collaboration/notifications/${notificationId}/read`, { method: "PATCH" });
+}
+
+export async function markAllNotificationsRead() {
+  return apiFetch<{ count: number }>("/collaboration/notifications/read-all", { method: "PATCH" });
 }
 
 export async function fetchDocumentTemplates() {

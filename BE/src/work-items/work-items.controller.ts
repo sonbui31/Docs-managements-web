@@ -21,6 +21,11 @@ export class WorkItemsController {
     return this.workItemsService.findByProject(projectId, user);
   }
 
+  @Get(":id")
+  findOne(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.workItemsService.findOne(id, user);
+  }
+
   @Post()
   create(@Body() dto: CreateWorkItemDto, @CurrentUser() user: AuthenticatedUser) {
     return this.workItemsService.create(dto, user);

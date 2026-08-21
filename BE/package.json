@@ -9,6 +9,7 @@
     "start:prod": "npx cross-env NODE_ENV=production node dist/main.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "notifications:backfill-workitem-mentions": "node scripts/backfill-workitem-mentions.js",
     "lint": "eslint \"src/**/*.ts\"",
     "test": "jest --runInBand",
     "test:permission": "jest --runInBand permissions projects work-items"

@@ -3,6 +3,7 @@ import { Prisma, ProjectRole } from "@prisma/client";
 import sanitizeHtml = require("sanitize-html");
 import { AuthenticatedUser } from "../auth/auth.types";
 import { DocumentsService } from "../documents/documents.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateRequirementTagDto } from "./dto/create-requirement-tag.dto";
@@ -17,7 +18,8 @@ export class CollaborationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionsService,
-    private readonly documentsService: DocumentsService
+    private readonly documentsService: DocumentsService,
+    private readonly notificationsService: NotificationsService
   ) {}
 
   async workspaceDashboard(user: AuthenticatedUser) {
@@ -456,6 +458,10 @@ export class CollaborationService {
     });
   }
 
+  async markAllNotificationsRead(user: AuthenticatedUser) {
+    return this.notificationsService.markAllRead(user);
+  }
+
   async activity(projectId: string, user: AuthenticatedUser, take = 30) {
     const canViewProjectActivity = await this.canUseProjectRole(user, projectId, ["VIEWER"]);
     if (!canViewProjectActivity) {
@@ -526,31 +532,7 @@ export class CollaborationService {
   }
 
   async notifyDocumentParticipants(documentId: string, title: string, message: string, actorId?: string) {
-    const document = await this.prisma.document.findUnique({
-      where: { id: documentId },
-      select: {
-        id: true,
-        projectId: true,
-        permissions: { select: { userId: true } },
-        project: { select: { members: { select: { userId: true } } } }
-      }
-    });
-    if (!document) return;
-    const userIds = Array.from(new Set([
-      ...document.permissions.map((permission) => permission.userId),
-      ...document.project.members.map((member) => member.userId)
-    ])).filter((userId) => userId !== actorId);
-    if (!userIds.length) return;
-
-    await this.prisma.notification.createMany({
-      data: userIds.map((userId) => ({
-        userId,
-        title,
-        message,
-        entityType: "Document",
-        entityId: documentId
-      }))
-    });
+    await this.notificationsService.notifyDocumentParticipants(documentId, title, message, actorId ? { id: actorId, name: "", email: "" } : null);
   }
 
   async log(user: AuthenticatedUser, action: string, entityType?: string, entityId?: string, metadata?: Prisma.InputJsonValue) {

@@ -13,6 +13,7 @@ import {
   ChevronUp,
   Clock,
   Copy,
+  CornerDownRight,
   Download,
   Eraser,
   ExternalLink,
@@ -95,11 +96,13 @@ import {
   fetchProjectWorkItems,
   fetchWorkboardColumns,
   fetchWorkItemActivity,
+  fetchWorkItemById,
   fetchWorkItemComments,
   fetchProjects,
   fetchRoleDashboard,
   fetchTraceLinks,
   importDocument,
+  markAllNotificationsRead,
   markNotificationRead,
   resolveComment,
   restoreDocumentVersion,
@@ -974,6 +977,7 @@ function App() {
   const [replyingWorkItemCommentId, setReplyingWorkItemCommentId] = useState<string | null>(null);
   const [workItemReplyText, setWorkItemReplyText] = useState<string>("");
   const [activeWorkItemMentionTarget, setActiveWorkItemMentionTarget] = useState<"comment" | "reply" | null>(null);
+  const [activeDocumentMentionTarget, setActiveDocumentMentionTarget] = useState<"comment" | "reply" | null>(null);
   const commentEditorRef = useRef<HTMLDivElement>(null);
   const replyEditorRef = useRef<HTMLDivElement>(null);
   const [editingWorkItemCommentId, setEditingWorkItemCommentId] = useState<string | null>(null);
@@ -994,6 +998,7 @@ function App() {
   const [traceLinks, setTraceLinks] = useState<TraceLink[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [isNotificationMenuOpen, setIsNotificationMenuOpen] = useState<boolean>(false);
   const [documentTemplates, setDocumentTemplates] = useState<DocumentTemplate[]>([]);
   const [newTagCode, setNewTagCode] = useState<string>("");
   const [newTagKind, setNewTagKind] = useState<string>("REQ");
@@ -1187,6 +1192,29 @@ function App() {
     void loadNotifications();
     void loadTemplates();
   }, [isBackendConnected, selectedProjectId]);
+
+  useEffect(() => {
+    if (!isBackendConnected) return;
+
+    const pollNotifications = () => {
+      if (document.visibilityState === "visible") {
+        void loadNotifications();
+      }
+    };
+
+    const interval = window.setInterval(pollNotifications, 7000);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void loadNotifications();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [isBackendConnected]);
 
   useEffect(() => {
     if (!isBackendConnected || !selectedProjectId || searchQuery.trim().length < 2) {
@@ -1776,6 +1804,9 @@ function App() {
     setSelectionPopover(null);
     setIsSelectionComposerOpen(false);
     setActiveBlockId(null);
+    setNewCommentText("");
+    setActiveDocumentMentionTarget(null);
+    if (inlineCommentTextareaRef.current) inlineCommentTextareaRef.current.innerHTML = "";
     window.getSelection()?.removeAllRanges();
     clearActiveCommentHighlight();
   }
@@ -2220,27 +2251,71 @@ function App() {
     });
   }, [projectDocuments, statusFilter, searchQuery]);
 
-  // Filtered comments for selected block or document
+  const AVATAR_PALETTES = [
+    "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
+    "linear-gradient(135deg, #0d9488 0%, #059669 100%)",
+    "linear-gradient(135deg, #d97706 0%, #ea580c 100%)",
+    "linear-gradient(135deg, #2563eb 0%, #0284c7 100%)",
+    "linear-gradient(135deg, #db2777 0%, #e11d48 100%)",
+    "linear-gradient(135deg, #7c3aed 0%, #9333ea 100%)"
+  ];
+
+  function getAvatarBackground(name?: string | null): string {
+    if (!name) return AVATAR_PALETTES[0];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return AVATAR_PALETTES[Math.abs(hash) % AVATAR_PALETTES.length];
+  }
+
+  function parseCommentTimestamp(timestamp?: string | null): number {
+    if (!timestamp) return 0;
+    const trimmed = timestamp.trim();
+
+    // Format: HH:mm:ss DD/MM/YYYY or HH:mm DD/MM/YYYY
+    const timeDateMatch = trimmed.match(/^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?[,\s]+(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (timeDateMatch) {
+      const [, h, m, s = "0", day, month, year] = timeDateMatch;
+      return new Date(Number(year), Number(month) - 1, Number(day), Number(h), Number(m), Number(s)).getTime();
+    }
+
+    // Format: DD/MM/YYYY, HH:mm:ss or DD/MM/YYYY HH:mm
+    const dateTimeMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})[,\s]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?/);
+    if (dateTimeMatch) {
+      const [, day, month, year, h, m, s = "0"] = dateTimeMatch;
+      return new Date(Number(year), Number(month) - 1, Number(day), Number(h), Number(m), Number(s)).getTime();
+    }
+
+    const parsed = Date.parse(trimmed);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  // Filtered comments for selected block or document (sorted from oldest to newest)
   const displayedComments = useMemo(() => {
     const documentComments = commentsList.filter((c) => c.documentId === selectedDocument.id || !c.documentId);
-    const repliesByParent = new Map<string, CommentThread[]>();
+    const commentsByParent = new Map<string, CommentThread[]>();
     documentComments.forEach((comment) => {
-      if (!comment.parentId) return;
-      repliesByParent.set(comment.parentId, [...(repliesByParent.get(comment.parentId) ?? []), comment]);
+      const parentKey = comment.parentId ?? "__root__";
+      commentsByParent.set(parentKey, [...(commentsByParent.get(parentKey) ?? []), comment]);
     });
 
-    return documentComments
-      .filter((comment) => !comment.parentId)
+    const attachReplies = (parentId: string): CommentThread[] =>
+      (commentsByParent.get(parentId) ?? [])
+        .sort((a, b) => parseCommentTimestamp(a.createdAt) - parseCommentTimestamp(b.createdAt))
+        .map((comment) => ({
+          ...comment,
+          replies: attachReplies(comment.id)
+        }));
+
+    return attachReplies("__root__")
+      .sort((a, b) => parseCommentTimestamp(a.createdAt) - parseCommentTimestamp(b.createdAt))
       .filter((comment) => {
         if (commentFilter === "open") return comment.status === "open";
         if (commentFilter === "resolved") return comment.status === "resolved";
         if (commentFilter === "mine") return comment.authorEmail === currentUser?.email || comment.author === currentUser?.name;
         return true;
-      })
-      .map((comment) => ({
-        ...comment,
-        replies: repliesByParent.get(comment.id) ?? []
-      }));
+      });
   }, [commentsList, selectedDocument.id, commentFilter, currentUser?.email, currentUser?.name]);
 
   const selectedWorkboardColumns = useMemo(() => {
@@ -2381,6 +2456,22 @@ function App() {
     return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name, "vi"));
   }, [currentUser, projectMembersByProject, viewingWorkItem]);
 
+  const documentMentionOptions = useMemo(() => {
+    const options = new Map<string, ProjectMemberOption>();
+    (projectMembersByProject[selectedProjectId] ?? []).forEach((member) => {
+      options.set(member.id, member);
+    });
+    if (currentUser) {
+      options.set(currentUser.id, {
+        id: currentUser.id,
+        name: currentUser.name,
+        email: currentUser.email,
+        role: currentUser.role
+      });
+    }
+    return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }, [currentUser, projectMembersByProject, selectedProjectId]);
+
   function workItemTypeIcon(type: WorkItemType) {
     if (type === "BUG") return <AlertTriangle size={13} />;
     if (type === "REVIEW") return <MessageSquareText size={13} />;
@@ -2390,9 +2481,18 @@ function App() {
   }
 
   function renderMentionedText(content: string, isInputHighlight = false) {
-    const mentionNames = workItemMentionOptions
+    const allMentionMembers = [
+      ...workItemMentionOptions,
+      ...(projectMembersByProject[selectedProjectId] ?? [])
+    ];
+    const seen = new Set<string>();
+    const mentionNames = allMentionMembers
       .map((member) => member.name.trim())
-      .filter(Boolean)
+      .filter((name) => {
+        if (!name || seen.has(name)) return false;
+        seen.add(name);
+        return true;
+      })
       .sort((a, b) => b.length - a.length);
 
     if (!mentionNames.length) {
@@ -2913,14 +3013,23 @@ function App() {
   }
 
   function groupedWorkItemComments() {
-    const repliesByParent = new Map<string, WorkItemComment[]>();
+    const commentsByParent = new Map<string, WorkItemComment[]>();
     workItemComments.forEach((comment) => {
-      if (!comment.parentId) return;
-      repliesByParent.set(comment.parentId, [...(repliesByParent.get(comment.parentId) ?? []), comment]);
+      const parentKey = comment.parentId ?? "__root__";
+      commentsByParent.set(parentKey, [...(commentsByParent.get(parentKey) ?? []), comment]);
     });
-    return workItemComments
-      .filter((comment) => !comment.parentId)
-      .map((comment) => ({ ...comment, replies: repliesByParent.get(comment.id) ?? [] }));
+
+    const attachReplies = (parentId: string): WorkItemComment[] =>
+      (commentsByParent.get(parentId) ?? [])
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+        .map((comment) => ({
+          ...comment,
+          replies: attachReplies(comment.id)
+        }));
+
+    return attachReplies("__root__").sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
   }
 
   function getMentionTrigger(value: string) {
@@ -2938,6 +3047,86 @@ function App() {
       setWorkItemReplyText(value);
     }
     setActiveWorkItemMentionTarget(getMentionTrigger(value) ? target : null);
+  }
+
+  function handleDocumentCommentTextChange(value: string, target: "comment" | "reply") {
+    if (target === "comment") {
+      setNewCommentText(value);
+    } else {
+      setReplyText(value);
+    }
+    setActiveDocumentMentionTarget(getMentionTrigger(value) ? target : null);
+  }
+
+  function filteredDocumentMentionOptions(target: "comment" | "reply") {
+    const value = target === "comment" ? newCommentText : replyText;
+    const trigger = getMentionTrigger(value);
+    if (!trigger) return [];
+    return documentMentionOptions
+      .filter((member) => {
+        const haystack = `${member.name} ${member.email}`.toLowerCase();
+        return !trigger.query || haystack.includes(trigger.query);
+      })
+      .slice(0, 6);
+  }
+
+  function insertDocumentMention(target: "comment" | "reply", member: ProjectMemberOption) {
+    if (target === "comment" && inlineCommentTextareaRef.current) {
+      inlineCommentTextareaRef.current.focus();
+      insertPillAtCursor(inlineCommentTextareaRef.current, member.name);
+      setNewCommentText(getEditorText(inlineCommentTextareaRef.current));
+      setActiveDocumentMentionTarget(null);
+      return;
+    }
+    if (target === "reply" && documentReplyEditorRef.current) {
+      documentReplyEditorRef.current.focus();
+      insertPillAtCursor(documentReplyEditorRef.current, member.name);
+      setReplyText(getEditorText(documentReplyEditorRef.current));
+      setActiveDocumentMentionTarget(null);
+      return;
+    }
+
+    const value = target === "comment" ? newCommentText : replyText;
+    const trigger = getMentionTrigger(value);
+    const nextValue = trigger
+      ? `${value.slice(0, trigger.atIndex)}@${member.name} ${value.slice(trigger.atIndex + trigger.query.length + 1)}`
+      : `${value}${value.endsWith(" ") || !value ? "" : " "}@${member.name} `;
+
+    if (target === "comment") {
+      setNewCommentText(nextValue);
+      window.setTimeout(() => inlineCommentTextareaRef.current?.focus(), 0);
+    } else {
+      setReplyText(nextValue);
+    }
+    setActiveDocumentMentionTarget(null);
+  }
+
+  function renderDocumentMentionMenu(target: "comment" | "reply") {
+    if (activeDocumentMentionTarget !== target) return null;
+    const options = filteredDocumentMentionOptions(target);
+    if (!options.length) {
+      return <div className="document-mention-menu document-mention-empty">Không có người phù hợp.</div>;
+    }
+    return (
+      <div className="document-mention-menu">
+        {options.map((member) => (
+          <button
+            type="button"
+            key={member.id}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              insertDocumentMention(target, member);
+            }}
+          >
+            <span className="document-mention-avatar">{member.name.slice(0, 1).toUpperCase()}</span>
+            <span>
+              <strong>{member.name}</strong>
+              <small>{member.email}</small>
+            </span>
+          </button>
+        ))}
+      </div>
+    );
   }
 
   function filteredWorkItemMentionOptions(target: "comment" | "reply") {
@@ -3104,6 +3293,278 @@ function App() {
       console.error("Create work item comment error:", error);
       addToast("error", "Không gửi được comment", "BE chưa lưu được trao đổi ticket.");
     }
+  }
+
+  function openReplyWorkItemComment(commentId: string) {
+    setEditingWorkItemCommentId(null);
+    setEditingWorkItemCommentText("");
+    setReplyingWorkItemCommentId(commentId);
+    setWorkItemReplyText("");
+    setActiveWorkItemMentionTarget(null);
+    window.setTimeout(() => {
+      if (replyEditorRef.current) {
+        replyEditorRef.current.innerHTML = "";
+        replyEditorRef.current.focus();
+      }
+    }, 0);
+  }
+
+  function cancelReplyWorkItemComment() {
+    setReplyingWorkItemCommentId(null);
+    setWorkItemReplyText("");
+    setActiveWorkItemMentionTarget(null);
+    if (replyEditorRef.current) replyEditorRef.current.innerHTML = "";
+  }
+
+  function renderWorkItemReplyComposer(parentId: string) {
+    return (
+      <div className="workitem-reply-composer">
+        <div className="workitem-mention-input">
+          <div
+            ref={replyEditorRef}
+            className="workitem-mention-editor"
+            contentEditable
+            onInput={() => {
+              if (replyEditorRef.current) {
+                const text = getEditorText(replyEditorRef.current);
+                handleWorkItemCommentTextChange(text, "reply");
+              }
+            }}
+            onFocus={() => {
+              const text = replyEditorRef.current ? getEditorText(replyEditorRef.current) : workItemReplyText;
+              setActiveWorkItemMentionTarget(getMentionTrigger(text) ? "reply" : null);
+            }}
+            onBlur={() => window.setTimeout(() => setActiveWorkItemMentionTarget(null), 150)}
+            data-placeholder="Nhập reply... Gõ @ để mention"
+          />
+          {renderWorkItemMentionMenu("reply")}
+        </div>
+        <button className="btn-primary" type="button" onClick={() => void handleAddWorkItemComment(parentId)}>
+          <Send size={13} /> Gửi
+        </button>
+        <button className="btn-secondary" type="button" onClick={cancelReplyWorkItemComment}>
+          Hủy
+        </button>
+      </div>
+    );
+  }
+
+  interface FlatWorkItemReplyItem {
+    reply: WorkItemComment;
+    replyToAuthor?: string;
+    parentReply?: WorkItemComment;
+  }
+
+  function getFlattenedWorkItemReplies(root: WorkItemComment): FlatWorkItemReplyItem[] {
+    const list: FlatWorkItemReplyItem[] = [];
+    function traverse(current: WorkItemComment, parentComment?: WorkItemComment) {
+      for (const child of current.replies ?? []) {
+        list.push({
+          reply: child,
+          replyToAuthor: current.id !== root.id ? (parentComment?.createdByName ?? parentComment?.createdBy?.name) : undefined,
+          parentReply: current.id !== root.id ? parentComment : undefined
+        });
+        traverse(child, child);
+      }
+    }
+    traverse(root, root);
+    list.sort((a, b) => new Date(a.reply.createdAt).getTime() - new Date(b.reply.createdAt).getTime());
+    return list;
+  }
+
+  function renderWorkItemCommentThread(rootComment: WorkItemComment): ReactNode {
+    const rootAuthor = rootComment.createdByName ?? rootComment.createdBy?.name ?? "Người dùng";
+    const flattenedReplies = getFlattenedWorkItemReplies(rootComment);
+    const hasActiveReplyInThread =
+      replyingWorkItemCommentId === rootComment.id ||
+      flattenedReplies.some((r) => r.reply.id === replyingWorkItemCommentId);
+
+    return (
+      <div className="workitem-comment-card" key={rootComment.id} id={`ticket-comment-${rootComment.id}`}>
+        <div className="workitem-comment-header">
+          <div className="workitem-author-info">
+            <div className="author-avatar" style={{ background: getAvatarBackground(rootAuthor) }}>
+              {rootAuthor[0]?.toUpperCase()}
+            </div>
+            <div className="workitem-author-meta">
+              <strong className="workitem-author-name">{rootAuthor}</strong>
+              <span className="workitem-comment-time">{relativeDashboardTime(rootComment.createdAt)}</span>
+            </div>
+          </div>
+          <div className="workitem-header-actions">
+            <button
+              className="btn-reply-micro"
+              type="button"
+              title="Trả lời comment này"
+              onClick={() => openReplyWorkItemComment(rootComment.id)}
+            >
+              <MessageSquarePlus size={11} /> Reply
+            </button>
+            {isOwnWorkItemComment(rootComment) && (
+              <>
+                <button
+                  className="btn-reply-micro"
+                  type="button"
+                  title="Chỉnh sửa comment"
+                  onClick={() => openEditWorkItemComment(rootComment)}
+                >
+                  <Pencil size={11} /> Sửa
+                </button>
+                <button
+                  className="btn-reply-micro danger"
+                  type="button"
+                  title="Xóa comment"
+                  onClick={() => requestDeleteWorkItemComment(rootComment)}
+                >
+                  <Trash2 size={11} /> Xóa
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {editingWorkItemCommentId === rootComment.id ? (
+          <div className="workitem-edit-box">
+            <textarea
+              rows={2}
+              value={editingWorkItemCommentText}
+              onChange={(event) => setEditingWorkItemCommentText(event.target.value)}
+              placeholder="Sửa comment..."
+            />
+            <div className="workitem-edit-actions">
+              <button
+                className="btn-comment-action"
+                type="button"
+                onClick={() => {
+                  setEditingWorkItemCommentId(null);
+                  setEditingWorkItemCommentText("");
+                }}
+              >
+                Hủy
+              </button>
+              <button
+                className="btn-comment-action primary"
+                type="button"
+                onClick={() => void handleSaveWorkItemComment(rootComment.id)}
+              >
+                Lưu
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="workitem-comment-text">{renderMentionedText(rootComment.content)}</p>
+        )}
+
+        {flattenedReplies.length > 0 && (
+          <div className="workitem-reply-list">
+            {flattenedReplies.map((item) => {
+              const { reply, replyToAuthor, parentReply } = item;
+              const replyAuthor = reply.createdByName ?? reply.createdBy?.name ?? "Người dùng";
+              return (
+                <div key={reply.id} id={`ticket-comment-${reply.id}`} className="workitem-reply-item">
+                  {parentReply && (
+                    <div
+                      className="reply-quote-preview"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const el = document.getElementById(`ticket-comment-${parentReply.id}`);
+                        if (el) {
+                          el.classList.remove("reply-pulse-highlight");
+                          void el.offsetWidth;
+                          el.classList.add("reply-pulse-highlight");
+                          el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                        }
+                      }}
+                      title={`Trả lời: "${parentReply.content}" của ${replyToAuthor}`}
+                    >
+                      <CornerDownRight size={11} className="reply-quote-icon" />
+                      <span className="reply-quote-target">@{replyToAuthor}</span>
+                      <span className="reply-quote-snippet">"{parentReply.content}"</span>
+                    </div>
+                  )}
+                  <div className="reply-main-row">
+                    <div className="reply-thread-avatar" style={{ background: getAvatarBackground(replyAuthor) }}>
+                      {replyAuthor[0]?.toUpperCase()}
+                    </div>
+                    <div className="reply-thread-body">
+                      <div className="reply-thread-header">
+                        <div className="reply-header-left">
+                          <strong className="reply-author-name">{replyAuthor}</strong>
+                          <span className="reply-thread-time">{relativeDashboardTime(reply.createdAt)}</span>
+                        </div>
+                        <div className="reply-thread-actions">
+                          <button
+                            className="btn-reply-micro"
+                            type="button"
+                            title="Trả lời phản hồi này"
+                            onClick={() => openReplyWorkItemComment(reply.id)}
+                          >
+                            <MessageSquarePlus size={11} /> Trả lời
+                          </button>
+                          {isOwnWorkItemComment(reply) && (
+                            <>
+                              <button
+                                className="btn-reply-micro"
+                                type="button"
+                                title="Chỉnh sửa phản hồi"
+                                onClick={() => openEditWorkItemComment(reply)}
+                              >
+                                <Pencil size={11} /> Sửa
+                              </button>
+                              <button
+                                className="btn-reply-micro danger"
+                                type="button"
+                                title="Xóa phản hồi"
+                                onClick={() => requestDeleteWorkItemComment(reply)}
+                              >
+                                <Trash2 size={11} /> Xóa
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      {editingWorkItemCommentId === reply.id ? (
+                        <div className="workitem-edit-box">
+                          <textarea
+                            rows={2}
+                            value={editingWorkItemCommentText}
+                            onChange={(event) => setEditingWorkItemCommentText(event.target.value)}
+                            placeholder="Sửa reply..."
+                          />
+                          <div className="workitem-edit-actions">
+                            <button
+                              className="btn-comment-action"
+                              type="button"
+                              onClick={() => {
+                                setEditingWorkItemCommentId(null);
+                                setEditingWorkItemCommentText("");
+                              }}
+                            >
+                              Hủy
+                            </button>
+                            <button
+                              className="btn-comment-action primary"
+                              type="button"
+                              onClick={() => void handleSaveWorkItemComment(reply.id)}
+                            >
+                              Lưu
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="reply-thread-text">{renderMentionedText(reply.content)}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {hasActiveReplyInThread && replyingWorkItemCommentId && renderWorkItemReplyComposer(replyingWorkItemCommentId)}
+      </div>
+    );
   }
 
   const filteredProjectsHub = useMemo(() => {
@@ -4053,6 +4514,121 @@ function App() {
     }
   }
 
+  async function handleMarkAllNotificationsRead() {
+    try {
+      await markAllNotificationsRead();
+      setNotifications((prev) => prev.map((item) => ({ ...item, readAt: item.readAt ?? new Date().toISOString() })));
+    } catch (error) {
+      console.error("Mark all notifications read error:", error);
+    }
+  }
+
+  async function handleOpenNotification(notification: NotificationItem) {
+    await handleMarkNotificationRead(notification);
+    setIsNotificationMenuOpen(false);
+    if (notification.entityType === "Document" && notification.entityId) {
+      setSelectedDocumentId(notification.entityId);
+      const doc = documentsList.find((item) => item.id === notification.entityId);
+      if (doc?.projectId) setSelectedProjectId(doc.projectId);
+      setActiveTabNav("documents");
+      return;
+    }
+    if (notification.entityType === "WorkItem" && notification.entityId) {
+      try {
+        const item = await fetchWorkItemById(notification.entityId);
+        setWorkItems((prev) => prev.some((workItem) => workItem.id === item.id)
+          ? prev.map((workItem) => (workItem.id === item.id ? item : workItem))
+          : [item, ...prev]
+        );
+        setSelectedProjectId(item.projectId);
+        setActiveTabNav("review");
+        openViewWorkItemModal(item);
+      } catch (error) {
+        console.error("Open work item notification error:", error);
+      }
+      return;
+    }
+    if (notification.entityType === "Project" && notification.entityId) {
+      setSelectedProjectId(notification.entityId);
+      setActiveTabNav("projects");
+    }
+  }
+
+  function notificationIcon(notification: NotificationItem) {
+    if (notification.entityType === "WorkItem") return <Kanban size={15} />;
+    if (notification.entityType === "Document") return <FileText size={15} />;
+    if (notification.entityType === "Project") return <FolderKanban size={15} />;
+    return <Bell size={15} />;
+  }
+
+  function notificationIconClass(notification: NotificationItem) {
+    if (notification.entityType === "WorkItem") return "noti-icon-amber";
+    if (notification.entityType === "Document") return "noti-icon-blue";
+    if (notification.entityType === "Project") return "noti-icon-emerald";
+    return "noti-icon-violet";
+  }
+
+  function renderNotificationCenter() {
+    const unreadCount = notifications.filter((notification) => !notification.readAt).length;
+    return (
+      <div className="notification-center">
+        <button
+          className={`notification-bell ${unreadCount > 0 ? "has-unread" : ""}`}
+          type="button"
+          title="Thông báo"
+          onClick={() => setIsNotificationMenuOpen((open) => !open)}
+        >
+          <Bell size={17} />
+          {unreadCount > 0 && <span className="notification-badge">{unreadCount > 9 ? "9+" : unreadCount}</span>}
+        </button>
+        {isNotificationMenuOpen && (
+          <div className="notification-menu">
+            <div className="notification-menu-header">
+              <div>
+                <strong>Thông báo</strong>
+                <span>{unreadCount > 0 ? `${unreadCount} chưa đọc` : "Tất cả đã đọc"}</span>
+              </div>
+              <button
+                className="notification-mark-all"
+                type="button"
+                disabled={unreadCount === 0}
+                onClick={() => void handleMarkAllNotificationsRead()}
+              >
+                <CheckCheck size={14} /> Đọc hết
+              </button>
+            </div>
+            <div className="notification-menu-list">
+              {notifications.length === 0 ? (
+                <div className="notification-empty">
+                  <Bell size={18} />
+                  <strong>Chưa có thông báo</strong>
+                  <span>Các cập nhật liên quan tới bạn sẽ hiện ở đây.</span>
+                </div>
+              ) : (
+                notifications.slice(0, 8).map((notification) => (
+                  <button
+                    key={notification.id}
+                    type="button"
+                    className={`notification-menu-item ${notification.readAt ? "" : "unread"}`}
+                    onClick={() => void handleOpenNotification(notification)}
+                  >
+                    <span className={`noti-item-icon ${notificationIconClass(notification)}`}>{notificationIcon(notification)}</span>
+                    <span className="notification-menu-content">
+                      <strong>{notification.title}</strong>
+                      <small>{notification.message}</small>
+                      <em>{relativeDashboardTime(notification.createdAt)}</em>
+                    </span>
+                    {!notification.readAt && <span className="notification-dot" />}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // Edit Comment Handler
   async function handleSaveEditComment(commentId: string) {
     if (!editingCommentText.trim()) return;
@@ -4095,7 +4671,10 @@ function App() {
 
   // Add new comment
   async function handleAddComment() {
-    if (!newCommentText.trim()) return;
+    const content = inlineCommentTextareaRef.current
+      ? getEditorText(inlineCommentTextareaRef.current).trim()
+      : newCommentText.trim();
+    if (!content) return;
     const targetBlock = selectedCommentTarget?.blockId || activeBlockId || "GENERAL";
     if (selectedDocument.id === "empty-document") {
       addToast("warning", "Chưa chọn tài liệu", "Hãy tạo hoặc import tài liệu trước khi comment.");
@@ -4110,7 +4689,7 @@ function App() {
         documentId: selectedDocument.id,
         blockId: targetBlock,
         selectedText: selectedCommentTarget.selectedText,
-        content: newCommentText.trim()
+        content
       });
       setCommentsList((prev) => [newComment, ...prev]);
       adjustDocumentCommentCount(newComment.documentId, 1);
@@ -4124,21 +4703,26 @@ function App() {
     }
   }
 
-  async function handleAddReply(comment: CommentThread) {
-    if (!replyText.trim()) return;
+  async function handleAddReply(comment: CommentThread, threadRoot?: CommentThread) {
+    const content = documentReplyEditorRef.current
+      ? getEditorText(documentReplyEditorRef.current).trim()
+      : replyText.trim();
+    if (!content) return;
+    const rootComment = threadRoot ?? comment;
 
     try {
       const newReply = await createComment({
         documentId: selectedDocument.id,
         parentId: comment.id,
-        blockId: comment.blockId,
-        selectedText: comment.selectedText,
-        content: replyText.trim()
+        blockId: comment.blockId || rootComment.blockId,
+        selectedText: comment.selectedText || rootComment.selectedText,
+        content
       });
       setCommentsList((prev) => [newReply, ...prev]);
       adjustDocumentCommentCount(newReply.documentId, 1);
       setReplyText("");
       setReplyingCommentId(null);
+      if (documentReplyEditorRef.current) documentReplyEditorRef.current.innerHTML = "";
       void loadProjectCollaboration(selectedProject.id);
       addToast("success", "Đã trả lời nhận xét", "Reply đã được lưu vào thread.");
     } catch (error) {
@@ -4147,8 +4731,216 @@ function App() {
     }
   }
 
+  function openDocumentReplyComposer(commentId: string) {
+    setEditingCommentId(null);
+    setReplyingCommentId(commentId);
+    setReplyText("");
+    setActiveDocumentMentionTarget(null);
+    window.setTimeout(() => {
+      if (documentReplyEditorRef.current) {
+        documentReplyEditorRef.current.innerHTML = "";
+        documentReplyEditorRef.current.focus();
+      }
+    }, 0);
+  }
+
+  function cancelDocumentReplyComposer() {
+    setReplyingCommentId(null);
+    setReplyText("");
+    setActiveDocumentMentionTarget(null);
+    if (documentReplyEditorRef.current) documentReplyEditorRef.current.innerHTML = "";
+  }
+
+  function renderDocumentReplyComposer(target: CommentThread, threadRoot?: CommentThread) {
+    return (
+      <div className="reply-composer" onClick={(event) => event.stopPropagation()}>
+        {threadRoot && target.id !== threadRoot.id && (
+          <div className="reply-context-pill">
+            Đang trả lời <strong>{target.author}</strong>
+          </div>
+        )}
+        <div className="document-mention-input">
+          <div
+            ref={documentReplyEditorRef}
+            className="document-mention-editor compact"
+            contentEditable
+            onInput={() => {
+              const text = documentReplyEditorRef.current ? getEditorText(documentReplyEditorRef.current) : "";
+              handleDocumentCommentTextChange(text, "reply");
+            }}
+            onFocus={() => {
+              const text = documentReplyEditorRef.current ? getEditorText(documentReplyEditorRef.current) : replyText;
+              setActiveDocumentMentionTarget(getMentionTrigger(text) ? "reply" : null);
+            }}
+            onBlur={() => window.setTimeout(() => setActiveDocumentMentionTarget(null), 150)}
+            onKeyDown={(event) => submitTextareaOnEnter(event, () => handleAddReply(target, threadRoot))}
+            data-placeholder="Nhập phản hồi..."
+          />
+          {renderDocumentMentionMenu("reply")}
+        </div>
+        <div className="reply-actions">
+          <button className="btn-comment-action" type="button" onClick={cancelDocumentReplyComposer}>
+            Hủy
+          </button>
+          <button className="btn-comment-action primary" type="button" onClick={() => handleAddReply(target, threadRoot)}>
+            <Send size={12} /> Reply
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function findCommentInThread(comment: CommentThread, targetId: string): CommentThread | null {
+    if (comment.id === targetId) return comment;
+    for (const reply of comment.replies ?? []) {
+      const match = findCommentInThread(reply, targetId);
+      if (match) return match;
+    }
+    return null;
+  }
+
+  interface FlatReplyItem {
+    reply: CommentThread;
+    replyToAuthor?: string;
+    parentReply?: CommentThread;
+  }
+
+  function getFlattenedReplies(root: CommentThread): FlatReplyItem[] {
+    const list: FlatReplyItem[] = [];
+    function traverse(current: CommentThread, parentComment?: CommentThread) {
+      for (const child of current.replies ?? []) {
+        list.push({
+          reply: child,
+          replyToAuthor: current.id !== root.id ? parentComment?.author : undefined,
+          parentReply: current.id !== root.id ? parentComment : undefined
+        });
+        traverse(child, child);
+      }
+    }
+    traverse(root, root);
+    list.sort((a, b) => parseCommentTimestamp(a.reply.createdAt) - parseCommentTimestamp(b.reply.createdAt));
+    return list;
+  }
+
+  function renderDocumentReplyCard(item: FlatReplyItem, threadRoot: CommentThread): ReactNode {
+    const { reply, parentReply } = item;
+    return (
+      <div
+        key={reply.id}
+        id={`comment-reply-${reply.id}`}
+        className={`reply-thread-item${reply.status === "resolved" ? " resolved" : ""}`}
+      >
+        {parentReply && (
+          <div
+            className="reply-quote-preview"
+            onClick={(e) => {
+              e.stopPropagation();
+              const el = document.getElementById(`comment-reply-${parentReply.id}`);
+              if (el) {
+                el.classList.remove("reply-pulse-highlight");
+                void el.offsetWidth;
+                el.classList.add("reply-pulse-highlight");
+                el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              }
+            }}
+            title={`Trả lời: "${parentReply.text}" của ${parentReply.author}`}
+          >
+            <CornerDownRight size={11} className="reply-quote-icon" />
+            <span className="reply-quote-target">@{parentReply.author}</span>
+            <span className="reply-quote-snippet">"{parentReply.text}"</span>
+          </div>
+        )}
+        <div className="reply-main-row">
+          <div className="reply-thread-avatar" style={{ background: getAvatarBackground(reply.author) }}>
+            {reply.author[0]?.toUpperCase()}
+          </div>
+          <div className="reply-thread-body">
+            <div className="reply-thread-header">
+              <div className="reply-header-left">
+                <strong className="reply-author-name">{reply.author}</strong>
+                <span className="reply-thread-time">{reply.createdAt}</span>
+              </div>
+              {reply.status === "resolved" && (
+                <span className="comment-status-badge compact">
+                  <CheckCircle2 size={10} /> Hoàn thành
+                </span>
+              )}
+              <div className="reply-thread-actions">
+                {reply.status === "open" && (
+                  <button
+                    className="btn-reply-micro"
+                    type="button"
+                    title="Trả lời phản hồi này"
+                    onClick={() => openDocumentReplyComposer(reply.id)}
+                  >
+                    <MessageSquarePlus size={11} /> Trả lời
+                  </button>
+                )}
+                {reply.status === "open" && isOwnDocumentComment(reply) && (
+                  <button
+                    className="btn-reply-micro"
+                    type="button"
+                    title="Chỉnh sửa phản hồi"
+                    onClick={() => {
+                      setReplyingCommentId(null);
+                      setEditingCommentId(reply.id);
+                      setEditingCommentText(reply.text);
+                    }}
+                  >
+                    <Pencil size={11} /> Sửa
+                  </button>
+                )}
+                {isOwnDocumentComment(reply) && (
+                  <button
+                    className="btn-reply-micro danger"
+                    type="button"
+                    title="Xóa phản hồi"
+                    onClick={() => requestDeleteComment(reply.id)}
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                )}
+              </div>
+            </div>
+            {editingCommentId === reply.id ? (
+              <div className="comment-edit-box">
+                <textarea
+                  rows={2}
+                  value={editingCommentText}
+                  onChange={(event) => setEditingCommentText(event.target.value)}
+                  onKeyDown={(event) => submitTextareaOnEnter(event, () => handleSaveEditComment(reply.id))}
+                />
+                <div className="comment-edit-actions">
+                  <button
+                    className="btn-comment-action"
+                    type="button"
+                    onClick={() => {
+                      setEditingCommentId(null);
+                      setEditingCommentText("");
+                    }}
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    className="btn-comment-action primary"
+                    type="button"
+                    onClick={() => void handleSaveEditComment(reply.id)}
+                  >
+                    Lưu
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="reply-thread-text">{renderMentionedText(reply.text)}</p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function submitTextareaOnEnter(
-    event: ReactKeyboardEvent<HTMLTextAreaElement>,
+    event: ReactKeyboardEvent<HTMLElement>,
     submit: () => void | Promise<void>
   ) {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
@@ -4285,7 +5077,8 @@ function App() {
   ]);
 
   const documentContainerRef = useRef<HTMLDivElement>(null);
-  const inlineCommentTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const inlineCommentTextareaRef = useRef<HTMLDivElement>(null);
+  const documentReplyEditorRef = useRef<HTMLDivElement>(null);
   const activeCommentSelectionRangeRef = useRef<Range | null>(null);
 
   useLayoutEffect(() => {
@@ -5273,6 +6066,7 @@ function App() {
 
           {activeTabNav === "dashboard" && (
             <div className="topbar-actions">
+              {renderNotificationCenter()}
               <button
                 className="exec-action secondary"
                 type="button"
@@ -5293,6 +6087,7 @@ function App() {
 
           {activeTabNav === "projects" && (
             <div className="topbar-actions">
+              {renderNotificationCenter()}
               <button
                 className="exec-action secondary"
                 type="button"
@@ -5318,6 +6113,7 @@ function App() {
 
           {activeTabNav === "admin" && (
             <div className="topbar-actions">
+              {renderNotificationCenter()}
               <button
                 className="exec-action secondary"
                 type="button"
@@ -5342,6 +6138,7 @@ function App() {
 
           {activeTabNav === "review" && (
             <div className="topbar-actions">
+              {renderNotificationCenter()}
               <CustomProjectSelect
                 projects={projectsList}
                 selectedProjectId={selectedProject.id}
@@ -5384,6 +6181,7 @@ function App() {
 
           {activeTabNav !== "admin" && activeTabNav !== "dashboard" && activeTabNav !== "review" && activeTabNav !== "projects" && (
             <div className="topbar-actions">
+              {renderNotificationCenter()}
               <label className="search-box">
                 <Search size={15} />
                 <input
@@ -6756,14 +7554,25 @@ function App() {
                       </button>
                     </div>
                     <blockquote>{selectedCommentTarget.selectedText}</blockquote>
-                    <textarea
-                      ref={inlineCommentTextareaRef}
-                      rows={3}
-                      placeholder="Nhập nhận xét..."
-                      value={newCommentText}
-                      onChange={(event) => setNewCommentText(event.target.value)}
-                      onKeyDown={(event) => submitTextareaOnEnter(event, handleAddComment)}
-                    />
+                    <div className="document-mention-input">
+                      <div
+                        ref={inlineCommentTextareaRef}
+                        className="document-mention-editor"
+                        contentEditable
+                        onInput={() => {
+                          const text = inlineCommentTextareaRef.current ? getEditorText(inlineCommentTextareaRef.current) : "";
+                          handleDocumentCommentTextChange(text, "comment");
+                        }}
+                        onFocus={() => {
+                          const text = inlineCommentTextareaRef.current ? getEditorText(inlineCommentTextareaRef.current) : newCommentText;
+                          setActiveDocumentMentionTarget(getMentionTrigger(text) ? "comment" : null);
+                        }}
+                        onBlur={() => window.setTimeout(() => setActiveDocumentMentionTarget(null), 150)}
+                        onKeyDown={(event) => submitTextareaOnEnter(event, handleAddComment)}
+                        data-placeholder="Nhập nhận xét..."
+                      />
+                      {renderDocumentMentionMenu("comment")}
+                    </div>
                     <div className="selection-comment-editor-actions">
                       <button type="button" onClick={clearSelectedCommentTarget}>
                         Hủy
@@ -6828,27 +7637,26 @@ function App() {
                       onClick={() => handleCommentCardClick(comment)}
                     >
                       <div className="comment-card-header">
-                        <div className="comment-top-meta">
-                          <div className="comment-status-wrapper">
-                            {comment.status === "resolved" ? (
-                              <span className="comment-status-badge resolved">
-                                <CheckCircle2 size={11} /> Hoàn thành
-                              </span>
-                            ) : (
-                              <span className="comment-status-badge open">
-                                <MessageSquareText size={11} /> Đang trao đổi
-                              </span>
-                            )}
-                          </div>
-                          <span className="req-tag">{comment.blockId}</span>
-                        </div>
-
                         <div className="comment-author-info">
-                          <div className="author-avatar">{comment.author[0]}</div>
+                          <div className="author-avatar" style={{ background: getAvatarBackground(comment.author) }}>
+                            {comment.author[0]?.toUpperCase()}
+                          </div>
                           <div className="author-name">
                             <strong>{comment.author}</strong>
                             <small>{comment.authorEmail || comment.authorRole || "Reviewer"}</small>
                           </div>
+                        </div>
+                        <div className="comment-top-meta">
+                          {comment.status === "resolved" ? (
+                            <span className="comment-status-badge resolved">
+                              <CheckCircle2 size={11} /> Hoàn thành
+                            </span>
+                          ) : (
+                            <span className="comment-status-badge open">
+                              <MessageSquareText size={11} /> Đang trao đổi
+                            </span>
+                          )}
+                          <span className="req-tag">{comment.blockId}</span>
                         </div>
                       </div>
 
@@ -6893,11 +7701,9 @@ function App() {
                         </div>
                       ) : (
                         <>
-                          <p className="comment-text">{comment.text}</p>
+                          <p className="comment-text">{renderMentionedText(comment.text)}</p>
                           <div className="comment-footer">
-                            <div className="comment-footer-meta">
-                              <small className="comment-time">{comment.createdAt}</small>
-                            </div>
+                            <small className="comment-time">{comment.createdAt}</small>
                             <div className="comment-actions-group">
                               {comment.status === "open" && (
                                 <button
@@ -6919,9 +7725,7 @@ function App() {
                                   title="Trả lời nhận xét này"
                                   onClick={(event) => {
                                     event.stopPropagation();
-                                    setEditingCommentId(null);
-                                    setReplyingCommentId(comment.id);
-                                    setReplyText("");
+                                    openDocumentReplyComposer(comment.id);
                                   }}
                                 >
                                   <MessageSquarePlus size={11} /> Trả lời
@@ -6977,117 +7781,18 @@ function App() {
                         </>
                       )}
 
-                      {comment.replies && comment.replies.length > 0 && (
-                        <div className="reply-list" onClick={(event) => event.stopPropagation()}>
-                          {comment.replies.map((reply) => (
-                            <div key={reply.id} className={reply.status === "resolved" ? "reply-card resolved" : "reply-card"}>
-                              <div className="reply-meta">
-                                <div className="reply-author">
-                                  <strong>{reply.author}</strong>
-                                  <small>{reply.authorEmail || reply.authorRole || "Reviewer"}</small>
-                                </div>
-                                <div className="reply-meta-actions">
-                                  {reply.status === "resolved" && (
-                                    <span className="comment-status-badge compact">
-                                      <CheckCircle2 size={10} /> Hoàn thành
-                                    </span>
-                                  )}
-                                  <span>{reply.createdAt}</span>
-                                </div>
-                              </div>
-                              {editingCommentId === reply.id ? (
-                                <div className="comment-edit-box">
-                                  <textarea
-                                    rows={2}
-                                    value={editingCommentText}
-                                    onChange={(event) => setEditingCommentText(event.target.value)}
-                                    onKeyDown={(event) => submitTextareaOnEnter(event, () => handleSaveEditComment(reply.id))}
-                                  />
-                                  <div className="comment-edit-actions">
-                                    <button
-                                      className="btn-comment-action"
-                                      type="button"
-                                      onClick={() => {
-                                        setEditingCommentId(null);
-                                        setEditingCommentText("");
-                                      }}
-                                    >
-                                      Hủy
-                                    </button>
-                                    <button
-                                      className="btn-comment-action primary"
-                                      type="button"
-                                      onClick={() => void handleSaveEditComment(reply.id)}
-                                    >
-                                      Lưu
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <>
-                                  <p>{reply.text}</p>
-                                  <div className="reply-card-actions">
-                                    {reply.status === "open" && isOwnDocumentComment(reply) && (
-                                      <button
-                                        className="btn-comment-action"
-                                        type="button"
-                                        title="Chỉnh sửa phản hồi"
-                                        onClick={() => {
-                                          setReplyingCommentId(null);
-                                          setEditingCommentId(reply.id);
-                                          setEditingCommentText(reply.text);
-                                        }}
-                                      >
-                                        <Pencil size={11} /> Sửa
-                                      </button>
-                                    )}
-                                    {isOwnDocumentComment(reply) && (
-                                      <button
-                                        className="btn-comment-action danger"
-                                        type="button"
-                                        title="Xóa phản hồi"
-                                        onClick={() => requestDeleteComment(reply.id)}
-                                      >
-                                        <Trash2 size={11} /> Xóa
-                                      </button>
-                                    )}
-                                  </div>
-                                </>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {replyingCommentId === comment.id && (
-                        <div className="reply-composer" onClick={(event) => event.stopPropagation()}>
-                          <textarea
-                            rows={2}
-                            placeholder="Nhập phản hồi..."
-                            value={replyText}
-                            onChange={(event) => setReplyText(event.target.value)}
-                            onKeyDown={(event) => submitTextareaOnEnter(event, () => handleAddReply(comment))}
-                          />
-                          <div className="reply-actions">
-                            <button
-                              className="btn-comment-action"
-                              type="button"
-                              onClick={() => {
-                                setReplyingCommentId(null);
-                                setReplyText("");
-                              }}
-                            >
-                              Hủy
-                            </button>
-                            <button
-                              className="btn-comment-action primary"
-                              type="button"
-                              onClick={() => handleAddReply(comment)}
-                            >
-                              <Send size={12} /> Reply
-                            </button>
+                      {(() => {
+                        const flatReplies = getFlattenedReplies(comment);
+                        if (!flatReplies.length) return null;
+                        return (
+                          <div className="reply-list" onClick={(event) => event.stopPropagation()}>
+                            {flatReplies.map((item) => renderDocumentReplyCard(item, comment))}
                           </div>
-                        </div>
+                        );
+                      })()}
+
+                      {replyingCommentId && findCommentInThread(comment, replyingCommentId) && (
+                        renderDocumentReplyComposer(findCommentInThread(comment, replyingCommentId) ?? comment, comment)
                       )}
                     </div>
                   ))}
@@ -7925,141 +8630,7 @@ function App() {
                 </div>
 
                 <div className="workitem-comment-list">
-                  {groupedWorkItemComments().map((comment) => (
-                    <div className="workitem-comment-card" key={comment.id}>
-                      <div className="workitem-comment-meta">
-                        <strong>{comment.createdByName ?? comment.createdBy?.name ?? "Người dùng"}</strong>
-                        <span>{relativeDashboardTime(comment.createdAt)}</span>
-                      </div>
-                      {editingWorkItemCommentId === comment.id ? (
-                        <div className="workitem-reply-composer">
-                          <textarea
-                            rows={2}
-                            value={editingWorkItemCommentText}
-                            onChange={(event) => setEditingWorkItemCommentText(event.target.value)}
-                            placeholder="Sửa comment..."
-                          />
-                          <button className="btn-primary" type="button" onClick={() => void handleSaveWorkItemComment(comment.id)}>
-                            <CheckCircle2 size={13} /> Lưu
-                          </button>
-                          <button
-                            className="btn-secondary"
-                            type="button"
-                            onClick={() => {
-                              setEditingWorkItemCommentId(null);
-                              setEditingWorkItemCommentText("");
-                            }}
-                          >
-                            Hủy
-                          </button>
-                        </div>
-                      ) : (
-                        <>
-                          <p>{renderMentionedText(comment.content)}</p>
-                          <div className="workitem-comment-actions">
-                            <button
-                              className="btn-secondary compact"
-                              type="button"
-                              onClick={() => {
-                                setEditingWorkItemCommentId(null);
-                                setReplyingWorkItemCommentId(comment.id);
-                                setWorkItemReplyText("");
-                              }}
-                            >
-                              <MessageSquarePlus size={13} /> Reply
-                            </button>
-                            {isOwnWorkItemComment(comment) && (
-                              <>
-                                <button className="btn-secondary compact" type="button" onClick={() => openEditWorkItemComment(comment)}>
-                                  <Pencil size={13} /> Sửa
-                                </button>
-                                <button className="btn-secondary compact danger" type="button" onClick={() => requestDeleteWorkItemComment(comment)}>
-                                  <Trash2 size={13} /> Xóa
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </>
-                      )}
-
-                      {comment.replies?.map((reply) => (
-                        <div className="workitem-reply-card" key={reply.id}>
-                          <div className="workitem-comment-meta">
-                            <strong>{reply.createdByName ?? reply.createdBy?.name ?? "Người dùng"}</strong>
-                            <span>{relativeDashboardTime(reply.createdAt)}</span>
-                          </div>
-                          {editingWorkItemCommentId === reply.id ? (
-                            <div className="workitem-reply-composer">
-                              <textarea
-                                rows={2}
-                                value={editingWorkItemCommentText}
-                                onChange={(event) => setEditingWorkItemCommentText(event.target.value)}
-                                placeholder="Sửa reply..."
-                              />
-                              <button className="btn-primary" type="button" onClick={() => void handleSaveWorkItemComment(reply.id)}>
-                                <CheckCircle2 size={13} /> Lưu
-                              </button>
-                              <button
-                                className="btn-secondary"
-                                type="button"
-                                onClick={() => {
-                                  setEditingWorkItemCommentId(null);
-                                  setEditingWorkItemCommentText("");
-                                }}
-                              >
-                                Hủy
-                              </button>
-                            </div>
-                          ) : (
-                            <>
-                              <p>{renderMentionedText(reply.content)}</p>
-                              {isOwnWorkItemComment(reply) && (
-                                <div className="workitem-comment-actions">
-                                  <button className="btn-secondary compact" type="button" onClick={() => openEditWorkItemComment(reply)}>
-                                    <Pencil size={13} /> Sửa
-                                  </button>
-                                  <button className="btn-secondary compact danger" type="button" onClick={() => requestDeleteWorkItemComment(reply)}>
-                                    <Trash2 size={13} /> Xóa
-                                  </button>
-                                </div>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      ))}
-
-                      {replyingWorkItemCommentId === comment.id && (
-                        <div className="workitem-reply-composer">
-                          <div className="workitem-mention-input">
-                            <div
-                              ref={replyEditorRef}
-                              className="workitem-mention-editor"
-                              contentEditable
-                              onInput={() => {
-                                if (replyEditorRef.current) {
-                                  const text = getEditorText(replyEditorRef.current);
-                                  handleWorkItemCommentTextChange(text, "reply");
-                                }
-                              }}
-                              onFocus={() => {
-                                const text = replyEditorRef.current ? getEditorText(replyEditorRef.current) : workItemReplyText;
-                                setActiveWorkItemMentionTarget(getMentionTrigger(text) ? "reply" : null);
-                              }}
-                              onBlur={() => window.setTimeout(() => setActiveWorkItemMentionTarget(null), 150)}
-                              data-placeholder="Nhập reply... Gõ @ để mention"
-                            />
-                            {renderWorkItemMentionMenu("reply")}
-                          </div>
-                          <button className="btn-primary" type="button" onClick={() => void handleAddWorkItemComment(comment.id)}>
-                            <Send size={13} /> Gửi
-                          </button>
-                          <button className="btn-secondary" type="button" onClick={() => setReplyingWorkItemCommentId(null)}>
-                            Hủy
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                  {groupedWorkItemComments().map((comment) => renderWorkItemCommentThread(comment))}
 
                   {groupedWorkItemComments().length === 0 && (
                     <div className="empty-collab-state">Chưa có comment nào cho ticket này.</div>

@@ -75,6 +75,11 @@ export class CollaborationController {
     return this.collaborationService.notifications(user);
   }
 
+  @Patch("notifications/read-all")
+  markAllNotificationsRead(@CurrentUser() user: AuthenticatedUser) {
+    return this.collaborationService.markAllNotificationsRead(user);
+  }
+
   @Patch("notifications/:id/read")
   markNotificationRead(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.collaborationService.markNotificationRead(id, user);

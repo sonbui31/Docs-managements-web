@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { CollaborationService } from "../collaboration/collaboration.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateCommentDto } from "./dto/create-comment.dto";
@@ -11,7 +12,8 @@ export class CommentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionsService,
-    private readonly collaboration: CollaborationService
+    private readonly collaboration: CollaborationService,
+    private readonly notifications: NotificationsService
   ) {}
 
   async findByDocument(documentId: string, user: AuthenticatedUser) {
@@ -29,6 +31,7 @@ export class CommentsService {
     await this.permissions.assertDocumentRole(user, dto.documentId, ["REVIEWER", "EDITOR", "MANAGER"]);
 
     const authorName = user.name || user.email || "User";
+    const projectId = await this.projectIdForDocument(dto.documentId);
 
     const comment = await this.prisma.comment.create({
       data: {
@@ -42,14 +45,9 @@ export class CommentsService {
       dto.parentId ? "COMMENT_REPLIED" : "COMMENT_CREATED",
       "Document",
       dto.documentId,
-      { commentId: comment.id, projectId: await this.projectIdForDocument(dto.documentId), blockId: dto.blockId }
+      { commentId: comment.id, projectId, blockId: dto.blockId }
     );
-    await this.collaboration.notifyDocumentParticipants(
-      dto.documentId,
-      dto.parentId ? "Có phản hồi nhận xét mới" : "Có nhận xét mới",
-      `${authorName}: ${dto.content.slice(0, 120)}`,
-      user.id
-    );
+    await this.notifyForCreatedComment(dto, user, authorName, projectId);
     return this.withAuthorProfile(comment);
   }
 
@@ -84,6 +82,7 @@ export class CommentsService {
       comment.documentId,
       { commentId: id, projectId: await this.projectIdForDocument(comment.documentId) }
     );
+    await this.notifyForResolvedComment(id, comment.documentId, user);
     return this.withAuthorProfile(comment);
   }
 
@@ -169,6 +168,126 @@ export class CommentsService {
   private async projectIdForDocument(documentId: string) {
     const document = await this.prisma.document.findUnique({ where: { id: documentId }, select: { projectId: true } });
     return document?.projectId ?? null;
+  }
+
+  private async notifyForCreatedComment(
+    dto: CreateCommentDto,
+    user: AuthenticatedUser,
+    authorName: string,
+    projectId: string | null
+  ) {
+    const mentionedUsers = await this.notifications.mentionedUsers(dto.content);
+    const mentionedIds = mentionedUsers.map((mentionedUser) => mentionedUser.id);
+    const mentionedIdSet = new Set(mentionedIds);
+    const emailUrl = this.notifications.entityUrl({ projectId, documentId: dto.documentId });
+
+    if (dto.parentId) {
+      const replyRecipientIds = await this.replyRecipientIds(dto.parentId);
+      await this.notifications.createForUsers({
+        userIds: replyRecipientIds.filter((userId) => !mentionedIdSet.has(userId)),
+        actor: user,
+        title: "Có phản hồi nhận xét mới",
+        message: `${authorName}: ${dto.content.slice(0, 120)}`,
+        entityType: "Document",
+        entityId: dto.documentId,
+        emailUrl
+      });
+    } else {
+      const commentRecipientIds = await this.newCommentRecipientIds(dto.documentId);
+      await this.notifications.createForUsers({
+        userIds: commentRecipientIds.filter((userId) => !mentionedIdSet.has(userId)),
+        actor: user,
+        title: "Có nhận xét mới",
+        message: `${authorName}: ${dto.content.slice(0, 120)}`,
+        entityType: "Document",
+        entityId: dto.documentId,
+        emailUrl
+      });
+    }
+
+    await this.notifications.createForUsers({
+      userIds: mentionedIds,
+      actor: user,
+      title: "Bạn được nhắc đến trong tài liệu",
+      message: `${authorName} đã nhắc đến bạn trong một nhận xét.`,
+      entityType: "Document",
+      entityId: dto.documentId,
+      emailUrl
+    });
+  }
+
+  private async newCommentRecipientIds(documentId: string) {
+    const document = await this.prisma.document.findUnique({
+      where: { id: documentId },
+      select: {
+        createdByEmail: true,
+        permissions: { select: { userId: true } }
+      }
+    });
+    if (!document) return [];
+
+    const owner = document.createdByEmail
+      ? await this.prisma.user.findFirst({
+          where: { email: document.createdByEmail, deletedAt: null, status: "ACTIVE" },
+          select: { id: true }
+        })
+      : null;
+
+    return this.uniqueIds([
+      owner?.id,
+      ...document.permissions.map((permission) => permission.userId)
+    ]);
+  }
+
+  private async replyRecipientIds(parentId: string) {
+    const parent = await this.prisma.comment.findUnique({
+      where: { id: parentId },
+      select: { createdByEmail: true }
+    });
+    if (!parent) return [];
+
+    return this.userIdsByEmails([parent.createdByEmail]);
+  }
+
+  private async notifyForResolvedComment(commentId: string, documentId: string, user: AuthenticatedUser) {
+    const projectId = await this.projectIdForDocument(documentId);
+    const thread = await this.prisma.comment.findMany({
+      where: { OR: [{ id: commentId }, { parentId: commentId }] },
+      select: { createdByEmail: true }
+    });
+    const recipientIds = await this.userIdsByEmails(thread.map((comment) => comment.createdByEmail));
+
+    await this.notifications.createForUsers({
+      userIds: recipientIds,
+      actor: user,
+      title: "Nhận xét đã hoàn thành",
+      message: `${user.name || user.email} đã đánh dấu một luồng nhận xét là hoàn thành.`,
+      entityType: "Document",
+      entityId: documentId,
+      emailUrl: this.notifications.entityUrl({ projectId, documentId })
+    });
+  }
+
+  private async userIdsByEmails(emails: Array<string | null | undefined>) {
+    const normalizedEmails = Array.from(
+      new Set(
+        emails
+          .filter((email): email is string => Boolean(email?.trim()))
+          .map((email) => email.trim().toLowerCase())
+      )
+    );
+    if (!normalizedEmails.length) return [];
+
+    const users = await this.prisma.user.findMany({
+      where: { email: { in: normalizedEmails }, deletedAt: null, status: "ACTIVE" },
+      select: { id: true }
+    });
+
+    return this.uniqueIds(users.map((user) => user.id));
+  }
+
+  private uniqueIds(ids: Array<string | null | undefined>) {
+    return Array.from(new Set(ids.filter((id): id is string => Boolean(id?.trim()))));
   }
 
   private async withAuthorProfiles<T extends Array<{ createdBy: string | null; createdByEmail?: string | null }>>(comments: T) {

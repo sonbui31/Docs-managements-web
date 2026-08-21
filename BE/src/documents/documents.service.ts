@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { Prisma } from "@prisma/client";
 import sanitizeHtml = require("sanitize-html");
 import { AuthenticatedUser } from "../auth/auth.types";
+import { NotificationsService } from "../notifications/notifications.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateDocumentDto } from "./dto/create-document.dto";
@@ -11,7 +12,8 @@ import { UpdateDocumentDto } from "./dto/update-document.dto";
 export class DocumentsService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly permissions: PermissionsService
+    private readonly permissions: PermissionsService,
+    private readonly notifications: NotificationsService
   ) {}
 
   async findByProject(projectId: string, user: AuthenticatedUser) {
@@ -186,7 +188,7 @@ export class DocumentsService {
 
     const cleanHtml = dto.htmlContent ? this.cleanHtml(dto.htmlContent) : undefined;
 
-    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const updatedDocument = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const updatedDocument = await tx.document.update({
         where: { id },
         data: {
@@ -229,6 +231,17 @@ export class DocumentsService {
 
       return updatedDocument;
     });
+
+    if (dto.status === "DEPLOYED" || cleanHtml) {
+      await this.notifications.notifyDocumentParticipants(
+        id,
+        dto.status === "DEPLOYED" ? "Tài liệu đã được triển khai" : "Tài liệu vừa được cập nhật",
+        `${user.name || user.email} đã ${dto.status === "DEPLOYED" ? "triển khai" : "cập nhật"} tài liệu "${updatedDocument.title}".`,
+        user
+      );
+    }
+
+    return updatedDocument;
   }
 
   async remove(id: string, user: AuthenticatedUser) {

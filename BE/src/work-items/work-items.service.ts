@@ -3,6 +3,7 @@ import { DocumentStatus, Prisma, ProjectRole, WorkItemPriority, WorkItemStatus, 
 import { AuthenticatedUser } from "../auth/auth.types";
 import { CollaborationService } from "../collaboration/collaboration.service";
 import { MediaService } from "../media/media.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { WorkboardColumnsService } from "../workboard-columns/workboard-columns.service";
@@ -18,7 +19,8 @@ export class WorkItemsService {
     private readonly permissions: PermissionsService,
     private readonly collaboration: CollaborationService,
     private readonly media: MediaService,
-    private readonly workboardColumns: WorkboardColumnsService
+    private readonly workboardColumns: WorkboardColumnsService,
+    private readonly notifications: NotificationsService
   ) {}
 
   async findByProject(projectId: string, user: AuthenticatedUser) {
@@ -37,6 +39,17 @@ export class WorkItemsService {
       include: this.includeRelations(),
       orderBy: [{ status: "asc" }, { priority: "desc" }, { updatedAt: "desc" }]
     });
+  }
+
+  async findOne(id: string, user: AuthenticatedUser) {
+    const item = await this.prisma.workItem.findUnique({
+      where: { id },
+      select: { id: true, projectId: true, documentId: true }
+    });
+    if (!item) throw new NotFoundException("Work item not found");
+    await this.assertWorkItemRole(item, user, ["VIEWER"]);
+
+    return this.hydrateWorkItem(id);
   }
 
   async create(dto: CreateWorkItemDto, user: AuthenticatedUser) {
@@ -302,9 +315,13 @@ export class WorkItemsService {
     if (!item) throw new NotFoundException("Work item not found");
     await this.assertWorkItemRole(item, user, ["REVIEWER", "EDITOR", "MANAGER"]);
 
+    let parentComment: { workItemId: string; createdById: string | null; createdByEmail: string | null } | null = null;
     if (dto.parentId) {
-      const parent = await this.prisma.workItemComment.findUnique({ where: { id: dto.parentId }, select: { workItemId: true } });
-      if (!parent || parent.workItemId !== id) throw new BadRequestException("Reply parent does not belong to work item");
+      parentComment = await this.prisma.workItemComment.findUnique({
+        where: { id: dto.parentId },
+        select: { workItemId: true, createdById: true, createdByEmail: true }
+      });
+      if (!parentComment || parentComment.workItemId !== id) throw new BadRequestException("Reply parent does not belong to work item");
     }
 
     const comment = await this.prisma.workItemComment.create({
@@ -323,6 +340,32 @@ export class WorkItemsService {
       workItemId: id,
       commentId: comment.id,
       parentId: comment.parentId
+    });
+    const mentionedUsers = await this.notifications.mentionedUsers(dto.content);
+    const mentionedIds = mentionedUsers.map((mentionedUser) => mentionedUser.id);
+    const emailUrl = this.notifications.entityUrl({ projectId: item.projectId, documentId: item.documentId, workItemId: id });
+
+    if (parentComment) {
+      const replyRecipientIds = await this.workItemCommentAuthorIds(parentComment);
+      await this.notifications.createForUsers({
+        userIds: replyRecipientIds.filter((userId) => !mentionedIds.includes(userId)),
+        actor: user,
+        title: "Có phản hồi trong ticket",
+        message: `${user.name || user.email} đã trả lời comment của bạn trong ticket.`,
+        entityType: "WorkItem",
+        entityId: id,
+        emailUrl
+      });
+    }
+
+    await this.notifications.createForUsers({
+      userIds: mentionedIds,
+      actor: user,
+      title: "Bạn được nhắc đến trong ticket",
+      message: `${user.name || user.email} đã nhắc đến bạn trong ticket.`,
+      entityType: "WorkItem",
+      entityId: id,
+      emailUrl
     });
 
     return comment;
@@ -532,14 +575,18 @@ export class WorkItemsService {
   private async notifyUsers(userIds: string[], actor: AuthenticatedUser, title: string, message: string, workItemId: string) {
     const recipients = this.uniqueIds(userIds).filter((userId) => userId !== actor.id);
     if (!recipients.length) return;
-    await this.prisma.notification.createMany({
-      data: recipients.map((userId) => ({
-        userId,
-        title,
-        message,
-        entityType: "WorkItem",
-        entityId: workItemId
-      }))
+    const item = await this.prisma.workItem.findUnique({
+      where: { id: workItemId },
+      select: { projectId: true, documentId: true }
+    });
+    await this.notifications.createForUsers({
+      userIds: recipients,
+      actor,
+      title,
+      message,
+      entityType: "WorkItem",
+      entityId: workItemId,
+      emailUrl: this.notifications.entityUrl({ projectId: item?.projectId, documentId: item?.documentId, workItemId })
     });
   }
 
@@ -650,6 +697,18 @@ export class WorkItemsService {
     if (otherUserReplies > 0) {
       throw new BadRequestException("Không thể xóa comment này vì đang có reply của người khác");
     }
+  }
+
+  private async workItemCommentAuthorIds(comment: { createdById?: string | null; createdByEmail?: string | null }) {
+    if (comment.createdById) return this.uniqueIds([comment.createdById]);
+    if (!comment.createdByEmail?.trim()) return [];
+
+    const author = await this.prisma.user.findFirst({
+      where: { email: comment.createdByEmail.trim().toLowerCase(), deletedAt: null, status: "ACTIVE" },
+      select: { id: true }
+    });
+
+    return this.uniqueIds([author?.id]);
   }
 
   private assertOwnedByCurrentUser(

@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { ExternalAuthService } from "../auth/external-auth.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { AssignDocumentDto } from "./dto/assign-document.dto";
 import { AssignDocumentsBatchDto } from "./dto/assign-documents-batch.dto";
@@ -20,7 +21,8 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionsService,
-    private readonly externalAuth: ExternalAuthService
+    private readonly externalAuth: ExternalAuthService,
+    private readonly notifications: NotificationsService
   ) {}
 
   async findAll(actor: AuthenticatedUser) {
@@ -204,11 +206,24 @@ export class UsersService {
     });
     if (!user) throw new NotFoundException("User not found");
 
-    return this.prisma.projectMember.upsert({
-      where: { projectId_userId: { projectId: dto.projectId, userId } },
-      create: { projectId: dto.projectId, userId, role, roles, assignedBy: actor.id },
-      update: { role, roles, assignedBy: actor.id }
+    const [membership, project] = await Promise.all([
+      this.prisma.projectMember.upsert({
+        where: { projectId_userId: { projectId: dto.projectId, userId } },
+        create: { projectId: dto.projectId, userId, role, roles, assignedBy: actor.id },
+        update: { role, roles, assignedBy: actor.id }
+      }),
+      this.prisma.project.findUnique({ where: { id: dto.projectId }, select: { id: true, code: true, name: true } })
+    ]);
+    await this.notifications.createForUsers({
+      userIds: [userId],
+      actor,
+      title: "Bạn được cấp quyền dự án",
+      message: `${actor.name || actor.email} đã cấp quyền ${roles.join(", ")} cho dự án ${project?.code ?? ""} ${project?.name ?? ""}`.trim(),
+      entityType: "Project",
+      entityId: dto.projectId,
+      emailUrl: this.notifications.entityUrl({ projectId: dto.projectId })
     });
+    return membership;
   }
 
   async assignProjectsBatch(dto: AssignProjectsBatchDto, actor: AuthenticatedUser) {
@@ -242,6 +257,15 @@ export class UsersService {
     );
 
     await this.prisma.$transaction(operations);
+    await this.notifications.createForUsers({
+      userIds,
+      actor,
+      title: "Bạn được cấp quyền dự án",
+      message: `${actor.name || actor.email} đã cấp quyền ${roles.join(", ")} cho ${projectIds.length} dự án.`,
+      entityType: projectIds.length === 1 ? "Project" : "ProjectBatch",
+      entityId: projectIds.length === 1 ? projectIds[0] : undefined,
+      emailUrl: projectIds.length === 1 ? this.notifications.entityUrl({ projectId: projectIds[0] }) : undefined
+    });
     return { ok: true, assigned: operations.length };
   }
 
@@ -271,23 +295,36 @@ export class UsersService {
     });
     if (!user) throw new NotFoundException("User not found");
 
-    return this.prisma.documentPermission.upsert({
-      where: { documentId_userId: { documentId: dto.documentId, userId } },
-      create: {
-        documentId: dto.documentId,
-        projectId: document.projectId,
-        userId,
-        role,
-        roles,
-        assignedBy: actor.id
-      },
-      update: {
-        projectId: document.projectId,
-        role,
-        roles,
-        assignedBy: actor.id
-      }
+    const [permission, documentDetail] = await Promise.all([
+      this.prisma.documentPermission.upsert({
+        where: { documentId_userId: { documentId: dto.documentId, userId } },
+        create: {
+          documentId: dto.documentId,
+          projectId: document.projectId,
+          userId,
+          role,
+          roles,
+          assignedBy: actor.id
+        },
+        update: {
+          projectId: document.projectId,
+          role,
+          roles,
+          assignedBy: actor.id
+        }
+      }),
+      this.prisma.document.findUnique({ where: { id: dto.documentId }, select: { id: true, title: true, projectId: true } })
+    ]);
+    await this.notifications.createForUsers({
+      userIds: [userId],
+      actor,
+      title: "Bạn được cấp quyền tài liệu",
+      message: `${actor.name || actor.email} đã cấp quyền ${roles.join(", ")} cho tài liệu ${documentDetail?.title ?? ""}`.trim(),
+      entityType: "Document",
+      entityId: dto.documentId,
+      emailUrl: this.notifications.entityUrl({ projectId: document.projectId, documentId: dto.documentId })
     });
+    return permission;
   }
 
   async assignDocumentsBatch(dto: AssignDocumentsBatchDto, actor: AuthenticatedUser) {
@@ -337,6 +374,17 @@ export class UsersService {
     );
 
     await this.prisma.$transaction(operations);
+    await this.notifications.createForUsers({
+      userIds,
+      actor,
+      title: "Bạn được cấp quyền tài liệu",
+      message: `${actor.name || actor.email} đã cấp quyền ${roles.join(", ")} cho ${documentIds.length} tài liệu.`,
+      entityType: documentIds.length === 1 ? "Document" : "DocumentBatch",
+      entityId: documentIds.length === 1 ? documentIds[0] : undefined,
+      emailUrl: documentIds.length === 1
+        ? this.notifications.entityUrl({ projectId: documentProjectMap.get(documentIds[0]), documentId: documentIds[0] })
+        : undefined
+    });
     return { ok: true, assigned: operations.length };
   }
 
