@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg-canvas: #f8fafc;
   --bg-sidebar: #ffffff;
   --bg-panel: #ffffff;
@@ -5942,6 +5942,11 @@ button {
 
 .toast.warning {
   border-left-color: var(--accent-amber);
+}
+
+.toast.error {
+  border-left-color: #ef4444;
+  background: linear-gradient(135deg, var(--bg-panel) 0%, #fef2f2 100%);
 }
 
 /* Multi-Tier Comprehensive Responsive Media Queries */

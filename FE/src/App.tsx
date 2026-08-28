@@ -3852,9 +3852,10 @@ function App() {
   function addToast(type: ToastMessage["type"], title: string, message: string) {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { id, type, title, message }]);
+    const duration = type === "error" ? 7000 : type === "warning" ? 5000 : 4000;
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
+    }, duration);
   }
 
   function toastApiError(error: unknown, title: string, fallback: string) {
@@ -9469,7 +9470,11 @@ function App() {
       <div className="toast-container">
         {toasts.map((toast) => (
           <div key={toast.id} className={`toast ${toast.type}`}>
-            <div>
+            {toast.type === "error" && <AlertTriangle size={16} style={{ color: "#ef4444", flexShrink: 0, marginTop: 2 }} />}
+            {toast.type === "success" && <CheckCircle2 size={16} style={{ color: "#10b981", flexShrink: 0, marginTop: 2 }} />}
+            {toast.type === "warning" && <AlertTriangle size={16} style={{ color: "#f59e0b", flexShrink: 0, marginTop: 2 }} />}
+            {toast.type === "info" && <Bell size={16} style={{ color: "#06b6d4", flexShrink: 0, marginTop: 2 }} />}
+            <div style={{ flex: 1, minWidth: 0 }}>
               <strong style={{ display: "block", fontSize: "0.85rem" }}>{toast.title}</strong>
               <small style={{ color: "var(--text-secondary)", fontSize: "0.78rem" }}>{toast.message}</small>
             </div>

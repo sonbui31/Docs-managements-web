@@ -43,6 +43,7 @@ import {
   updateUser
 } from "./authApi";
 import type { Project, ProjectDocument, ProjectRole, User, UserRole, UserStatus } from "./types";
+import { getErrorMessage } from "./apiError";
 
 type Props = {
   projects: Project[];
@@ -469,7 +470,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
     } catch (error: any) {
       console.error("Load users failed:", error);
       if (showToastOnError) {
-        onToast("error", "Không tải được dữ liệu người dùng", error?.message || "Vui lòng kiểm tra kết nối API.");
+        onToast("error", "Không tải được dữ liệu người dùng", getErrorMessage(error, "Vui lòng kiểm tra kết nối API."));
       }
     } finally {
       setLoading(false);
@@ -550,7 +551,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
       onToast("success", "Tạo tài khoản thành công", `Đã khởi tạo người dùng ${createdName} với vai trò ${roleLabels[createdRole]}.`);
     } catch (error: any) {
       console.error("Create user failed:", error);
-      onToast("error", "Không tạo được tài khoản", error?.message || "Email có thể đã được sử dụng hoặc chưa hợp lệ.");
+      onToast("error", "Không tạo được tài khoản", getErrorMessage(error, "Email có thể đã được sử dụng hoặc chưa hợp lệ."));
     }
   }
 
@@ -561,7 +562,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
       onToast("success", "Cập nhật thành công", "Đã lưu thay đổi vai trò/trạng thái tài khoản.");
     } catch (error: any) {
       console.error("Update user failed:", error);
-      onToast("error", "Cập nhật thất bại", error?.message || "Không thể hạ quyền Admin hệ thống.");
+      onToast("error", "Cập nhật thất bại", getErrorMessage(error, "Không thể hạ quyền Admin hệ thống."));
     }
   }
 
@@ -573,7 +574,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
       onToast("info", "Đã khóa mềm tài khoản", "Tài khoản đã chuyển sang trạng thái Vô hiệu hóa.");
     } catch (error: any) {
       console.error("Delete user failed:", error);
-      onToast("error", "Không xóa được tài khoản", error?.message || "Admin hệ thống không thể bị xóa.");
+      onToast("error", "Không xóa được tài khoản", getErrorMessage(error, "Admin hệ thống không thể bị xóa."));
     }
   }
 
@@ -590,7 +591,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
       onToast("success", "Đã phân quyền dự án", `Đã áp dụng ${result.assigned} lượt quyền trực tiếp trên dự án.`);
     } catch (error: any) {
       console.error("Assign project failed:", error);
-      onToast("error", "Gán dự án thất bại", error?.message || "Vui lòng kiểm tra quyền quản lý.");
+      onToast("error", "Gán dự án thất bại", getErrorMessage(error, "Vui lòng kiểm tra quyền quản lý."));
     }
   }
 
@@ -601,7 +602,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
       onToast("info", "Đã bỏ gán dự án", "Người dùng không còn quyền trực tiếp trên dự án này.");
     } catch (error: any) {
       console.error("Remove project failed:", error);
-      onToast("error", "Bỏ gán thất bại", error?.message || "Vui lòng thử lại sau.");
+      onToast("error", "Bỏ gán thất bại", getErrorMessage(error, "Vui lòng thử lại sau."));
     }
   }
 
@@ -618,7 +619,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
       onToast("success", "Đã phân quyền tài liệu", `Đã cập nhật ${result.assigned} lượt quyền riêng biệt trên tài liệu.`);
     } catch (error: any) {
       console.error("Assign document failed:", error);
-      onToast("error", "Gán quyền tài liệu thất bại", error?.message || "Vui lòng kiểm tra dữ liệu tài liệu.");
+      onToast("error", "Gán quyền tài liệu thất bại", getErrorMessage(error, "Vui lòng kiểm tra dữ liệu tài liệu."));
     }
   }
 
@@ -629,7 +630,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
       onToast("info", "Đã bỏ quyền tài liệu", "Quyền tài liệu riêng biệt đã bị hủy.");
     } catch (error: any) {
       console.error("Remove document failed:", error);
-      onToast("error", "Bỏ quyền thất bại", error?.message || "Vui lòng thử lại sau.");
+      onToast("error", "Bỏ quyền thất bại", getErrorMessage(error, "Vui lòng thử lại sau."));
     }
   }
 
