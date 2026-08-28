@@ -1,49 +1,41 @@
-import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BadgeCheck,
-  Check,
-  CheckCheck,
-  ChevronDown,
-  ChevronRight,
-  Eye,
-  EyeOff,
-  FileCode,
-  FileText,
-  Filter,
-  FolderGit2,
-  FolderKanban,
-  Key,
-  Lock,
-  MessageSquareText,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Search,
-  Shield,
-  ShieldAlert,
-  ShieldCheck,
-  SlidersHorizontal,
-  Sparkles,
-  Trash2,
-  UserCheck,
-  UserPlus,
-  Users,
-  UserX,
-  X
+    Check,
+    CheckCheck,
+    ChevronDown,
+    Eye,
+    EyeOff,
+    FileText,
+    FolderGit2,
+    FolderKanban,
+    Key,
+    MessageSquareText,
+    Pencil,
+    Plus,
+    Search,
+    Shield,
+    ShieldAlert,
+    ShieldCheck,
+    Trash2,
+    UserCheck,
+    UserPlus,
+    Users,
+    UserX,
+    X
 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { getErrorMessage } from "./apiError";
 import {
-  assignUsersToDocuments,
-  assignUsersToProjects,
-  createUser,
-  deleteUser,
-  fetchUsers,
-  type ManagedUser,
-  removeUserFromDocument,
-  removeUserFromProject,
-  updateUser
+    assignUsersToDocuments,
+    assignUsersToProjects,
+    createUser,
+    deleteUser,
+    fetchUsers,
+    type ManagedUser,
+    removeUserFromDocument,
+    removeUserFromProject,
+    updateUser
 } from "./authApi";
 import type { Project, ProjectDocument, ProjectRole, User, UserRole, UserStatus } from "./types";
-import { getErrorMessage } from "./apiError";
 
 type Props = {
   projects: Project[];
