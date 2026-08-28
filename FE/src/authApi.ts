@@ -1,4 +1,5 @@
 import type { ProjectRole, User, UserRole, UserStatus } from "./types";
+import { throwApiError } from "./apiError";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "/api/v1";
 const ACCESS_TOKEN_KEY = "ba_docs_access_token";
@@ -51,8 +52,7 @@ export async function authFetch<T>(path: string, options?: RequestInit, retry = 
   }
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `API error ${response.status}`);
+    await throwApiError(response);
   }
 
   return response.json() as Promise<T>;

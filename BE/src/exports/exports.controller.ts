@@ -35,4 +35,28 @@ export class ExportsController {
     response.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
     return response.send(result.buffer);
   }
+
+  @Get("projects/:id/work-items.csv")
+  async exportProjectWorkItemsCsv(
+    @Param("id") id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() response: Response
+  ) {
+    const result = await this.exportsService.exportProjectWorkItemsCsv(id, user);
+    response.setHeader("Content-Type", "text/csv; charset=utf-8");
+    response.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+    return response.send(result.buffer);
+  }
+
+  @Get("projects/:id/activity.csv")
+  async exportProjectActivityCsv(
+    @Param("id") id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() response: Response
+  ) {
+    const result = await this.exportsService.exportProjectActivityCsv(id, user);
+    response.setHeader("Content-Type", "text/csv; charset=utf-8");
+    response.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+    return response.send(result.buffer);
+  }
 }

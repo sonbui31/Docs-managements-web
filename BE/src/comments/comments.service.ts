@@ -27,6 +27,26 @@ export class CommentsService {
     return this.withAuthorProfiles(comments);
   }
 
+  async context(id: string, user: AuthenticatedUser) {
+    const comment = await this.prisma.comment.findUnique({
+      where: { id },
+      include: { document: { select: { id: true, projectId: true, title: true } } }
+    });
+    if (!comment) {
+      throw new BadRequestException("Comment not found");
+    }
+    await this.permissions.assertDocumentRole(user, comment.documentId, ["VIEWER"]);
+    return {
+      id: comment.id,
+      parentId: comment.parentId,
+      documentId: comment.documentId,
+      projectId: comment.document.projectId,
+      blockId: comment.blockId,
+      selectedText: comment.selectedText,
+      document: comment.document
+    };
+  }
+
   async create(dto: CreateCommentDto, user: AuthenticatedUser) {
     await this.permissions.assertDocumentRole(user, dto.documentId, ["REVIEWER", "EDITOR", "MANAGER"]);
 
@@ -47,7 +67,7 @@ export class CommentsService {
       dto.documentId,
       { commentId: comment.id, projectId, blockId: dto.blockId }
     );
-    await this.notifyForCreatedComment(dto, user, authorName, projectId);
+    await this.notifyForCreatedComment(dto, user, authorName, projectId, comment.id);
     return this.withAuthorProfile(comment);
   }
 
@@ -174,7 +194,8 @@ export class CommentsService {
     dto: CreateCommentDto,
     user: AuthenticatedUser,
     authorName: string,
-    projectId: string | null
+    projectId: string | null,
+    commentId: string
   ) {
     const mentionedUsers = await this.notifications.mentionedUsers(dto.content);
     const mentionedIds = mentionedUsers.map((mentionedUser) => mentionedUser.id);
@@ -188,8 +209,8 @@ export class CommentsService {
         actor: user,
         title: "Có phản hồi nhận xét mới",
         message: `${authorName}: ${dto.content.slice(0, 120)}`,
-        entityType: "Document",
-        entityId: dto.documentId,
+        entityType: "DocumentComment",
+        entityId: commentId,
         emailUrl
       });
     } else {
@@ -199,8 +220,8 @@ export class CommentsService {
         actor: user,
         title: "Có nhận xét mới",
         message: `${authorName}: ${dto.content.slice(0, 120)}`,
-        entityType: "Document",
-        entityId: dto.documentId,
+        entityType: "DocumentComment",
+        entityId: commentId,
         emailUrl
       });
     }
@@ -210,8 +231,8 @@ export class CommentsService {
       actor: user,
       title: "Bạn được nhắc đến trong tài liệu",
       message: `${authorName} đã nhắc đến bạn trong một nhận xét.`,
-      entityType: "Document",
-      entityId: dto.documentId,
+      entityType: "DocumentComment",
+      entityId: commentId,
       emailUrl
     });
   }
@@ -262,8 +283,8 @@ export class CommentsService {
       actor: user,
       title: "Nhận xét đã hoàn thành",
       message: `${user.name || user.email} đã đánh dấu một luồng nhận xét là hoàn thành.`,
-      entityType: "Document",
-      entityId: documentId,
+      entityType: "DocumentComment",
+      entityId: commentId,
       emailUrl: this.notifications.entityUrl({ projectId, documentId })
     });
   }

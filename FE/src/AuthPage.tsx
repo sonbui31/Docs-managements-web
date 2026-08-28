@@ -23,6 +23,7 @@ import {
   X
 } from "lucide-react";
 import { forgotPassword, login, register, resetPassword } from "./authApi";
+import { getErrorMessage } from "./apiError";
 import type { User } from "./types";
 
 interface AuthPageProps {
@@ -97,6 +98,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
     if (rawMessage.includes("Failed to fetch") || rawMessage.includes("NetworkError") || rawMessage.includes("ECONNREFUSED")) {
       return "Không thể kết nối đến Backend Server (NestJS Port 3000). Vui lòng kiểm tra lại dịch vụ!";
     }
+    const apiMessage = getErrorMessage(error, "");
+    if (apiMessage) return apiMessage;
+
     if (rawMessage.includes("401") || rawMessage.includes("Invalid credentials") || rawMessage.includes("Unauthorized")) {
       return "Tài khoản hoặc Mật khẩu không chính xác. Vui lòng kiểm tra lại!";
     }

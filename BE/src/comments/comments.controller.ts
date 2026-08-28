@@ -18,6 +18,11 @@ export class CommentsController {
     return this.commentsService.findByDocument(documentId, user);
   }
 
+  @Get(":id/context")
+  context(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.commentsService.context(id, user);
+  }
+
   @Post()
   create(@Body() dto: CreateCommentDto, @CurrentUser() user: AuthenticatedUser) {
     return this.commentsService.create(dto, user);

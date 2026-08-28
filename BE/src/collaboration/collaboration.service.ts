@@ -247,10 +247,10 @@ export class CollaborationService {
   async search(projectId: string, query: string, user: AuthenticatedUser) {
     await this.permissions.assertProjectVisible(user, projectId);
     const q = query.trim();
-    if (!q) return { documents: [], comments: [], tags: [] };
+    if (!q) return { documents: [], comments: [], tags: [], workItems: [] };
     const documentWhere = this.permissions.documentVisibilityWhere(user, projectId, ["VIEWER"]);
 
-    const [documents, comments, tags] = await Promise.all([
+    const [documents, comments, tags, workItems] = await Promise.all([
       this.prisma.document.findMany({
         where: {
           AND: [
@@ -298,6 +298,36 @@ export class CollaborationService {
         orderBy: { updatedAt: "desc" },
         take: 20,
         include: { document: { select: { title: true } } }
+      }),
+      this.prisma.workItem.findMany({
+        where: {
+          projectId,
+          OR: [
+            { title: { contains: q, mode: "insensitive" } },
+            { description: { contains: q, mode: "insensitive" } },
+            { assigneeName: { contains: q, mode: "insensitive" } },
+            { createdByName: { contains: q, mode: "insensitive" } },
+            { document: { title: { contains: q, mode: "insensitive" } } },
+            { comments: { some: { content: { contains: q, mode: "insensitive" } } } },
+            { labels: { some: { label: { name: { contains: q, mode: "insensitive" } } } } }
+          ]
+        },
+        orderBy: { updatedAt: "desc" },
+        take: 20,
+        select: {
+          id: true,
+          projectId: true,
+          documentId: true,
+          type: true,
+          status: true,
+          priority: true,
+          title: true,
+          description: true,
+          assigneeName: true,
+          updatedAt: true,
+          document: { select: { title: true } },
+          labels: { include: { label: true }, take: 5 }
+        }
       })
     ]);
 
@@ -308,7 +338,11 @@ export class CollaborationService {
         htmlContent: undefined
       })),
       comments,
-      tags
+      tags,
+      workItems: workItems.map((item) => ({
+        ...item,
+        snippet: this.makeSnippet([item.description, item.assigneeName, item.document?.title].filter(Boolean).join(" "), q)
+      }))
     };
   }
 
@@ -647,34 +681,102 @@ export class CollaborationService {
   }
 
   private async ensureSystemTemplates() {
-    const existing = await this.prisma.documentTemplate.count({ where: { isSystem: true } });
-    if (existing) return;
+    const systemTemplates = [
+      {
+        name: "BRD - Tài liệu yêu cầu nghiệp vụ",
+        type: "BRD",
+        description: "Khung chuẩn để mô tả mục tiêu, phạm vi, quy tắc và yêu cầu nghiệp vụ.",
+        htmlContent: "<h1>BRD - Business Requirement Document</h1><h2>1. Mục tiêu</h2><p>Mô tả mục tiêu nghiệp vụ.</p><h2>2. Phạm vi</h2><p>Xác định phạm vi triển khai.</p><h2>3. Yêu cầu nghiệp vụ</h2><table><thead><tr><th>Mã</th><th>Nội dung</th><th>Ưu tiên</th></tr></thead><tbody><tr><td>BRQ-001</td><td>Yêu cầu nghiệp vụ đầu tiên.</td><td>Bắt buộc</td></tr></tbody></table>"
+      },
+      {
+        name: "SRS - Đặc tả yêu cầu phần mềm",
+        type: "SRS",
+        description: "Khung SRS cho chức năng, API, dữ liệu và luồng xử lý.",
+        htmlContent: "<h1>SRS - Software Requirement Specification</h1><h2>1. Tổng quan</h2><p>Mô tả hệ thống và đối tượng sử dụng.</p><h2>2. Functional Requirements</h2><table><thead><tr><th>ID</th><th>Tên</th><th>Mô tả</th></tr></thead><tbody><tr><td>FR-001</td><td>Chức năng mẫu</td><td>Mô tả xử lý chính.</td></tr></tbody></table><h2>3. API</h2><p>API-001 - Endpoint mẫu.</p>"
+      },
+      {
+        name: "User Story - Backlog nghiệp vụ",
+        type: "USER_STORY",
+        description: "Template mô tả persona, nhu cầu, acceptance criteria và priority.",
+        htmlContent: "<h1>User Story</h1><h2>1. Thông tin chung</h2><table><tbody><tr><th>Epic</th><td>EPIC-001</td></tr><tr><th>Persona</th><td>Người dùng mục tiêu</td></tr><tr><th>Priority</th><td>High</td></tr></tbody></table><h2>2. Story</h2><p>As a [persona], I want [goal], so that [benefit].</p><h2>3. Acceptance Criteria</h2><ul><li>AC-001 - Điều kiện nghiệm thu đầu tiên.</li></ul>"
+      },
+      {
+        name: "Use Case - Luồng nghiệp vụ",
+        type: "USE_CASE",
+        description: "Mô tả actor, tiền điều kiện, main flow, alternate flow và exception.",
+        htmlContent: "<h1>Use Case Specification</h1><h2>1. Actor & mục tiêu</h2><p>Actor chính và mục tiêu sử dụng.</p><h2>2. Preconditions</h2><ul><li>Điều kiện trước khi bắt đầu.</li></ul><h2>3. Main Flow</h2><ol><li>UC-001 - Bước xử lý chính.</li></ol><h2>4. Alternate/Exception Flow</h2><p>Mô tả nhánh thay thế và lỗi.</p>"
+      },
+      {
+        name: "UAT - Kịch bản kiểm thử nghiệm thu",
+        type: "UAT",
+        description: "Khung test case nghiệm thu liên kết yêu cầu.",
+        htmlContent: "<h1>UAT - User Acceptance Test</h1><h2>1. Phạm vi kiểm thử</h2><p>Mô tả phạm vi nghiệm thu.</p><h2>2. Test cases</h2><table><thead><tr><th>ID</th><th>Yêu cầu</th><th>Bước kiểm thử</th><th>Kết quả mong đợi</th></tr></thead><tbody><tr><td>TEST-001</td><td>FR-001</td><td>Thực hiện thao tác chính.</td><td>Hệ thống xử lý thành công.</td></tr></tbody></table>"
+      },
+      {
+        name: "UAT Test Case - Chi tiết ca kiểm thử",
+        type: "UAT_TEST_CASE",
+        description: "Template chi tiết precondition, test data, steps, expected result và actual result.",
+        htmlContent: "<h1>UAT Test Case</h1><table><thead><tr><th>ID</th><th>Module</th><th>Precondition</th><th>Test data</th><th>Steps</th><th>Expected</th><th>Actual</th><th>Status</th></tr></thead><tbody><tr><td>TEST-001</td><td>Module mẫu</td><td>Người dùng đã đăng nhập</td><td>Dữ liệu mẫu</td><td>1. Mở màn hình<br>2. Thực hiện thao tác</td><td>Kết quả đúng nghiệp vụ</td><td></td><td>Not Run</td></tr></tbody></table>"
+      },
+      {
+        name: "UAT Script - Script nghiệm thu",
+        type: "UAT_SCRIPT",
+        description: "Kịch bản chạy UAT theo phiên, người test, dữ liệu và checklist nghiệm thu.",
+        htmlContent: "<h1>UAT Script</h1><h2>1. Thông tin phiên UAT</h2><table><tbody><tr><th>Người test</th><td></td></tr><tr><th>Môi trường</th><td>UAT</td></tr><tr><th>Build version</th><td></td></tr></tbody></table><h2>2. Script</h2><ol><li>TEST-001 - Thực hiện luồng chính và ghi nhận kết quả.</li></ol><h2>3. Sign-off</h2><p>Người nghiệp vụ xác nhận kết quả nghiệm thu.</p>"
+      },
+      {
+        name: "Meeting Minutes - Biên bản họp",
+        type: "MEETING_MINUTES",
+        description: "Biên bản họp BA/PM gồm quyết định, action item, owner và deadline.",
+        htmlContent: "<h1>Meeting Minutes</h1><h2>1. Thông tin cuộc họp</h2><table><tbody><tr><th>Thời gian</th><td></td></tr><tr><th>Thành phần</th><td></td></tr><tr><th>Mục tiêu</th><td></td></tr></tbody></table><h2>2. Nội dung trao đổi</h2><p>Ghi chú chính.</p><h2>3. Action items</h2><table><thead><tr><th>Việc cần làm</th><th>Owner</th><th>Deadline</th><th>Trạng thái</th></tr></thead><tbody><tr><td>ACTION-001</td><td></td><td></td><td>Open</td></tr></tbody></table>"
+      },
+      {
+        name: "Change Request - Yêu cầu thay đổi",
+        type: "CR",
+        description: "Mô tả thay đổi, lý do, tác động, rủi ro và kế hoạch triển khai.",
+        htmlContent: "<h1>Change Request</h1><h2>1. Thông tin thay đổi</h2><p>CR-001 - Mô tả thay đổi.</p><h2>2. Lý do</h2><p>Lý do phát sinh thay đổi.</p><h2>3. Impact analysis</h2><table><thead><tr><th>Phạm vi</th><th>Tác động</th><th>Rủi ro</th></tr></thead><tbody><tr><td>Business</td><td></td><td></td></tr></tbody></table>"
+      },
+      {
+        name: "API Spec - Đặc tả API",
+        type: "API_SPEC",
+        description: "Mô tả endpoint, request/response, validation, error code và mapping yêu cầu.",
+        htmlContent: "<h1>API Specification</h1><h2>1. Endpoint</h2><table><tbody><tr><th>API ID</th><td>API-001</td></tr><tr><th>Method</th><td>GET/POST</td></tr><tr><th>Path</th><td>/api/example</td></tr></tbody></table><h2>2. Request</h2><pre>{}</pre><h2>3. Response</h2><pre>{}</pre><h2>4. Error codes</h2><table><thead><tr><th>Code</th><th>Message</th><th>Condition</th></tr></thead><tbody><tr><td>400</td><td>Bad Request</td><td>Dữ liệu không hợp lệ</td></tr></tbody></table>"
+      },
+      {
+        name: "Process Flow - Quy trình nghiệp vụ",
+        type: "PROCESS_FLOW",
+        description: "Mô tả quy trình, swimlane, step, input/output và rule liên quan.",
+        htmlContent: "<h1>Process Flow</h1><h2>1. Mục tiêu quy trình</h2><p>Mô tả mục tiêu.</p><h2>2. Swimlane/Actor</h2><table><thead><tr><th>Step</th><th>Actor</th><th>Input</th><th>Action</th><th>Output</th><th>Rule</th></tr></thead><tbody><tr><td>FLOW-001</td><td>Actor</td><td></td><td></td><td></td><td>RULE-001</td></tr></tbody></table>"
+      },
+      {
+        name: "Acceptance Criteria - Điều kiện nghiệm thu",
+        type: "AC",
+        description: "Danh sách điều kiện nghiệm thu theo Given/When/Then.",
+        htmlContent: "<h1>Acceptance Criteria</h1><table><thead><tr><th>ID</th><th>User Story</th><th>Given</th><th>When</th><th>Then</th></tr></thead><tbody><tr><td>AC-001</td><td>US-001</td><td>Bối cảnh</td><td>Người dùng thao tác</td><td>Kết quả mong đợi</td></tr></tbody></table>"
+      },
+      {
+        name: "NFR - Yêu cầu phi chức năng",
+        type: "NFR",
+        description: "Template performance, security, availability, auditability và compliance.",
+        htmlContent: "<h1>Non-functional Requirements</h1><table><thead><tr><th>ID</th><th>Nhóm</th><th>Yêu cầu</th><th>Tiêu chí đo</th><th>Ưu tiên</th></tr></thead><tbody><tr><td>NFR-001</td><td>Performance</td><td>Hệ thống phản hồi nhanh</td><td>P95 dưới 2s</td><td>High</td></tr></tbody></table>"
+      },
+      {
+        name: "Data Mapping - Mapping dữ liệu",
+        type: "DATA_MAPPING",
+        description: "Mapping field nguồn/đích, format, rule transform và validation.",
+        htmlContent: "<h1>Data Mapping</h1><table><thead><tr><th>ID</th><th>Source field</th><th>Target field</th><th>Format</th><th>Transform rule</th><th>Validation</th></tr></thead><tbody><tr><td>MAP-001</td><td>source.name</td><td>target.fullName</td><td>String</td><td>Trim whitespace</td><td>Required</td></tr></tbody></table>"
+      }
+    ].map((template) => ({ ...template, isSystem: true }));
 
-    await this.prisma.documentTemplate.createMany({
-      data: [
-        {
-          name: "BRD - Tài liệu yêu cầu nghiệp vụ",
-          type: "BRD",
-          description: "Khung chuẩn để mô tả mục tiêu, phạm vi, quy tắc và yêu cầu nghiệp vụ.",
-          isSystem: true,
-          htmlContent: "<h1>BRD - Business Requirement Document</h1><h2>1. Mục tiêu</h2><p>Mô tả mục tiêu nghiệp vụ.</p><h2>2. Phạm vi</h2><p>Xác định phạm vi triển khai.</p><h2>3. Yêu cầu nghiệp vụ</h2><table><thead><tr><th>Mã</th><th>Nội dung</th><th>Ưu tiên</th></tr></thead><tbody><tr><td>BRQ-001</td><td>Yêu cầu nghiệp vụ đầu tiên.</td><td>Bắt buộc</td></tr></tbody></table>"
-        },
-        {
-          name: "SRS - Đặc tả yêu cầu phần mềm",
-          type: "SRS",
-          description: "Khung SRS cho chức năng, API, dữ liệu và luồng xử lý.",
-          isSystem: true,
-          htmlContent: "<h1>SRS - Software Requirement Specification</h1><h2>1. Tổng quan</h2><p>Mô tả hệ thống và đối tượng sử dụng.</p><h2>2. Functional Requirements</h2><table><thead><tr><th>ID</th><th>Tên</th><th>Mô tả</th></tr></thead><tbody><tr><td>FR-001</td><td>Chức năng mẫu</td><td>Mô tả xử lý chính.</td></tr></tbody></table><h2>3. API</h2><p>API-001 - Endpoint mẫu.</p>"
-        },
-        {
-          name: "UAT - Kịch bản kiểm thử nghiệm thu",
-          type: "UAT",
-          description: "Khung test case nghiệm thu liên kết yêu cầu.",
-          isSystem: true,
-          htmlContent: "<h1>UAT - User Acceptance Test</h1><h2>1. Phạm vi kiểm thử</h2><p>Mô tả phạm vi nghiệm thu.</p><h2>2. Test cases</h2><table><thead><tr><th>ID</th><th>Yêu cầu</th><th>Bước kiểm thử</th><th>Kết quả mong đợi</th></tr></thead><tbody><tr><td>TEST-001</td><td>FR-001</td><td>Thực hiện thao tác chính.</td><td>Hệ thống xử lý thành công.</td></tr></tbody></table>"
-        }
-      ]
+    const existing = await this.prisma.documentTemplate.findMany({
+      where: { isSystem: true },
+      select: { name: true, type: true }
     });
+    const existingKeys = new Set(existing.map((template) => `${template.type}:${template.name}`));
+    const missingTemplates = systemTemplates.filter((template) => !existingKeys.has(`${template.type}:${template.name}`));
+    if (!missingTemplates.length) return;
+
+    await this.prisma.documentTemplate.createMany({ data: missingTemplates });
   }
 
   private async canUseProjectRole(user: AuthenticatedUser, projectId: string, allowedRoles: ProjectRole[]) {

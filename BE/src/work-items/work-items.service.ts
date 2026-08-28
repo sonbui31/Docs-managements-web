@@ -310,8 +310,36 @@ export class WorkItemsService {
     });
   }
 
+  async commentContext(commentId: string, user: AuthenticatedUser) {
+    const comment = await this.prisma.workItemComment.findUnique({
+      where: { id: commentId },
+      include: { workItem: { select: { id: true, projectId: true, documentId: true, title: true } } }
+    });
+    if (!comment) throw new NotFoundException("Work item comment not found");
+    await this.assertWorkItemRole(comment.workItem, user, ["VIEWER"]);
+    return {
+      id: comment.id,
+      parentId: comment.parentId,
+      workItemId: comment.workItemId,
+      projectId: comment.workItem.projectId,
+      documentId: comment.workItem.documentId,
+      workItem: comment.workItem
+    };
+  }
+
   async createComment(id: string, dto: CreateWorkItemCommentDto, user: AuthenticatedUser) {
-    const item = await this.prisma.workItem.findUnique({ where: { id }, select: { projectId: true, documentId: true } });
+    const item = await this.prisma.workItem.findUnique({
+      where: { id },
+      select: {
+        projectId: true,
+        documentId: true,
+        title: true,
+        createdById: true,
+        createdByEmail: true,
+        assigneeId: true,
+        assignees: { select: { userId: true } }
+      }
+    });
     if (!item) throw new NotFoundException("Work item not found");
     await this.assertWorkItemRole(item, user, ["REVIEWER", "EDITOR", "MANAGER"]);
 
@@ -346,14 +374,29 @@ export class WorkItemsService {
     const emailUrl = this.notifications.entityUrl({ projectId: item.projectId, documentId: item.documentId, workItemId: id });
 
     if (parentComment) {
-      const replyRecipientIds = await this.workItemCommentAuthorIds(parentComment);
+      const replyRecipientIds = await this.workItemReplyRecipientIds(id, dto.parentId);
       await this.notifications.createForUsers({
         userIds: replyRecipientIds.filter((userId) => !mentionedIds.includes(userId)),
         actor: user,
         title: "Có phản hồi trong ticket",
         message: `${user.name || user.email} đã trả lời comment của bạn trong ticket.`,
-        entityType: "WorkItem",
-        entityId: id,
+        entityType: "WorkItemComment",
+        entityId: comment.id,
+        emailUrl
+      });
+    } else {
+      const commentRecipientIds = this.uniqueIds([
+        item.createdById,
+        item.assigneeId,
+        ...item.assignees.map((assignee) => assignee.userId)
+      ]);
+      await this.notifications.createForUsers({
+        userIds: commentRecipientIds.filter((userId) => !mentionedIds.includes(userId)),
+        actor: user,
+        title: "Có comment mới trong ticket",
+        message: `${user.name || user.email}: ${dto.content.slice(0, 120)}`,
+        entityType: "WorkItemComment",
+        entityId: comment.id,
         emailUrl
       });
     }
@@ -363,8 +406,8 @@ export class WorkItemsService {
       actor: user,
       title: "Bạn được nhắc đến trong ticket",
       message: `${user.name || user.email} đã nhắc đến bạn trong ticket.`,
-      entityType: "WorkItem",
-      entityId: id,
+      entityType: "WorkItemComment",
+      entityId: comment.id,
       emailUrl
     });
 
@@ -709,6 +752,26 @@ export class WorkItemsService {
     });
 
     return this.uniqueIds([author?.id]);
+  }
+
+  private async workItemReplyRecipientIds(workItemId: string, parentId?: string | null) {
+    if (!parentId) return [];
+    const comments = await this.prisma.workItemComment.findMany({
+      where: { workItemId },
+      select: { id: true, parentId: true, createdById: true, createdByEmail: true }
+    });
+    const commentsById = new Map(comments.map((comment) => [comment.id, comment]));
+    const recipients: string[] = [];
+    let current = commentsById.get(parentId);
+    const visited = new Set<string>();
+
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      recipients.push(...await this.workItemCommentAuthorIds(current));
+      current = current.parentId ? commentsById.get(current.parentId) : undefined;
+    }
+
+    return this.uniqueIds(recipients);
   }
 
   private assertOwnedByCurrentUser(

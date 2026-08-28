@@ -1,6 +1,7 @@
 import type {
   ActivityLog,
   CommentThread,
+  DocumentCommentContext,
   DocumentStatus,
   DocumentTemplate,
   DocumentVersion,
@@ -16,6 +17,7 @@ import type {
   VersionDiff,
   WorkItem,
   WorkItemActivity,
+  WorkItemCommentContext,
   WorkItemComment,
   WorkItemPriority,
   WorkItemStatus,
@@ -24,6 +26,7 @@ import type {
   WorkItemType
 } from "./types";
 import { getAccessToken, refreshSession } from "./authApi";
+import { throwApiError } from "./apiError";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "/api/v1";
 
@@ -114,8 +117,7 @@ export async function apiFetch<T>(path: string, options?: RequestInit, retry = t
   }
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `API error ${response.status}`);
+    await throwApiError(response);
   }
 
   return response.json() as Promise<T>;
@@ -138,8 +140,7 @@ export async function apiFetchBlob(path: string, options?: RequestInit, retry = 
   }
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `API error ${response.status}`);
+    await throwApiError(response);
   }
 
   return response.blob();
@@ -361,6 +362,10 @@ export async function fetchComments(documentId: string) {
   return comments.map(mapComment);
 }
 
+export async function fetchDocumentCommentContext(commentId: string) {
+  return apiFetch<DocumentCommentContext>(`/comments/${commentId}/context`);
+}
+
 export async function createComment(payload: {
   documentId: string;
   parentId?: string;
@@ -559,6 +564,10 @@ export async function fetchWorkItemActivity(workItemId: string) {
   return apiFetch<WorkItemActivity[]>(`/work-items/${workItemId}/activity`);
 }
 
+export async function fetchWorkItemCommentContext(commentId: string) {
+  return apiFetch<WorkItemCommentContext>(`/work-items/comments/${commentId}/context`);
+}
+
 export async function createWorkItemComment(workItemId: string, payload: { content: string; parentId?: string }) {
   return apiFetch<WorkItemComment>(`/work-items/${workItemId}/comments`, {
     method: "POST",
@@ -679,6 +688,18 @@ export async function downloadExport(documentId: string, type: "pdf" | "docx") {
   URL.revokeObjectURL(url);
 }
 
+export async function downloadProjectExport(projectId: string, type: "work-items" | "activity") {
+  const { blob, filename } = await apiFetchDownload(`/exports/projects/${projectId}/${type}.csv`);
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename || `${type}-${projectId}.csv`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 async function apiFetchDownload(path: string, retry = true): Promise<{ blob: Blob; filename?: string }> {
   const token = getAccessToken();
   const response = await fetch(`${API_BASE}${path}`, {
@@ -694,8 +715,7 @@ async function apiFetchDownload(path: string, retry = true): Promise<{ blob: Blo
   }
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `API error ${response.status}`);
+    await throwApiError(response);
   }
 
   return {

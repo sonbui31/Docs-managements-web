@@ -69,6 +69,80 @@ export class ExportsService {
     return { buffer, filename };
   }
 
+  async exportProjectWorkItemsCsv(projectId: string, user: AuthenticatedUser) {
+    await this.permissions.assertProjectRole(user, projectId, ["VIEWER"]);
+    const [project, items] = await Promise.all([
+      this.prisma.project.findUnique({ where: { id: projectId }, select: { code: true } }),
+      this.prisma.workItem.findMany({
+        where: { projectId },
+        orderBy: [{ status: "asc" }, { priority: "desc" }, { updatedAt: "desc" }],
+        include: {
+          document: { select: { title: true } },
+          assignees: { include: { user: { select: { name: true, email: true } } } },
+          labels: { include: { label: true } },
+          checklistItems: { orderBy: { position: "asc" } }
+        }
+      })
+    ]);
+    if (!project) throw new NotFoundException("Project not found");
+
+    const rows = [
+      ["ID", "Title", "Type", "Status", "Priority", "Assignees", "Due date", "Document", "Labels", "Checklist done", "Updated at"],
+      ...items.map((item) => [
+        item.id,
+        item.title,
+        item.type,
+        item.status,
+        item.priority,
+        item.assignees.map((assignee) => `${assignee.user.name} <${assignee.user.email}>`).join("; "),
+        item.dueDate ? item.dueDate.toISOString().slice(0, 10) : "",
+        item.document?.title ?? "",
+        item.labels.map((label) => label.label.name).join("; "),
+        `${item.checklistItems.filter((check) => check.done).length}/${item.checklistItems.length}`,
+        item.updatedAt.toISOString()
+      ])
+    ];
+
+    return {
+      buffer: Buffer.from(this.toCsv(rows), "utf8"),
+      filename: `${this.slug(project.code)}-work-items.csv`
+    };
+  }
+
+  async exportProjectActivityCsv(projectId: string, user: AuthenticatedUser) {
+    await this.permissions.assertProjectRole(user, projectId, ["VIEWER"]);
+    const project = await this.prisma.project.findUnique({ where: { id: projectId }, select: { code: true } });
+    if (!project) throw new NotFoundException("Project not found");
+
+    const logs = await this.prisma.auditLog.findMany({
+      where: {
+        OR: [
+          { entityType: "Project", entityId: projectId },
+          { metadata: { path: ["projectId"], equals: projectId } }
+        ]
+      },
+      include: { actor: { select: { name: true, email: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 1000
+    });
+    const rows = [
+      ["Time", "Actor", "Action", "Entity type", "Entity id", "Metadata"],
+      ...logs.map((log) => [
+        log.createdAt.toISOString(),
+        log.actor ? `${log.actor.name} <${log.actor.email}>` : "",
+        log.action,
+        log.entityType ?? "",
+        log.entityId ?? "",
+        JSON.stringify(log.metadata ?? {})
+      ])
+    ];
+
+    return {
+      buffer: Buffer.from(this.toCsv(rows), "utf8"),
+      filename: `${this.slug(project.code)}-activity-log.csv`
+    };
+  }
+
   private async getDocument(id: string) {
     const document = await this.prisma.document.findUnique({
       where: { id },
@@ -386,5 +460,11 @@ export class ExportsService {
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
+  }
+
+  private toCsv(rows: string[][]) {
+    return rows
+      .map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
+      .join("\n");
   }
 }

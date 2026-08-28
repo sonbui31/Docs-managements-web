@@ -1,8 +1,9 @@
-import { ValidationPipe, VersioningType } from "@nestjs/common";
+import { BadRequestException, ValidationPipe, VersioningType } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { AppModule } from "./app.module";
+import { HttpExceptionFilter } from "./common/http-exception.filter";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -11,11 +12,20 @@ async function bootstrap() {
   app.setGlobalPrefix("api");
   app.enableVersioning({ type: VersioningType.URI });
   app.enableCors({ origin: true, credentials: true });
+  app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
-      transform: true
+      transform: true,
+      exceptionFactory: (errors) =>
+        new BadRequestException({
+          message: "Dữ liệu gửi lên không hợp lệ.",
+          details: errors.map((error) => ({
+            field: error.property,
+            constraints: error.constraints
+          }))
+        })
     })
   );
 

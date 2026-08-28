@@ -83,7 +83,9 @@ import {
   deleteWorkItem,
   deleteWorkItemComment,
   downloadExport,
+  downloadProjectExport,
   fetchComments,
+  fetchDocumentCommentContext,
   fetchDocumentDiff,
   fetchDocumentTags,
   fetchDocumentVersions,
@@ -97,6 +99,7 @@ import {
   fetchWorkboardColumns,
   fetchWorkItemActivity,
   fetchWorkItemById,
+  fetchWorkItemCommentContext,
   fetchWorkItemComments,
   fetchProjects,
   fetchRoleDashboard,
@@ -118,6 +121,7 @@ import {
   uploadMediaAsset
 } from "./api";
 import { AuthPage } from "./AuthPage";
+import { getErrorMessage } from "./apiError";
 import { clearAuthSession, fetchCurrentUser, getAccessToken, getStoredUser, logout } from "./authApi";
 import type {
   ActivityLog,
@@ -150,7 +154,25 @@ import type {
 const AdminPanel = lazy(() => import("./AdminPanel").then((module) => ({ default: module.AdminPanel })));
 const ShareAccessModal = lazy(() => import("./ShareAccessModal").then((module) => ({ default: module.ShareAccessModal })));
 
+const DOCUMENT_TYPE_OPTIONS = [
+  { value: "BRD", label: "BRD (Business Requirement)" },
+  { value: "SRS", label: "SRS (Software Requirement)" },
+  { value: "USER_STORY", label: "User Story" },
+  { value: "USE_CASE", label: "Use Case" },
+  { value: "UAT", label: "UAT Plan" },
+  { value: "UAT_TEST_CASE", label: "UAT Test Case" },
+  { value: "UAT_SCRIPT", label: "UAT Script" },
+  { value: "AC", label: "Acceptance Criteria" },
+  { value: "NFR", label: "NFR (Non-functional Requirement)" },
+  { value: "API_SPEC", label: "API Spec" },
+  { value: "PROCESS_FLOW", label: "Process Flow" },
+  { value: "DATA_MAPPING", label: "Data Mapping" },
+  { value: "MEETING_MINUTES", label: "Meeting Minutes" },
+  { value: "CR", label: "CR (Change Request)" }
+];
+
 type MermaidRenderer = typeof import("mermaid").default;
+type NotificationFilter = "all" | "unread" | "mention" | "ticket" | "document" | "project";
 
 const mermaidConfig = {
   startOnLoad: false,
@@ -999,6 +1021,7 @@ function App() {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [isNotificationMenuOpen, setIsNotificationMenuOpen] = useState<boolean>(false);
+  const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("all");
   const [documentTemplates, setDocumentTemplates] = useState<DocumentTemplate[]>([]);
   const [newTagCode, setNewTagCode] = useState<string>("");
   const [newTagKind, setNewTagKind] = useState<string>("REQ");
@@ -2776,7 +2799,7 @@ function App() {
         column;
       setWorkItems((prev) => moveWorkItemToColumn(prev, item.id, previousColumn));
       setDashboardWorkItems((prev) => moveWorkItemToColumn(prev, item.id, previousColumn));
-      addToast("error", "Không đổi được trạng thái", "BE chưa cập nhật trạng thái work item.");
+      toastApiError(error, "Không đổi được trạng thái", "BE chưa cập nhật trạng thái work item.");
     }
   }
 
@@ -2936,7 +2959,7 @@ function App() {
       addToast("success", "Đã cập nhật board", "Mô hình Kanban của project đã được lưu.");
     } catch (error) {
       console.error("Save workboard columns error:", error);
-      addToast("error", "Không lưu được board", error instanceof Error ? error.message : "BE chưa lưu được cấu hình cột.");
+      toastApiError(error, "Không lưu được board", "BE chưa lưu được cấu hình cột.");
     } finally {
       setIsSavingWorkboardColumns(false);
     }
@@ -2996,7 +3019,7 @@ function App() {
       setWorkItemComments(await fetchWorkItemComments(workItemId));
     } catch (error) {
       console.error("Cannot load work item comments:", error);
-      addToast("error", "Không tải được comment", "BE chưa trả về luồng trao đổi của ticket.");
+      toastApiError(error, "Không tải được comment", "BE chưa trả về luồng trao đổi của ticket.");
     }
   }
 
@@ -3291,7 +3314,7 @@ function App() {
       await loadWorkItemActivity(viewingWorkItem.id);
     } catch (error) {
       console.error("Create work item comment error:", error);
-      addToast("error", "Không gửi được comment", "BE chưa lưu được trao đổi ticket.");
+      toastApiError(error, "Không gửi được comment", "BE chưa lưu được trao đổi ticket.");
     }
   }
 
@@ -3647,7 +3670,7 @@ function App() {
       addToast("success", "Đã cập nhật comment", "Nội dung trao đổi ticket đã được lưu.");
     } catch (error) {
       console.error("Update work item comment error:", error);
-      addToast("error", "Không sửa được comment", "Bạn chỉ có thể sửa comment do chính mình tạo.");
+      toastApiError(error, "Không sửa được comment", "Bạn chỉ có thể sửa comment do chính mình tạo.");
     }
   }
 
@@ -3670,7 +3693,7 @@ function App() {
       addToast("info", "Đã xóa comment", "Comment ticket đã được xóa.");
     } catch (error) {
       console.error("Delete work item comment error:", error);
-      addToast("error", "Không xóa được comment", "Bạn chỉ có thể xóa comment do chính mình tạo.");
+      toastApiError(error, "Không xóa được comment", "Bạn chỉ có thể xóa comment do chính mình tạo.");
     }
   }
 
@@ -3690,7 +3713,7 @@ function App() {
       addToast("success", "Đã upload file", "URL file đã được thêm vào ticket.");
     } catch (error) {
       console.error("Upload draft work item attachment error:", error);
-      addToast("error", "Không upload được file", "Kiểm tra định dạng file hoặc quyền dự án/tài liệu.");
+      toastApiError(error, "Không upload được file", "Kiểm tra định dạng file hoặc quyền dự án/tài liệu.");
     } finally {
       setIsUploadingWorkItemAttachment(false);
     }
@@ -3755,7 +3778,7 @@ function App() {
       addToast("success", workItemDraft.id ? "Đã cập nhật ticket" : "Đã tạo ticket", `"${displayWorkItemTitle(saved)}" đã được lưu vào Workboard.`);
     } catch (error) {
       console.error("Save work item error:", error);
-      addToast("error", "Không lưu được ticket", error instanceof Error ? error.message : "BE chưa lưu được thay đổi này.");
+      toastApiError(error, "Không lưu được ticket", "BE chưa lưu được thay đổi này.");
     } finally {
       setIsSavingWorkItem(false);
     }
@@ -3788,7 +3811,7 @@ function App() {
       addToast("success", "Đã duplicate ticket", `"${displayWorkItemTitle(duplicated)}" đã được tạo.`);
     } catch (error) {
       console.error("Duplicate work item error:", error);
-      addToast("error", "Không duplicate được ticket", "BE chưa tạo được bản sao ticket này.");
+      toastApiError(error, "Không duplicate được ticket", "BE chưa tạo được bản sao ticket này.");
     }
   }
 
@@ -3811,7 +3834,7 @@ function App() {
       addToast("info", "Đã xóa ticket", `"${item?.title ?? "Ticket"}" đã được xóa khỏi Workboard.`);
     } catch (error) {
       console.error("Delete work item error:", error);
-      addToast("error", "Không xóa được ticket", "BE chưa xóa được ticket này.");
+      toastApiError(error, "Không xóa được ticket", "BE chưa xóa được ticket này.");
     }
   }
 
@@ -3832,6 +3855,10 @@ function App() {
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 4000);
+  }
+
+  function toastApiError(error: unknown, title: string, fallback: string) {
+    addToast("error", title, getErrorMessage(error, fallback));
   }
 
   function resetCreateProjectDraft() {
@@ -4008,7 +4035,7 @@ function App() {
       addToast("success", "Đã tạo dự án mới", `Dự án "${newProj.name}" (${newProj.code}) đã được lưu vào Neon.`);
     } catch (error) {
       console.error("Create project error:", error);
-      addToast("error", "Không tạo được dự án", "BE từ chối request hoặc mã dự án đã tồn tại.");
+      toastApiError(error, "Không tạo được dự án", "BE từ chối request hoặc mã dự án đã tồn tại.");
     } finally {
       setIsCreatingProject(false);
     }
@@ -4053,7 +4080,7 @@ function App() {
       addToast("success", "Đã cập nhật dự án", `Dự án "${updatedProject.name}" đã lưu vào Neon.`);
     } catch (error) {
       console.error("Update project error:", error);
-      addToast("error", "Không cập nhật được dự án", "BE chưa lưu được thay đổi dự án.");
+      toastApiError(error, "Không cập nhật được dự án", "BE chưa lưu được thay đổi dự án.");
     } finally {
       setIsSavingEditProject(false);
     }
@@ -4100,7 +4127,7 @@ function App() {
       addToast("info", "Đã xóa dự án", `Dự án "${projToDelete?.name || projectId}" và các tài liệu liên quan đã bị xóa khỏi Neon.`);
     } catch (error) {
       console.error("Delete project error:", error);
-      addToast("error", "Không xóa được dự án", "BE chưa xóa được dự án này. Kiểm tra quyền hoặc thử lại.");
+      toastApiError(error, "Không xóa được dự án", "BE chưa xóa được dự án này. Kiểm tra quyền hoặc thử lại.");
     }
   }
 
@@ -4133,7 +4160,7 @@ function App() {
       addToast("success", "Đã tạo tài liệu mới", `Tài liệu "${newDoc.title}" đã được lưu vào Neon.`);
     } catch (error) {
       console.error("Create document error:", error);
-      addToast("error", "Không tạo được tài liệu", "Kiểm tra project đích và kết nối BE.");
+      toastApiError(error, "Không tạo được tài liệu", "Kiểm tra project đích và kết nối BE.");
     }
   }
 
@@ -4180,7 +4207,7 @@ function App() {
       addToast("success", "Đã cập nhật thuộc tính tài liệu", `Tài liệu "${updatedDocument.title}" đã lưu vào Neon.`);
     } catch (error) {
       console.error("Update document error:", error);
-      addToast("error", "Không cập nhật được tài liệu", "BE chưa lưu được thay đổi tài liệu.");
+      toastApiError(error, "Không cập nhật được tài liệu", "BE chưa lưu được thay đổi tài liệu.");
     }
   }
 
@@ -4202,7 +4229,7 @@ function App() {
       void loadRoleDashboard();
     } catch (error) {
       console.error("Deploy document error:", error);
-      addToast("error", "Không chuyển được trạng thái", "BE chưa lưu được trạng thái Triển khai.");
+      toastApiError(error, "Không chuyển được trạng thái", "BE chưa lưu được trạng thái Triển khai.");
     }
   }
 
@@ -4240,7 +4267,7 @@ function App() {
       addToast("info", "Đã xóa tài liệu", `Tài liệu "${docToDelete?.title || documentId}" đã được xóa khỏi Neon.`);
     } catch (error) {
       console.error("Delete document error:", error);
-      addToast("error", "Không xóa được tài liệu", "BE chưa xóa được tài liệu này. Kiểm tra quyền hoặc thử lại.");
+      toastApiError(error, "Không xóa được tài liệu", "BE chưa xóa được tài liệu này. Kiểm tra quyền hoặc thử lại.");
     }
   }
 
@@ -4266,7 +4293,7 @@ function App() {
       addToast("info", "Đã xóa nhận xét", "Ghi chú nhận xét đã được xóa khỏi Neon.");
     } catch (error) {
       console.error("Delete comment error:", error);
-      addToast("error", "Không xóa được nhận xét", "BE chưa xóa được comment này. Vui lòng thử lại.");
+      toastApiError(error, "Không xóa được nhận xét", "BE chưa xóa được comment này. Vui lòng thử lại.");
     }
   }
 
@@ -4340,7 +4367,7 @@ function App() {
       );
     } catch (error) {
       console.error("Import file error:", error);
-      addToast("error", "Import thất bại", "BE chưa nhận được file hoặc định dạng chưa được hỗ trợ.");
+      toastApiError(error, "Import thất bại", "BE chưa nhận được file hoặc định dạng chưa được hỗ trợ.");
     } finally {
       setIsImporting(false);
       setImportStatusText("");
@@ -4363,7 +4390,7 @@ function App() {
       setDocumentVersions(await fetchDocumentVersions(selectedDocument.id));
     } catch (error) {
       console.error("Load document versions error:", error);
-      addToast("error", "Không tải được lịch sử phiên bản", "Vui lòng kiểm tra quyền truy cập hoặc thử lại.");
+      toastApiError(error, "Không tải được lịch sử phiên bản", "Vui lòng kiểm tra quyền truy cập hoặc thử lại.");
     } finally {
       setIsLoadingVersions(false);
     }
@@ -4385,7 +4412,7 @@ function App() {
       );
     } catch (error) {
       console.error("Restore document version error:", error);
-      addToast("error", "Không khôi phục được phiên bản", "Vui lòng kiểm tra quyền chỉnh sửa tài liệu hoặc thử lại.");
+      toastApiError(error, "Không khôi phục được phiên bản", "Vui lòng kiểm tra quyền chỉnh sửa tài liệu hoặc thử lại.");
     } finally {
       setRestoringVersionId(null);
     }
@@ -4411,7 +4438,7 @@ function App() {
       void loadProjectCollaboration(selectedProject.id);
     } catch (error) {
       console.error("Create tag error:", error);
-      addToast("error", "Không lưu được tag", "Kiểm tra quyền chỉnh sửa tài liệu rồi thử lại.");
+      toastApiError(error, "Không lưu được tag", "Kiểm tra quyền chỉnh sửa tài liệu rồi thử lại.");
     }
   }
 
@@ -4429,7 +4456,7 @@ function App() {
       void loadProjectCollaboration(selectedProject.id);
     } catch (error) {
       console.error("Accept inferred tag error:", error);
-      addToast("error", "Không lưu được tag", "Tag này chưa được lưu vào Neon.");
+      toastApiError(error, "Không lưu được tag", "Tag này chưa được lưu vào Neon.");
     }
   }
 
@@ -4441,7 +4468,7 @@ function App() {
       void loadProjectCollaboration(selectedProject.id);
     } catch (error) {
       console.error("Delete tag error:", error);
-      addToast("error", "Không xóa được tag", "Kiểm tra quyền rồi thử lại.");
+      toastApiError(error, "Không xóa được tag", "Kiểm tra quyền rồi thử lại.");
     }
   }
 
@@ -4467,7 +4494,7 @@ function App() {
       void loadProjectCollaboration(selectedProject.id);
     } catch (error) {
       console.error("Create trace error:", error);
-      addToast("error", "Không tạo được truy vết", "Kiểm tra quyền dự án rồi thử lại.");
+      toastApiError(error, "Không tạo được truy vết", "Kiểm tra quyền dự án rồi thử lại.");
     }
   }
 
@@ -4479,7 +4506,7 @@ function App() {
       void loadProjectCollaboration(selectedProject.id);
     } catch (error) {
       console.error("Delete trace error:", error);
-      addToast("error", "Không xóa được truy vết", "Kiểm tra quyền dự án rồi thử lại.");
+      toastApiError(error, "Không xóa được truy vết", "Kiểm tra quyền dự án rồi thử lại.");
     }
   }
 
@@ -4500,7 +4527,7 @@ function App() {
       void loadProjectCollaboration(document.projectId || selectedProject.id);
     } catch (error) {
       console.error("Create document from template error:", error);
-      addToast("error", "Không tạo được từ mẫu", "Kiểm tra quyền tạo tài liệu trong dự án.");
+      toastApiError(error, "Không tạo được từ mẫu", "Kiểm tra quyền tạo tài liệu trong dự án.");
     }
   }
 
@@ -4523,14 +4550,75 @@ function App() {
     }
   }
 
+  function scrollToHighlightedElement(elementId: string) {
+    window.setTimeout(() => {
+      const element = document.getElementById(elementId);
+      if (!element) return;
+      element.classList.remove("reply-pulse-highlight");
+      void element.offsetWidth;
+      element.classList.add("reply-pulse-highlight");
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 180);
+  }
+
   async function handleOpenNotification(notification: NotificationItem) {
     await handleMarkNotificationRead(notification);
     setIsNotificationMenuOpen(false);
+    if (notification.entityType === "DocumentComment" && notification.entityId) {
+      try {
+        const context = await fetchDocumentCommentContext(notification.entityId);
+        setSelectedProjectId(context.projectId);
+        setSelectedDocumentId(context.documentId);
+        setActiveTabNav("documents");
+        setShowCommentsPanel(true);
+        setCommentFilter("all");
+        await Promise.all([
+          loadCommentsForDocument(context.documentId),
+          loadDocumentCollaboration(context.documentId)
+        ]);
+        if (context.selectedText) {
+          setActiveBlockId(context.blockId);
+          window.setTimeout(() => highlightCommentText(context.selectedText!, context.blockId), 220);
+        }
+        scrollToHighlightedElement(`comment-reply-${context.id}`);
+      } catch (error) {
+        console.error("Open document comment notification error:", error);
+        toastApiError(error, "Không mở được nhận xét", "Nhận xét có thể đã bị xóa hoặc bạn không còn quyền truy cập.");
+      }
+      return;
+    }
+    if (notification.entityType === "WorkItemComment" && notification.entityId) {
+      try {
+        const context = await fetchWorkItemCommentContext(notification.entityId);
+        const item = await fetchWorkItemById(context.workItemId);
+        setWorkItems((prev) => prev.some((workItem) => workItem.id === item.id)
+          ? prev.map((workItem) => (workItem.id === item.id ? item : workItem))
+          : [item, ...prev]
+        );
+        setSelectedProjectId(context.projectId);
+        setActiveTabNav("review");
+        openViewWorkItemModal(item);
+        await Promise.all([
+          loadWorkItemComments(item.id),
+          loadWorkItemActivity(item.id),
+          loadProjectMembers(item.projectId)
+        ]);
+        scrollToHighlightedElement(`ticket-comment-${context.id}`);
+      } catch (error) {
+        console.error("Open work item comment notification error:", error);
+        toastApiError(error, "Không mở được comment ticket", "Comment có thể đã bị xóa hoặc bạn không còn quyền truy cập.");
+      }
+      return;
+    }
     if (notification.entityType === "Document" && notification.entityId) {
       setSelectedDocumentId(notification.entityId);
       const doc = documentsList.find((item) => item.id === notification.entityId);
       if (doc?.projectId) setSelectedProjectId(doc.projectId);
       setActiveTabNav("documents");
+      await Promise.all([
+        loadCommentsForDocument(notification.entityId),
+        loadDocumentCollaboration(notification.entityId)
+      ]);
       return;
     }
     if (notification.entityType === "WorkItem" && notification.entityId) {
@@ -4543,6 +4631,11 @@ function App() {
         setSelectedProjectId(item.projectId);
         setActiveTabNav("review");
         openViewWorkItemModal(item);
+        await Promise.all([
+          loadWorkItemComments(item.id),
+          loadWorkItemActivity(item.id),
+          loadProjectMembers(item.projectId)
+        ]);
       } catch (error) {
         console.error("Open work item notification error:", error);
       }
@@ -4555,21 +4648,39 @@ function App() {
   }
 
   function notificationIcon(notification: NotificationItem) {
-    if (notification.entityType === "WorkItem") return <Kanban size={15} />;
-    if (notification.entityType === "Document") return <FileText size={15} />;
+    if (notification.entityType === "WorkItem" || notification.entityType === "WorkItemComment") return <Kanban size={15} />;
+    if (notification.entityType === "Document" || notification.entityType === "DocumentComment") return <FileText size={15} />;
     if (notification.entityType === "Project") return <FolderKanban size={15} />;
     return <Bell size={15} />;
   }
 
   function notificationIconClass(notification: NotificationItem) {
-    if (notification.entityType === "WorkItem") return "noti-icon-amber";
-    if (notification.entityType === "Document") return "noti-icon-blue";
+    if (notification.entityType === "WorkItem" || notification.entityType === "WorkItemComment") return "noti-icon-amber";
+    if (notification.entityType === "Document" || notification.entityType === "DocumentComment") return "noti-icon-blue";
     if (notification.entityType === "Project") return "noti-icon-emerald";
     return "noti-icon-violet";
   }
 
   function renderNotificationCenter() {
     const unreadCount = notifications.filter((notification) => !notification.readAt).length;
+    const notificationFilters: Array<{ key: NotificationFilter; label: string; count?: number }> = [
+      { key: "all", label: "Tất cả", count: notifications.length },
+      { key: "unread", label: "Chưa đọc", count: unreadCount },
+      { key: "mention", label: "Mention" },
+      { key: "ticket", label: "Ticket" },
+      { key: "document", label: "Tài liệu" },
+      { key: "project", label: "Dự án" }
+    ];
+    const filteredNotifications = notifications.filter((notification) => {
+      if (notificationFilter === "unread") return !notification.readAt;
+      if (notificationFilter === "mention") {
+        return `${notification.title} ${notification.message}`.toLocaleLowerCase("vi-VN").includes("nhắc đến");
+      }
+      if (notificationFilter === "ticket") return notification.entityType === "WorkItem" || notification.entityType === "WorkItemComment";
+      if (notificationFilter === "document") return notification.entityType === "Document" || notification.entityType === "DocumentComment";
+      if (notificationFilter === "project") return notification.entityType === "Project";
+      return true;
+    });
     return (
       <div className="notification-center">
         <button
@@ -4597,15 +4708,28 @@ function App() {
                 <CheckCheck size={14} /> Đọc hết
               </button>
             </div>
+            <div className="notification-filter-row">
+              {notificationFilters.map((filter) => (
+                <button
+                  key={filter.key}
+                  className={notificationFilter === filter.key ? "active" : ""}
+                  type="button"
+                  onClick={() => setNotificationFilter(filter.key)}
+                >
+                  {filter.label}
+                  {filter.count !== undefined && <span>{filter.count}</span>}
+                </button>
+              ))}
+            </div>
             <div className="notification-menu-list">
-              {notifications.length === 0 ? (
+              {filteredNotifications.length === 0 ? (
                 <div className="notification-empty">
                   <Bell size={18} />
                   <strong>Chưa có thông báo</strong>
-                  <span>Các cập nhật liên quan tới bạn sẽ hiện ở đây.</span>
+                  <span>Các cập nhật phù hợp với bộ lọc sẽ hiện ở đây.</span>
                 </div>
               ) : (
-                notifications.slice(0, 8).map((notification) => (
+                filteredNotifications.slice(0, 12).map((notification) => (
                   <button
                     key={notification.id}
                     type="button"
@@ -4640,7 +4764,7 @@ function App() {
       addToast("success", "Đã cập nhật nhận xét", "Nội dung nhận xét đã được lưu vào Neon.");
     } catch (error) {
       console.error("Update comment error:", error);
-      addToast("error", "Không cập nhật được nhận xét", "BE chưa lưu được thay đổi nhận xét.");
+      toastApiError(error, "Không cập nhật được nhận xét", "BE chưa lưu được thay đổi nhận xét.");
     }
   }
 
@@ -4665,7 +4789,7 @@ function App() {
       addToast("success", "Đã đánh dấu hoàn thành", "Comment này đã được chuyển sang trạng thái hoàn thành.");
     } catch (error) {
       console.error("Resolve comment error:", error);
-      addToast("error", "Không đánh dấu được", "BE chưa cập nhật được trạng thái comment.");
+      toastApiError(error, "Không đánh dấu được", "BE chưa cập nhật được trạng thái comment.");
     }
   }
 
@@ -4699,7 +4823,7 @@ function App() {
       addToast("success", "Đã thêm nhận xét", "Comment đã được lưu theo đoạn bạn bôi đen.");
     } catch (error) {
       console.error("Create comment error:", error);
-      addToast("error", "Không gửi được nhận xét", "Kiểm tra BE hoặc tài liệu đang chọn.");
+      toastApiError(error, "Không gửi được nhận xét", "Kiểm tra BE hoặc tài liệu đang chọn.");
     }
   }
 
@@ -4727,7 +4851,7 @@ function App() {
       addToast("success", "Đã trả lời nhận xét", "Reply đã được lưu vào thread.");
     } catch (error) {
       console.error("Create reply error:", error);
-      addToast("error", "Không gửi được reply", "Kiểm tra BE hoặc thử lại sau.");
+      toastApiError(error, "Không gửi được reply", "Kiểm tra BE hoặc thử lại sau.");
     }
   }
 
@@ -4961,7 +5085,7 @@ function App() {
       addToast("success", "Đã tạo file xuất", `Tài liệu đã được tải xuống dưới dạng ${exportType === "pdf" ? "PDF" : "Word"}.`);
     } catch (error) {
       console.error("Export document error:", error);
-      addToast("error", "Không xuất được tài liệu", "Vui lòng kiểm tra quyền truy cập hoặc thử lại sau.");
+      toastApiError(error, "Không xuất được tài liệu", "Vui lòng kiểm tra quyền truy cập hoặc thử lại sau.");
     } finally {
       setIsExporting(false);
     }
@@ -6254,6 +6378,39 @@ function App() {
                       </button>
                     ))}
                   </div>
+                  <div className="advanced-search-group">
+                    <span>Ticket</span>
+                    {(advancedSearchResults.workItems?.length ?? 0) === 0 ? (
+                      <small>Không có ticket phù hợp.</small>
+                    ) : advancedSearchResults.workItems.slice(0, 5).map((result) => (
+                      <button
+                        key={result.id}
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const item = await fetchWorkItemById(result.id);
+                            setWorkItems((prev) => prev.some((workItem) => workItem.id === item.id)
+                              ? prev.map((workItem) => (workItem.id === item.id ? item : workItem))
+                              : [item, ...prev]
+                            );
+                            setSelectedProjectId(item.projectId);
+                            setActiveTabNav("review");
+                            setIsAdvancedSearchOpen(false);
+                            openViewWorkItemModal(item);
+                          } catch (error) {
+                            console.error("Open searched work item error:", error);
+                            toastApiError(error, "Không mở được ticket", "Ticket có thể đã bị xóa hoặc bạn không còn quyền truy cập.");
+                          }
+                        }}
+                      >
+                        <Kanban size={13} />
+                        <span>
+                          <strong>{result.title}</strong>
+                          <small>{result.snippet || `${result.type} • ${result.status} • ${result.priority}`}</small>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -7059,6 +7216,36 @@ function App() {
                       <X size={12} /> Reset
                     </button>
                   )}
+                <button
+                  className="btn-reset-filters"
+                  type="button"
+                  title="Tải danh sách ticket CSV"
+                  onClick={async () => {
+                    try {
+                      await downloadProjectExport(selectedProject.id, "work-items");
+                    } catch (error) {
+                      console.error("Download work item export error:", error);
+                      toastApiError(error, "Không tải được ticket", "Không thể xuất danh sách ticket lúc này.");
+                    }
+                  }}
+                >
+                  <Download size={12} /> Ticket CSV
+                </button>
+                <button
+                  className="btn-reset-filters"
+                  type="button"
+                  title="Tải audit log CSV"
+                  onClick={async () => {
+                    try {
+                      await downloadProjectExport(selectedProject.id, "activity");
+                    } catch (error) {
+                      console.error("Download activity export error:", error);
+                      toastApiError(error, "Không tải được audit log", "Không thể xuất lịch sử hoạt động lúc này.");
+                    }
+                  }}
+                >
+                  <Download size={12} /> Audit CSV
+                </button>
               </div>
 
               <div className="workboard-filter-summary">
@@ -7178,6 +7365,15 @@ function App() {
                     <h2>Tài liệu</h2>
                   </div>
                   <div className="panel-action-group">
+                    <button
+                      className="btn-add-mini"
+                      type="button"
+                      title="Tạo tài liệu thủ công từ mẫu"
+                      disabled={!selectedProjectId}
+                      onClick={() => openCreateDocumentModal()}
+                    >
+                      <FilePlus size={13} /> Tạo
+                    </button>
                     <button
                       className="btn-add-mini"
                       type="button"
@@ -7629,6 +7825,7 @@ function App() {
                   {displayedComments.map((comment) => (
                     <div
                       key={comment.id}
+                      id={`comment-reply-${comment.id}`}
                       className={[
                         "comment-card",
                         comment.selectedText ? "clickable" : "",
@@ -8222,9 +8419,11 @@ function App() {
                     value={newDocType}
                     onChange={(e) => setNewDocType(e.target.value)}
                   >
-                    <option value="BRD">BRD (Business Req)</option>
-                    <option value="SRS">SRS (System Spec)</option>
-                    <option value="CR">CR (Change Request)</option>
+                    {DOCUMENT_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -8243,7 +8442,7 @@ function App() {
                 <div className="template-picker">
                   <div className="collab-section-title">Tạo nhanh từ mẫu</div>
                   <div className="template-grid">
-                    {documentTemplates.slice(0, 6).map((template) => (
+                    {documentTemplates.map((template) => (
                       <button
                         key={template.id}
                         type="button"
@@ -8317,9 +8516,11 @@ function App() {
                         value={editDocType}
                         onChange={(e) => setEditDocType(e.target.value)}
                       >
-                        <option value="BRD">BRD (Business Req)</option>
-                        <option value="SRS">SRS (System Spec)</option>
-                        <option value="CR">CR (Change Request)</option>
+                        {DOCUMENT_TYPE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
                       </select>
                     </div>
                   </div>
@@ -8338,10 +8539,6 @@ function App() {
                       </select>
                     </div>
                   </div>
-
-                  <small className="form-hint document-status-hint">
-                    Chỉ đổi trạng thái quản lý tài liệu, không có luồng duyệt.
-                  </small>
 
                   <div className="form-group">
                     <label>Người Import / Phụ Trách</label>

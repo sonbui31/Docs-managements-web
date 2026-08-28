@@ -296,6 +296,20 @@ export type SearchResult = {
   documents: Array<{ id: string; title: string; type: string; currentVersion: string; updatedAt: string; snippet: string }>;
   comments: Array<{ id: string; documentId: string; blockId: string; content: string; selectedText?: string | null; document?: { title: string } }>;
   tags: RequirementTag[];
+  workItems: Array<{
+    id: string;
+    projectId: string;
+    documentId?: string | null;
+    type: WorkItemType;
+    status: WorkItemStatus;
+    priority: WorkItemPriority;
+    title: string;
+    description?: string | null;
+    assigneeName?: string | null;
+    updatedAt: string;
+    snippet: string;
+    document?: { title: string } | null;
+  }>;
 };
 
 export type VersionDiff = {
@@ -349,6 +363,25 @@ export type NotificationItem = {
   entityId?: string | null;
   readAt?: string | null;
   createdAt: string;
+};
+
+export type DocumentCommentContext = {
+  id: string;
+  parentId?: string | null;
+  documentId: string;
+  projectId: string;
+  blockId: string;
+  selectedText?: string | null;
+  document?: { id: string; projectId: string; title: string };
+};
+
+export type WorkItemCommentContext = {
+  id: string;
+  parentId?: string | null;
+  workItemId: string;
+  projectId: string;
+  documentId?: string | null;
+  workItem?: { id: string; projectId: string; documentId?: string | null; title: string };
 };
 
 export type ActivityLog = {

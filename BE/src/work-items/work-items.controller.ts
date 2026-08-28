@@ -21,6 +21,11 @@ export class WorkItemsController {
     return this.workItemsService.findByProject(projectId, user);
   }
 
+  @Get("comments/:commentId/context")
+  commentContext(@Param("commentId") commentId: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.workItemsService.commentContext(commentId, user);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.workItemsService.findOne(id, user);
