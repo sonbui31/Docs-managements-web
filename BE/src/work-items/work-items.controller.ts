@@ -26,6 +26,11 @@ export class WorkItemsController {
     return this.workItemsService.commentContext(commentId, user);
   }
 
+  @Get("my-tasks")
+  findMyTasks(@CurrentUser() user: AuthenticatedUser) {
+    return this.workItemsService.findMyTasks(user);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.workItemsService.findOne(id, user);

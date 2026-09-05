@@ -30,6 +30,7 @@ import {
     Layers,
     LayoutDashboard,
     ListTree,
+    ListChecks,
     Loader2,
     LogOut,
     MessageSquarePlus,
@@ -90,6 +91,7 @@ import {
     fetchProjectActivity,
     fetchProjectDashboard,
     fetchProjectMembers,
+    fetchMyTasks,
     fetchProjects,
     fetchProjectWorkItems,
     fetchRoleDashboard,
@@ -1104,6 +1106,44 @@ function App() {
   });
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState<boolean>(false);
 
+  // My Tasks Popup state
+  const MY_TASKS_SHOWN_KEY = "ba_docs_mytasks_shown_date";
+  const [isMyTasksPopupOpen, setIsMyTasksPopupOpen] = useState<boolean>(false);
+  const [myTasksList, setMyTasksList] = useState<WorkItem[]>([]);
+  const [isLoadingMyTasks, setIsLoadingMyTasks] = useState<boolean>(false);
+  const justLoggedInRef = useRef<boolean>(false);
+
+  async function loadAndShowMyTasks() {
+    setIsLoadingMyTasks(true);
+    try {
+      const tasks = await fetchMyTasks();
+      setMyTasksList(tasks);
+      if (tasks.length > 0) {
+        setIsMyTasksPopupOpen(true);
+        localStorage.setItem(MY_TASKS_SHOWN_KEY, new Date().toISOString().slice(0, 10));
+      }
+    } catch (error) {
+      console.error("Cannot load my tasks:", error);
+    } finally {
+      setIsLoadingMyTasks(false);
+    }
+  }
+
+  function shouldShowMyTasksToday(): boolean {
+    const lastShown = localStorage.getItem(MY_TASKS_SHOWN_KEY);
+    const today = new Date().toISOString().slice(0, 10);
+    return lastShown !== today;
+  }
+
+  function handleMyTaskClick(task: WorkItem) {
+    setIsMyTasksPopupOpen(false);
+    setSelectedProjectId(task.projectId);
+    setActiveTabNav("projects");
+    setTimeout(() => {
+      setViewingWorkItemId(task.id);
+    }, 300);
+  }
+
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   function setSyncedDocumentCommentCount(documentId: string, count: number) {
@@ -1158,7 +1198,12 @@ function App() {
     }
 
     resetModalDraftsForAccountChange();
-    void loadWorkspaceFromBackend();
+    void loadWorkspaceFromBackend().then(() => {
+      if (justLoggedInRef.current) {
+        justLoggedInRef.current = false;
+        void loadAndShowMyTasks();
+      }
+    });
   }, [currentUser?.id]);
 
   useEffect(() => {
@@ -1166,7 +1211,11 @@ function App() {
     void fetchCurrentUser()
       .then((user) => {
         setCurrentUser(user);
-        void loadWorkspaceFromBackend();
+        void loadWorkspaceFromBackend().then(() => {
+          if (shouldShowMyTasksToday()) {
+            void loadAndShowMyTasks();
+          }
+        });
       })
       .catch(() => {
         setIsBackendConnected(false);
@@ -5998,6 +6047,7 @@ function App() {
     return (
       <AuthPage
         onSuccess={(user) => {
+          justLoggedInRef.current = true;
           setCurrentUser(user);
           addToast("success", "Đăng nhập thành công", `Chào mừng ${user.name} quay trở lại hệ thống!`);
         }}
@@ -9458,6 +9508,81 @@ function App() {
             onToast={addToast}
           />
         </Suspense>
+      )}
+
+      {/* My Tasks Popup */}
+      {isMyTasksPopupOpen && (
+        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setIsMyTasksPopupOpen(false); }}>
+          <div className="modal-content my-tasks-popup">
+            <div className="modal-header">
+              <div className="modal-title-with-icon">
+                <div className="modal-header-badge">
+                  <ListChecks size={20} />
+                </div>
+                <div>
+                  <h3>Việc cần làm</h3>
+                  <p className="modal-subtitle">{myTasksList.length} công việc đang chờ xử lý</p>
+                </div>
+              </div>
+              <button className="icon-btn" type="button" onClick={() => setIsMyTasksPopupOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-body my-tasks-body">
+              {isLoadingMyTasks ? (
+                <div className="my-tasks-loading">
+                  <Loader2 className="spin-icon" size={24} />
+                  <span>Đang tải công việc...</span>
+                </div>
+              ) : myTasksList.length === 0 ? (
+                <div className="my-tasks-empty">
+                  <CheckCircle2 size={40} />
+                  <p>Không có việc cần làm 🎉</p>
+                  <small>Bạn đã hoàn thành tất cả công việc!</small>
+                </div>
+              ) : (
+                <div className="my-tasks-list">
+                  {myTasksList.map((task) => {
+                    const isOverdue = task.dueDate && new Date(task.dueDate) < new Date();
+                    const priorityClass = `priority-${task.priority.toLowerCase()}`;
+                    const projectName = (task as any).project?.name ?? '';
+                    return (
+                      <button
+                        key={task.id}
+                        type="button"
+                        className={`my-tasks-item ${isOverdue ? 'overdue' : ''}`}
+                        onClick={() => handleMyTaskClick(task)}
+                      >
+                        <span className={`my-tasks-priority ${priorityClass}`}>
+                          {task.priority === 'CRITICAL' ? '!!!' : task.priority === 'HIGH' ? '!!' : task.priority === 'MEDIUM' ? '!' : '—'}
+                        </span>
+                        <div className="my-tasks-item-content">
+                          <span className="my-tasks-item-title">{task.title}</span>
+                          <div className="my-tasks-item-meta">
+                            {projectName && <span className="my-tasks-project">{projectName}</span>}
+                            {task.column && <span className="my-tasks-status" style={{ borderColor: task.column.color, color: task.column.color }}>{task.column.name}</span>}
+                            {task.dueDate && (
+                              <span className={`my-tasks-due ${isOverdue ? 'overdue' : ''}`}>
+                                <Calendar size={12} />
+                                {new Date(task.dueDate).toLocaleDateString('vi-VN')}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <ChevronRight size={16} className="my-tasks-arrow" />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" type="button" onClick={() => setIsMyTasksPopupOpen(false)}>
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Floating Toast Notifications */}

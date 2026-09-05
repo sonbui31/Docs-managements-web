@@ -41,6 +41,34 @@ export class WorkItemsService {
     });
   }
 
+  async findMyTasks(user: AuthenticatedUser) {
+    return this.prisma.workItem.findMany({
+      where: {
+        AND: [
+          {
+            OR: [
+              { assigneeId: user.id },
+              { assignees: { some: { userId: user.id } } },
+              { assigneeName: { contains: user.name } }
+            ]
+          },
+          {
+            OR: [
+              { column: { isDone: false } },
+              { column: null }
+            ]
+          }
+        ]
+      },
+      include: {
+        ...this.includeRelations(),
+        project: { select: { id: true, code: true, name: true } }
+      },
+      orderBy: [{ priority: "desc" }, { dueDate: "asc" }, { updatedAt: "desc" }],
+      take: 20
+    });
+  }
+
   async findOne(id: string, user: AuthenticatedUser) {
     const item = await this.prisma.workItem.findUnique({
       where: { id },

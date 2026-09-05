@@ -104,7 +104,40 @@ export class UsersService {
       companyId: actor.externalCompanyId,
       departmentId: actor.role === "MANAGER" ? actor.externalDepartmentId : undefined
     });
-    await Promise.all(employees.map((employee) => this.syncExternalEmployee(employee, actor)));
+
+    const syncedIds = (
+      await Promise.all(employees.map((employee) => this.syncExternalEmployee(employee, actor)))
+    ).filter(Boolean) as string[];
+
+    // Soft-delete local users no longer present in external system
+    if (employees.length > 0) {
+      const syncedIdSet = new Set(syncedIds);
+      const localUsers = await this.prisma.user.findMany({
+        where: {
+          deletedAt: null,
+          globalRole: { not: "ADMIN" },
+          ...this.accessibleUserScope(actor)
+        },
+        select: { id: true }
+      });
+
+      const removedIds = localUsers.filter((u) => !syncedIdSet.has(u.id)).map((u) => u.id);
+
+      if (removedIds.length > 0) {
+        await this.prisma.$transaction([
+          this.prisma.user.updateMany({
+            where: { id: { in: removedIds } },
+            data: { deletedAt: new Date(), status: "DISABLED" }
+          }),
+          this.prisma.refreshSession.updateMany({
+            where: { userId: { in: removedIds }, revokedAt: null },
+            data: { revokedAt: new Date() }
+          })
+        ]);
+        this.logger.warn(`Soft-deleted ${removedIds.length} users no longer in external system: [${removedIds.join(", ")}]`);
+      }
+    }
+
     return this.findStoredManagedUsers(actor);
   }
 

@@ -405,6 +405,10 @@ export async function fetchProjectWorkItems(projectId: string) {
   return apiFetch<BackendWorkItem[]>(`/work-items/project/${projectId}`);
 }
 
+export async function fetchMyTasks() {
+  return apiFetch<BackendWorkItem[]>("/work-items/my-tasks");
+}
+
 export async function fetchWorkItemById(workItemId: string) {
   return apiFetch<BackendWorkItem>(`/work-items/${workItemId}`);
 }
