@@ -9,6 +9,7 @@ import {
     ChevronDown,
     ChevronLeft,
     ChevronRight,
+    ChevronsUp,
     ChevronUp,
     Clock,
     Copy,
@@ -35,6 +36,7 @@ import {
     LogOut,
     MessageSquarePlus,
     MessageSquareText,
+    Minus,
     MoreVertical,
     PanelLeftClose,
     PanelLeftOpen,
@@ -166,6 +168,11 @@ const DOCUMENT_TYPE_OPTIONS = [
   { value: "MEETING_MINUTES", label: "Meeting Minutes" },
   { value: "CR", label: "CR (Change Request)" }
 ];
+
+function getDocumentTypeShortLabel(type: string) {
+  const label = DOCUMENT_TYPE_OPTIONS.find((option) => option.value === type)?.label ?? type;
+  return label.replace(/\s*\(.+\)\s*$/, "").replace(/_/g, " ");
+}
 
 type MermaidRenderer = typeof import("mermaid").default;
 type NotificationFilter = "all" | "unread" | "mention" | "ticket" | "document" | "project";
@@ -383,6 +390,15 @@ const DEFAULT_WORKBOARD_COLUMNS: WorkboardColumn[] = [
   { id: "BLOCKED", projectId: "", key: "BLOCKED", name: "Blocked", color: "#ef4444", type: "BLOCKED", position: 4, isDefault: false, isDone: false },
   { id: "DONE", projectId: "", key: "DONE", name: "Done", color: "#10b981", type: "DONE", position: 5, isDefault: false, isDone: true }
 ];
+
+const STATUS_BREAKDOWN_HINT: Record<WorkItemStatus, string> = {
+  BACKLOG: "Chờ xử lý",
+  TODO: "Cần làm",
+  IN_PROGRESS: "Đang làm",
+  REVIEW: "Đang review",
+  BLOCKED: "Bị kẹt",
+  DONE: "Đã xong"
+};
 
 const WORKBOARD_COLUMN_TYPE_OPTIONS: Array<{ value: WorkboardColumnType; label: string }> = [
   { value: "INTAKE", label: "Mới tiếp nhận" },
@@ -962,6 +978,7 @@ function App() {
   const [dashboardWorkItems, setDashboardWorkItems] = useState<WorkItem[]>([]);
   const [workboardColumnsByProject, setWorkboardColumnsByProject] = useState<Record<string, WorkboardColumn[]>>({});
   const [isLoadingWorkItems, setIsLoadingWorkItems] = useState<boolean>(false);
+  const workItemsLoadTokenRef = useRef<number>(0);
   const [draggingWorkItemId, setDraggingWorkItemId] = useState<string | null>(null);
   const pendingWorkItemMovesRef = useRef<Record<string, {
     status: WorkItemStatus;
@@ -977,6 +994,8 @@ function App() {
   const [workboardAssigneeFilter, setWorkboardAssigneeFilter] = useState<string>("ALL");
   const [workboardCreatorFilter, setWorkboardCreatorFilter] = useState<string>("ALL");
   const [workboardSortBy, setWorkboardSortBy] = useState<"BOARD_ORDER" | "UPDATED_DESC" | "DUE_ASC" | "PRIORITY_DESC">("BOARD_ORDER");
+  const [workloadNameFilter, setWorkloadNameFilter] = useState<string>("");
+  const [workloadCompletionFilter, setWorkloadCompletionFilter] = useState<"ALL" | "LOW" | "MID" | "DONE">("ALL");
   const [isWorkboardConfigOpen, setIsWorkboardConfigOpen] = useState<boolean>(false);
   const [openFilterDropdown, setOpenFilterDropdown] = useState<string | null>(null);
   const [workboardColumnDrafts, setWorkboardColumnDrafts] = useState<WorkboardColumnDraft[]>([]);
@@ -1042,6 +1061,7 @@ function App() {
   const [importTargetProjectId, setImportTargetProjectId] = useState<string>(selectedProjectId);
   const [importMode, setImportMode] = useState<"create" | "update">("create");
   const [importTargetDocumentId, setImportTargetDocumentId] = useState<string>(selectedDocumentId);
+  const [importDocType, setImportDocType] = useState<string>("BRD");
   const [isImporting, setIsImporting] = useState<boolean>(false);
   const [importStatusText, setImportStatusText] = useState<string>("");
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
@@ -1078,6 +1098,7 @@ function App() {
   const [newDocProjectId, setNewDocProjectId] = useState<string>(selectedProjectId);
   const [newDocTitle, setNewDocTitle] = useState<string>("");
   const [newDocType, setNewDocType] = useState<string>("BRD");
+  const [newDocTypeTouched, setNewDocTypeTouched] = useState<boolean>(false);
   const [newDocOwner, setNewDocOwner] = useState<string>("BA Lead");
 
   // Edit Document Metadata Modal state
@@ -1135,13 +1156,23 @@ function App() {
     return lastShown !== today;
   }
 
-  function handleMyTaskClick(task: WorkItem) {
-    setIsMyTasksPopupOpen(false);
-    setSelectedProjectId(task.projectId);
-    setActiveTabNav("projects");
-    setTimeout(() => {
-      setViewingWorkItemId(task.id);
-    }, 300);
+  async function handleMyTaskClick(task: WorkItem) {
+    try {
+      const item = await fetchWorkItemById(task.id);
+      setWorkItems((prev) => prev.some((workItem) => workItem.id === item.id)
+        ? prev.map((workItem) => (workItem.id === item.id ? item : workItem))
+        : [item, ...prev]
+      );
+      setSelectedProjectId(item.projectId);
+      setSelectedDocumentId(item.documentId ?? documentsList.find((document) => document.projectId === item.projectId)?.id ?? "empty-document");
+      setActiveTabNav("review");
+      setIsMyTasksPopupOpen(false);
+      openViewWorkItemModal(item);
+      void loadProjectWorkItems(item.projectId);
+    } catch (error) {
+      console.error("Open my task error:", error);
+      toastApiError(error, "Không mở được ticket", "Ticket có thể đã bị xóa hoặc bạn không còn quyền truy cập.");
+    }
   }
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -1415,16 +1446,21 @@ function App() {
 
   async function loadProjectWorkItems(projectId: string) {
     if (!projectId) return;
+    const loadToken = ++workItemsLoadTokenRef.current;
     setIsLoadingWorkItems(true);
     try {
       const nextItems = applyPendingWorkItemMoves(await fetchProjectWorkItems(projectId));
+      if (workItemsLoadTokenRef.current !== loadToken) return;
       setWorkItems((prev) => mergeStableWorkItems(prev, nextItems));
       setDashboardWorkItems((prev) => mergeStableWorkItems(prev, nextItems, projectId));
     } catch (error) {
+      if (workItemsLoadTokenRef.current !== loadToken) return;
       console.error("Cannot load project work items:", error);
       setWorkItems([]);
     } finally {
-      setIsLoadingWorkItems(false);
+      if (workItemsLoadTokenRef.current === loadToken) {
+        setIsLoadingWorkItems(false);
+      }
     }
   }
 
@@ -1564,6 +1600,20 @@ function App() {
       setRoleDashboard(await fetchRoleDashboard());
     } catch (error) {
       console.error("Cannot load role dashboard:", error);
+    } finally {
+      setIsRefreshingDashboard(false);
+    }
+  }
+
+  async function refreshWorkspaceDashboard() {
+    setIsRefreshingDashboard(true);
+    try {
+      await Promise.all([
+        fetchRoleDashboard()
+          .then((dashboard) => setRoleDashboard(dashboard))
+          .catch((error) => console.error("Cannot load role dashboard:", error)),
+        loadWorkspaceFromBackend(selectedProjectId, selectedDocumentId)
+      ]);
     } finally {
       setIsRefreshingDashboard(false);
     }
@@ -2430,6 +2480,7 @@ function App() {
 
   const visibleWorkItems = useMemo(() => {
     const filtered = workItems.filter((item) => {
+      if (item.projectId !== selectedProjectId) return false;
       const matchesType = workboardTypeFilter === "ALL" || item.type === workboardTypeFilter;
       const matchesPriority = workboardPriorityFilter === "ALL" || item.priority === workboardPriorityFilter;
       const matchesAssignee =
@@ -2471,7 +2522,8 @@ function App() {
     workboardPriorityFilter,
     workboardSearchQuery,
     workboardSortBy,
-    workboardTypeFilter
+    workboardTypeFilter,
+    selectedProjectId
   ]);
 
   const workboardMetrics = useMemo(() => {
@@ -2734,7 +2786,7 @@ function App() {
       WORK_ITEM_DELETED: "Xóa ticket",
       WORK_ITEM_ATTACHMENT_ADDED: "Thêm đính kèm",
       WORK_ITEM_COMMENT_CREATED: "Thêm comment",
-      WORK_ITEM_REPLY_CREATED: "Reply comment",
+      WORK_ITEM_REPLY_CREATED: "Trả lời comment",
       WORK_ITEM_COMMENT_UPDATED: "Sửa comment",
       WORK_ITEM_COMMENT_DELETED: "Xóa comment"
     };
@@ -2798,6 +2850,15 @@ function App() {
     if (!item.dueDate || item.status === "DONE") return false;
     const dueDate = getWorkItemDueEndOfDay(item.dueDate);
     return Boolean(dueDate && dueDate.getTime() < Date.now());
+  }
+
+  function getWorkItemDueState(item: WorkItem): "expired" | "due-soon" | "normal" {
+    if (!item.dueDate || item.status === "DONE") return "normal";
+    const dueDate = getWorkItemDueEndOfDay(item.dueDate);
+    if (!dueDate) return "normal";
+    const msUntilDue = dueDate.getTime() - Date.now();
+    if (msUntilDue < 0) return "expired";
+    return msUntilDue <= 3 * 24 * 60 * 60 * 1000 ? "due-soon" : "normal";
   }
 
   function openDashboardWorkItem(item: WorkItem) {
@@ -3401,7 +3462,7 @@ function App() {
               setActiveWorkItemMentionTarget(getMentionTrigger(text) ? "reply" : null);
             }}
             onBlur={() => window.setTimeout(() => setActiveWorkItemMentionTarget(null), 150)}
-            data-placeholder="Nhập reply... Gõ @ để mention"
+            data-placeholder="Nhập trả lời... Gõ @ để mention"
           />
           {renderWorkItemMentionMenu("reply")}
         </div>
@@ -3464,7 +3525,7 @@ function App() {
               title="Trả lời comment này"
               onClick={() => openReplyWorkItemComment(rootComment.id)}
             >
-              <MessageSquarePlus size={11} /> Reply
+              <MessageSquarePlus size={11} /> Trả lời
             </button>
             {isOwnWorkItemComment(rootComment) && (
               <>
@@ -3595,7 +3656,7 @@ function App() {
                             rows={2}
                             value={editingWorkItemCommentText}
                             onChange={(event) => setEditingWorkItemCommentText(event.target.value)}
-                            placeholder="Sửa reply..."
+                            placeholder="Sửa trả lời..."
                           />
                           <div className="workitem-edit-actions">
                             <button
@@ -3927,6 +3988,7 @@ function App() {
     setNewDocProjectId(projectId);
     setNewDocTitle("");
     setNewDocType("BRD");
+    setNewDocTypeTouched(false);
     setNewDocOwner("BA Lead");
   }
 
@@ -3972,6 +4034,7 @@ function App() {
     setImportTargetProjectId(selectedProjectId);
     setImportMode("create");
     setImportTargetDocumentId(selectedDocumentId);
+    setImportDocType("BRD");
     setImportStatusText("");
     setIsDragOver(false);
   }
@@ -4014,7 +4077,40 @@ function App() {
     setActiveWorkItemMentionTarget(null);
   }
 
+  function resetWorkspaceViewState() {
+    setActiveTabNav("dashboard");
+    setSelectedProjectId("");
+    setSelectedDocumentId("empty-document");
+    setStatusFilter("All");
+    setSearchQuery("");
+    setAdvancedSearchResults(null);
+    setIsAdvancedSearchOpen(false);
+    setMetricScope("project");
+    setShowMetrics(false);
+    setShowLibraryPanel(true);
+    setShowCommentsPanel(true);
+    setIsZenMode(false);
+    setIsActionsDropdownOpen(false);
+    setOpenFilterDropdown(null);
+    setWorkboardSearchQuery("");
+    setWorkboardTypeFilter("ALL");
+    setWorkboardPriorityFilter("ALL");
+    setWorkboardAssigneeFilter("ALL");
+    setWorkboardCreatorFilter("ALL");
+    setWorkboardSortBy("BOARD_ORDER");
+    setWorkloadNameFilter("");
+    setWorkloadCompletionFilter("ALL");
+    setProjectHubSearch("");
+    setProjectHubSort("newest");
+    setProjectHubFilter("all");
+    setCollabPanelTab("comments");
+    setCommentFilter("all");
+    setIsNotificationMenuOpen(false);
+    setNotificationFilter("all");
+  }
+
   function resetModalDraftsForAccountChange() {
+    resetWorkspaceViewState();
     setIsCreateProjectModalOpen(false);
     resetCreateProjectDraft();
     setIsCreateDocModalOpen(false);
@@ -4364,6 +4460,7 @@ function App() {
   async function executeLogout() {
     setIsLogoutConfirmOpen(false);
     await logout();
+    resetModalDraftsForAccountChange();
     setCurrentUser(null);
     addToast("info", "Đã đăng xuất", "Hẹn gặp lại bạn!");
   }
@@ -4375,9 +4472,10 @@ function App() {
     setImportStatusText(getImportStatusText(file));
     const targetProject = projectsList.find((p) => p.id === importTargetProjectId) || selectedProject;
     const targetDocumentId = importMode === "update" ? importTargetDocumentId : undefined;
+    const targetDocumentType = importMode === "create" ? importDocType : undefined;
 
     try {
-      const importedDoc = await importDocument(file, targetProject.id, targetDocumentId);
+      const importedDoc = await importDocument(file, targetProject.id, targetDocumentId, targetDocumentType);
 
       setDocumentsList((prev) => {
         if (targetDocumentId) {
@@ -4560,7 +4658,7 @@ function App() {
       const document = await createDocumentFromTemplate(template.id, {
         projectId: newDocProjectId || selectedProject.id,
         title: targetTitle,
-        type: newDocType || template.type
+        type: newDocTypeTouched ? newDocType : template.type
       });
       setDocumentsList((prev) => [document, ...prev]);
       setSelectedProjectId(document.projectId || selectedProject.id);
@@ -4892,10 +4990,10 @@ function App() {
       setReplyingCommentId(null);
       if (documentReplyEditorRef.current) documentReplyEditorRef.current.innerHTML = "";
       void loadProjectCollaboration(selectedProject.id);
-      addToast("success", "Đã trả lời nhận xét", "Reply đã được lưu vào thread.");
+      addToast("success", "Đã trả lời nhận xét", "Trả lời đã được lưu vào luồng trao đổi.");
     } catch (error) {
       console.error("Create reply error:", error);
-      toastApiError(error, "Không gửi được reply", "Kiểm tra BE hoặc thử lại sau.");
+      toastApiError(error, "Không gửi được trả lời", "Kiểm tra BE hoặc thử lại sau.");
     }
   }
 
@@ -4951,7 +5049,7 @@ function App() {
             Hủy
           </button>
           <button className="btn-comment-action primary" type="button" onClick={() => handleAddReply(target, threadRoot)}>
-            <Send size={12} /> Reply
+            <Send size={12} /> Trả lời
           </button>
         </div>
       </div>
@@ -5813,7 +5911,10 @@ function App() {
           ? new Date(Math.max(...updatedCandidates.map((date) => date.getTime())))
           : null;
         const inactiveDays = updatedAt ? Math.max(Math.floor((Date.now() - updatedAt.getTime()) / 86400000), 0) : null;
+        const projectBacklogItems = projectItems.filter((item) => item.status === "BACKLOG");
+        const projectTodoItems = projectItems.filter((item) => item.status === "TODO");
         const projectInProgressItems = projectItems.filter((item) => item.status === "IN_PROGRESS");
+        const projectReviewItems = projectItems.filter((item) => item.status === "REVIEW");
         const projectBugItems = projectItems.filter((item) => item.type === "BUG" && item.status !== "DONE");
         const riskScore = projectBlockedItems.length * 5 + projectCriticalBugs.length * 4 + projectOverdueItems.length * 3 + projectOpenItems.length;
         return {
@@ -5824,7 +5925,10 @@ function App() {
           blockedItems: projectBlockedItems.length,
           criticalBugs: projectCriticalBugs.length,
           overdueItems: projectOverdueItems.length,
+          backlogItems: projectBacklogItems.length,
+          todoItems: projectTodoItems.length,
           inProgressItems: projectInProgressItems.length,
+          reviewItems: projectReviewItems.length,
           bugItems: projectBugItems.length,
           completionRate: projectItems.length ? Math.round((projectDoneItems.length / projectItems.length) * 100) : 0,
           inactiveDays,
@@ -5924,15 +6028,31 @@ function App() {
     const statusBreakdown = DEFAULT_WORKBOARD_COLUMNS.map((column) => ({
       id: column.id,
       label: column.name,
+      hint: STATUS_BREAKDOWN_HINT[column.key as WorkItemStatus],
+      color: column.color,
       value: dashboardItems.filter((item) => item.status === column.key).length
     }));
+    const totalStatusBreakdown = statusBreakdown.reduce((total, item) => total + item.value, 0);
     const maxStatusBreakdown = Math.max(...statusBreakdown.map((item) => item.value), 1);
     const workloadRows = Array.from(
       dashboardItems.reduce((map, item) => {
         const assignees = workItemAssigneeNames(item) || [];
         assignees.forEach((name) => {
           if (!name || name === "Chưa giao") return;
-          const current = map.get(name) ?? { name, open: 0, done: 0, blocked: 0, overdue: 0, critical: 0, backlog: 0, todo: 0, inProgress: 0, review: 0, bug: 0, total: 0 };
+          const current = map.get(name) ?? { name, projectId: item.projectId, projectScores: {} as Record<string, number>, open: 0, done: 0, blocked: 0, overdue: 0, critical: 0, risk: 0, backlog: 0, todo: 0, inProgress: 0, review: 0, bug: 0, total: 0 };
+          const isRisky = item.status !== "DONE" && (
+            item.status === "BLOCKED" ||
+            isWorkItemOverdue(item) ||
+            (item.type === "BUG" && item.priority === "CRITICAL")
+          );
+          const projectScore =
+            (item.status !== "DONE" ? 3 : 1) +
+            (item.status === "BLOCKED" ? 5 : 0) +
+            (isWorkItemOverdue(item) ? 4 : 0) +
+            (item.type === "BUG" ? 2 : 0);
+          current.projectScores[item.projectId] = (current.projectScores[item.projectId] ?? 0) + projectScore;
+          current.projectId = Object.entries(current.projectScores)
+            .sort((first, second) => second[1] - first[1])[0]?.[0] ?? current.projectId;
           current.total += 1;
           if (item.status === "DONE") current.done += 1;
           else current.open += 1;
@@ -5943,16 +6063,17 @@ function App() {
           if (item.status === "REVIEW") current.review += 1;
           if (isWorkItemOverdue(item)) current.overdue += 1;
           if (item.type === "BUG" && item.priority === "CRITICAL" && item.status !== "DONE") current.critical += 1;
+          if (isRisky) current.risk += 1;
           if (item.type === "BUG" && item.status !== "DONE") current.bug += 1;
           map.set(name, current);
         });
         return map;
-      }, new Map<string, { name: string; open: number; done: number; blocked: number; overdue: number; critical: number; backlog: number; todo: number; inProgress: number; review: number; bug: number; total: number }>())
+      }, new Map<string, { name: string; projectId: string; projectScores: Record<string, number>; open: number; done: number; blocked: number; overdue: number; critical: number; risk: number; backlog: number; todo: number; inProgress: number; review: number; bug: number; total: number }>())
         .values()
     )
       .sort((first, second) =>
-        (second.open + second.blocked + second.overdue + second.critical) -
-        (first.open + first.blocked + first.overdue + first.critical)
+        (second.open + second.risk) -
+        (first.open + first.risk)
       )
       .slice(0, 6);
     const maxWorkload = Math.max(...workloadRows.map((row) => row.open + row.done), 1);
@@ -6000,6 +6121,7 @@ function App() {
       activitySeries,
       maxActivity,
       statusBreakdown,
+      totalStatusBreakdown,
       maxStatusBreakdown,
       workloadRows,
       maxWorkload,
@@ -6056,6 +6178,18 @@ function App() {
   }
 
   const executiveData = executiveDashboardData();
+  const filteredWorkloadRows = executiveData.workloadRows.filter((row) => {
+    const normalizedName = row.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const normalizedQuery = workloadNameFilter.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const donePercent = row.total ? Math.round((row.done / row.total) * 100) : 0;
+    const matchesName = !normalizedQuery || normalizedName.includes(normalizedQuery);
+    const matchesCompletion =
+      workloadCompletionFilter === "ALL" ||
+      (workloadCompletionFilter === "LOW" && donePercent < 50) ||
+      (workloadCompletionFilter === "MID" && donePercent >= 50 && donePercent < 100) ||
+      (workloadCompletionFilter === "DONE" && donePercent === 100);
+    return matchesName && matchesCompletion;
+  });
 
   return (
     <main className={`${isZenMode ? "app-shell zen-mode" : "app-shell"} ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
@@ -6241,7 +6375,7 @@ function App() {
                 type="button"
                 disabled={isRefreshingDashboard}
                 onClick={async () => {
-                  await loadRoleDashboard();
+                  await refreshWorkspaceDashboard();
                   addToast("success", "Đã làm mới dữ liệu", "Cập nhật dữ liệu Dashboard thành công.");
                 }}
               >
@@ -6262,7 +6396,7 @@ function App() {
                 type="button"
                 disabled={isRefreshingDashboard}
                 onClick={async () => {
-                  await loadRoleDashboard();
+                  await refreshWorkspaceDashboard();
                   addToast("success", "Đã làm mới dữ liệu", "Cập nhật dữ liệu danh sách dự án thành công.");
                 }}
               >
@@ -6312,6 +6446,7 @@ function App() {
                 projects={projectsList}
                 selectedProjectId={selectedProject.id}
                 onSelectProject={(projectId) => {
+                  setWorkItems([]);
                   setSelectedProjectId(projectId);
                   const firstDoc = documentsList.find((doc) => doc.projectId === projectId);
                   setSelectedDocumentId(firstDoc?.id ?? "empty-document");
@@ -6468,7 +6603,7 @@ function App() {
                 type="button"
                 disabled={isRefreshingDashboard}
                 onClick={async () => {
-                  await loadRoleDashboard();
+                  await refreshWorkspaceDashboard();
                   addToast("success", "Đã làm mới dữ liệu", "Cập nhật dữ liệu thành công.");
                 }}
               >
@@ -6583,8 +6718,11 @@ function App() {
                       </div>
                       <div className="exec-item-right">
                         <div className="exec-item-chips">
+                          {project.backlogItems > 0 && <span className="pr-chip pr-chip-total">{project.backlogItems} backlog</span>}
+                          {project.todoItems > 0 && <span className="pr-chip pr-chip-total">{project.todoItems} to do</span>}
                           {project.inProgressItems > 0 && <span className="pr-chip pr-chip-progress">{project.inProgressItems} đang làm</span>}
-                          {project.bugItems > 0 && <span className="pr-chip pr-chip-bug">{project.bugItems} Bug</span>}
+                          {project.reviewItems > 0 && <span className="pr-chip pr-chip-total">{project.reviewItems} review</span>}
+                          {project.blockedItems > 0 && <span className="pr-chip pr-chip-bug">{project.blockedItems} blocked</span>}
                           {project.doneItems > 0 && <span className="pr-chip pr-chip-done">{project.doneItems} done</span>}
                         </div>
                         <span className="exec-item-count">{project.items} ticket</span>
@@ -6603,18 +6741,48 @@ function App() {
                 <div className="exec-panel-header">
                   <div>
                     <span>Trạng thái</span>
-                    <h3>Done / In-progress / Blocked</h3>
+                    <h3>Phân bổ ticket</h3>
                   </div>
-                  <strong>{executiveData.statusBreakdown.reduce((total, item) => total + item.value, 0)} ticket</strong>
+                  <strong>{executiveData.totalStatusBreakdown} ticket</strong>
+                </div>
+                <div className="status-distribution-rail" aria-label="Tỷ lệ ticket theo trạng thái">
+                  {executiveData.statusBreakdown.map((item) => (
+                    item.value > 0 ? (
+                      <span
+                        className={`status-segment status-${item.id.toLowerCase()}`}
+                        key={item.id}
+                        style={{ flexGrow: item.value, background: item.color }}
+                        title={`${item.label}: ${item.value} ticket`}
+                      />
+                    ) : null
+                  ))}
                 </div>
                 <div className="status-breakdown-list">
-                  {executiveData.statusBreakdown.map((item) => (
-                    <div className={`status-breakdown-row status-${item.id.toLowerCase()}`} key={item.id}>
-                      <span>{item.label}</span>
-                      <div><i style={{ width: `${Math.max((item.value / executiveData.maxStatusBreakdown) * 100, item.value > 0 ? 8 : 0)}%` }} /></div>
-                      <strong>{item.value}</strong>
-                    </div>
-                  ))}
+                  {executiveData.statusBreakdown.map((item) => {
+                    const percent = executiveData.totalStatusBreakdown
+                      ? Math.round((item.value / executiveData.totalStatusBreakdown) * 100)
+                      : 0;
+                    const scale = executiveData.maxStatusBreakdown ? item.value / executiveData.maxStatusBreakdown : 0;
+                    return (
+                      <div
+                        className={`status-breakdown-row status-${item.id.toLowerCase()}`}
+                        key={item.id}
+                        style={{ "--status-accent": item.color } as React.CSSProperties}
+                      >
+                        <div className="status-row-main">
+                          <span>{item.label}</span>
+                          <strong>{item.value}</strong>
+                        </div>
+                        <div className="status-row-copy">
+                          <small>{item.hint}</small>
+                          <em>{percent}%</em>
+                        </div>
+                        <div className="status-row-meter" aria-hidden="true">
+                          <i style={{ transform: `scaleX(${scale})` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </section>
 
@@ -6624,36 +6792,109 @@ function App() {
                     <span>Workload</span>
                     <h3>Theo người phụ trách</h3>
                   </div>
-                  <strong>{executiveData.workloadRows.length} người</strong>
+                  <strong>{filteredWorkloadRows.length}/{executiveData.workloadRows.length} người</strong>
+                </div>
+                <div className="workload-filter-row" aria-label="Lọc workload">
+                  <label className="workload-name-filter">
+                    <Search size={13} />
+                    <input
+                      value={workloadNameFilter}
+                      onChange={(event) => setWorkloadNameFilter(event.target.value)}
+                      placeholder="Lọc theo tên..."
+                    />
+                  </label>
+                  <div className="workload-completion-filter">
+                    <button
+                      type="button"
+                      className="workload-completion-trigger"
+                      onClick={() => setOpenFilterDropdown(openFilterDropdown === "workloadCompletion" ? null : "workloadCompletion")}
+                    >
+                      <span>
+                        {({
+                          ALL: "Tất cả % hoàn thiện",
+                          LOW: "Dưới 50%",
+                          MID: "50% đến dưới 100%",
+                          DONE: "100% hoàn thiện"
+                        } as Record<typeof workloadCompletionFilter, string>)[workloadCompletionFilter]}
+                      </span>
+                      <ChevronDown size={13} className={openFilterDropdown === "workloadCompletion" ? "rotate" : ""} />
+                    </button>
+                    {openFilterDropdown === "workloadCompletion" && (
+                      <>
+                        <div className="workload-filter-scrim" onClick={() => setOpenFilterDropdown(null)} />
+                        <div className="workload-completion-menu">
+                          {([
+                            { value: "ALL", label: "Tất cả % hoàn thiện" },
+                            { value: "LOW", label: "Dưới 50%" },
+                            { value: "MID", label: "50% đến dưới 100%" },
+                            { value: "DONE", label: "100% hoàn thiện" }
+                          ] as const).map((option) => {
+                            const isSelected = workloadCompletionFilter === option.value;
+                            return (
+                              <button
+                                key={option.value}
+                                type="button"
+                                className={isSelected ? "selected" : ""}
+                                onClick={() => {
+                                  setWorkloadCompletionFilter(option.value);
+                                  setOpenFilterDropdown(null);
+                                }}
+                              >
+                                <span>{option.label}</span>
+                                {isSelected && <CheckCheck size={14} />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div className="workload-list">
-                  {executiveData.workloadRows.map((row) => {
+                  {filteredWorkloadRows.map((row) => {
                     const donePercent = row.total ? Math.round((row.done / row.total) * 100) : 0;
+                    const riskCount = row.risk;
+                    const targetProject = projectsList.find((project) => project.id === row.projectId);
+                    const targetProjectLabel = targetProject ? `Mở Workboard: ${targetProject.name}` : "Mở Workboard theo người phụ trách";
                     return (
-                      <button className="wl-person" type="button" key={row.name} onClick={() => {
+                      <button className="wl-person" type="button" key={row.name} title={targetProjectLabel} onClick={() => {
+                        setWorkItems([]);
+                        setSelectedProjectId(row.projectId);
+                        const firstDoc = documentsList.find((doc) => doc.projectId === row.projectId);
+                        setSelectedDocumentId(firstDoc?.id ?? "empty-document");
                         setActiveTabNav("review");
                         setWorkboardAssigneeFilter(row.name);
+                        void loadProjectWorkItems(row.projectId);
                       }}>
-                        <div className="wl-person-header">
-                          <strong>{row.name}</strong>
-                          <span className="wl-person-meta">{row.done}/{row.total} done · <em className="wl-done-pct">{donePercent}%</em></span>
+                        <div className="wl-person-top">
+                          <div className="wl-person-identity">
+                            <strong>{row.name}</strong>
+                          </div>
+                          <div className="wl-person-metrics" aria-label={`Tổng ${row.total}, đang mở ${row.open}, đã xong ${row.done}`}>
+                            <span><em>{row.total}</em> Tổng</span>
+                            <span><em>{row.open}</em> Mở</span>
+                            <span><em>{row.done}</em> Done</span>
+                          </div>
+                        </div>
+                        <div className="wl-progress-summary">
+                          <span>Tiến độ hoàn thành</span>
+                          <strong>{row.done}/{row.total} done · <em>{donePercent}%</em></strong>
                         </div>
                         <div className="wl-bar-track">
                           <div className="wl-bar-fill" style={{ width: `${donePercent}%` }} />
                         </div>
                         <div className="wl-stat-row">
-                          {row.backlog > 0 && <span className="wl-chip wl-chip-neutral">{row.backlog} Backlog</span>}
-                          {row.todo > 0 && <span className="wl-chip wl-chip-blue">{row.todo} To Do</span>}
-                          {row.inProgress > 0 && <span className="wl-chip wl-chip-amber">{row.inProgress} In Progress</span>}
-                          {row.blocked > 0 && <span className="wl-chip wl-chip-red">{row.blocked} Blocked</span>}
-                          {row.bug > 0 && <span className="wl-chip wl-chip-rose">{row.bug} Bug</span>}
-                          {row.overdue > 0 && <span className="wl-chip wl-chip-danger">{row.overdue} Quá hạn</span>}
-                          {row.done > 0 && <span className="wl-chip wl-chip-green">{row.done} Done</span>}
+                          {row.backlog > 0 && <span className="wl-chip wl-chip-neutral"><em>{row.backlog}</em> Chờ xử lý</span>}
+                          {row.todo > 0 && <span className="wl-chip wl-chip-blue"><em>{row.todo}</em> Cần làm</span>}
+                          {row.inProgress > 0 && <span className="wl-chip wl-chip-amber"><em>{row.inProgress}</em> Đang làm</span>}
+                          {row.review > 0 && <span className="wl-chip wl-chip-blue"><em>{row.review}</em> Review</span>}
+                          {riskCount > 0 && <span className="wl-chip wl-chip-danger"><em>{riskCount}</em> Rủi ro</span>}
+                          {row.done > 0 && <span className="wl-chip wl-chip-green"><em>{row.done}</em> Đã xong</span>}
                         </div>
                       </button>
                     );
                   })}
-                  {executiveData.workloadRows.length === 0 && <div className="empty-collab-state">Chưa có workload.</div>}
+                  {filteredWorkloadRows.length === 0 && <div className="empty-collab-state">Không có người phụ trách phù hợp bộ lọc.</div>}
                 </div>
               </section>
 
@@ -7118,7 +7359,7 @@ function App() {
                 <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
                   <span className="select-label">Loại:</span>
                   <button type="button" className="form-select-trigger" onClick={() => setOpenFilterDropdown(openFilterDropdown === "type" ? null : "type")}>
-                    <span className="trigger-label-text">{workboardTypeFilter === "ALL" ? `Tất cả loại (${workItems.length})` : WORK_ITEM_TYPE_LABEL[workboardTypeFilter]}</span>
+                    <span className="trigger-label-text">{workboardTypeFilter === "ALL" ? "Tất cả loại" : WORK_ITEM_TYPE_LABEL[workboardTypeFilter]}</span>
                     <ChevronDown size={13} className={`trigger-arrow-icon${openFilterDropdown === "type" ? " rotate" : ""}`} />
                   </button>
                   {openFilterDropdown === "type" && (
@@ -7129,7 +7370,7 @@ function App() {
                           const isSelected = workboardTypeFilter === v;
                           return (
                             <button key={v} type="button" className={`custom-select-option${isSelected ? " selected" : ""}`} onClick={() => { setWorkboardTypeFilter(v as any); setOpenFilterDropdown(null); }}>
-                              <span>{v === "ALL" ? `Tất cả loại (${workItems.length})` : WORK_ITEM_TYPE_LABEL[v]}</span>
+                              <span>{v === "ALL" ? "Tất cả loại" : WORK_ITEM_TYPE_LABEL[v]}</span>
                               {isSelected && <CheckCheck size={14} className="option-check-mark" />}
                             </button>
                           );
@@ -7494,6 +7735,8 @@ function App() {
                         filteredDocuments.map((doc) => {
                           const docCommentsCount = documentCommentCounts[doc.id] ?? doc.openCommentsCount ?? 0;
                           const fullTitle = normalizeVietnameseText(doc.title);
+                          const docTypeLabel = getDocumentTypeShortLabel(doc.type);
+                          const docMetaTitle = `Người phụ trách: ${doc.owner}`;
                           const fileKind = doc.fileType === "pdf" ? "pdf" : doc.fileType === "md" ? "md" : "doc";
                           return (
                             <button
@@ -7518,10 +7761,13 @@ function App() {
                                 </div>
                                 <div className="doc-info">
                                   <strong title={fullTitle}>{fullTitle}</strong>
-                                  <small>{doc.type} • {doc.owner}</small>
+                                  <small title={docMetaTitle}>
+                                    <span>Người phụ trách: {doc.owner}</span>
+                                  </small>
                                 </div>
                               </div>
                               <div className="doc-row-bottom">
+                                <span className="doc-type-tag">{docTypeLabel}</span>
                                 <span className="version-tag">{doc.version}</span>
                                 <span className={`status-pill ${doc.status === "Triển khai" ? "deployed" : "draft"}`}>
                                   <span className="status-dot" />
@@ -8462,7 +8708,10 @@ function App() {
                   <select
                     className="form-select"
                     value={newDocType}
-                    onChange={(e) => setNewDocType(e.target.value)}
+                    onChange={(e) => {
+                      setNewDocType(e.target.value);
+                      setNewDocTypeTouched(true);
+                    }}
                   >
                     {DOCUMENT_TYPE_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>
@@ -8840,7 +9089,7 @@ function App() {
               <div className="workitem-comments-section">
                 <div className="section-subheader">
                   <div>
-                    <h4>Comment & reply</h4>
+                    <h4>Comment & trả lời</h4>
                     <p>Trao đổi xử lý ticket này.</p>
                   </div>
                 </div>
@@ -9436,6 +9685,26 @@ function App() {
                 </div>
               )}
 
+              {importMode === "create" && (
+                <div className="form-group">
+                  <label style={{ fontWeight: 700, color: "var(--text-primary)" }}>
+                    Loại tài liệu sau khi import:
+                  </label>
+                  <select
+                    className="form-select"
+                    value={importDocType}
+                    disabled={isImporting}
+                    onChange={(e) => setImportDocType(e.target.value)}
+                  >
+                    {DOCUMENT_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               {/* Drag & Drop File Zone */}
               <label
                 className={`${isDragOver ? "dropzone drag-over" : "dropzone"} ${isImporting ? "is-loading" : ""}`}
@@ -9543,18 +9812,19 @@ function App() {
               ) : (
                 <div className="my-tasks-list">
                   {myTasksList.map((task) => {
-                    const isOverdue = task.dueDate && new Date(task.dueDate) < new Date();
+                    const dueState = getWorkItemDueState(task);
+                    const dueStateLabel = dueState === "expired" ? "Hết hạn" : dueState === "due-soon" ? "Sắp hết hạn" : "";
                     const priorityClass = `priority-${task.priority.toLowerCase()}`;
                     const projectName = (task as any).project?.name ?? '';
                     return (
                       <button
                         key={task.id}
                         type="button"
-                        className={`my-tasks-item ${isOverdue ? 'overdue' : ''}`}
-                        onClick={() => handleMyTaskClick(task)}
+                        className={`my-tasks-item ${dueState !== "normal" ? dueState : ""}`}
+                        onClick={() => void handleMyTaskClick(task)}
                       >
                         <span className={`my-tasks-priority ${priorityClass}`}>
-                          {task.priority === 'CRITICAL' ? '!!!' : task.priority === 'HIGH' ? '!!' : task.priority === 'MEDIUM' ? '!' : '—'}
+                          {task.priority === 'CRITICAL' ? <ChevronsUp size={16} strokeWidth={2.5} /> : task.priority === 'HIGH' ? <ChevronUp size={16} strokeWidth={2.5} /> : task.priority === 'MEDIUM' ? <Minus size={16} strokeWidth={2.5} /> : <ChevronDown size={16} strokeWidth={2.5} />}
                         </span>
                         <div className="my-tasks-item-content">
                           <span className="my-tasks-item-title">{task.title}</span>
@@ -9562,11 +9832,12 @@ function App() {
                             {projectName && <span className="my-tasks-project">{projectName}</span>}
                             {task.column && <span className="my-tasks-status" style={{ borderColor: task.column.color, color: task.column.color }}>{task.column.name}</span>}
                             {task.dueDate && (
-                              <span className={`my-tasks-due ${isOverdue ? 'overdue' : ''}`}>
+                              <span className={`my-tasks-due ${dueState !== "normal" ? dueState : ""}`}>
                                 <Calendar size={12} />
                                 {new Date(task.dueDate).toLocaleDateString('vi-VN')}
                               </span>
                             )}
+                            {dueStateLabel && <span className={`my-tasks-due-badge ${dueState}`}>{dueStateLabel}</span>}
                           </div>
                         </div>
                         <ChevronRight size={16} className="my-tasks-arrow" />

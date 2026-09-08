@@ -343,11 +343,12 @@ export async function restoreDocumentVersion(documentId: string, versionId: stri
   return mapDocument(document);
 }
 
-export async function importDocument(file: File, projectId: string, documentId?: string) {
+export async function importDocument(file: File, projectId: string, documentId?: string, type?: string) {
   const body = new FormData();
   body.append("file", file);
   body.append("projectId", projectId);
   if (documentId) body.append("documentId", documentId);
+  if (type) body.append("type", type);
 
   const document = await apiFetch<BackendDocument>("/imports/documents", {
     method: "POST",

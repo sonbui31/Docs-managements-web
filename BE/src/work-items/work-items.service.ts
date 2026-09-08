@@ -377,7 +377,7 @@ export class WorkItemsService {
         where: { id: dto.parentId },
         select: { workItemId: true, createdById: true, createdByEmail: true }
       });
-      if (!parentComment || parentComment.workItemId !== id) throw new BadRequestException("Reply parent does not belong to work item");
+      if (!parentComment || parentComment.workItemId !== id) throw new BadRequestException("Phản hồi cha không thuộc ticket này");
     }
 
     const comment = await this.prisma.workItemComment.create({
@@ -766,7 +766,7 @@ export class WorkItemsService {
       }
     });
     if (otherUserReplies > 0) {
-      throw new BadRequestException("Không thể xóa comment này vì đang có reply của người khác");
+      throw new BadRequestException("Không thể xóa comment này vì đang có trả lời của người khác");
     }
   }
 

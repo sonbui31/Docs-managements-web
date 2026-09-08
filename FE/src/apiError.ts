@@ -97,7 +97,7 @@ function messageForCode(code = "REQUEST_FAILED", serverMessage?: string) {
     DOCUMENT_VERSION_NOT_FOUND: "Không tìm thấy phiên bản tài liệu.",
     COMMENT_NOT_FOUND: "Không tìm thấy nhận xét.",
     COMMENT_CHANGE_FORBIDDEN: "Bạn chỉ có thể sửa hoặc xóa nhận xét của chính mình.",
-    COMMENT_DELETE_BLOCKED: "Không thể xóa nhận xét này vì đang có reply của người khác.",
+    COMMENT_DELETE_BLOCKED: "Không thể xóa nhận xét này vì đang có trả lời của người khác.",
     WORK_ITEM_NOT_FOUND: "Không tìm thấy ticket.",
     WORK_ITEM_COMMENT_NOT_FOUND: "Không tìm thấy comment ticket.",
     WORK_ITEM_ASSIGNMENT_INVALID: "Người phụ trách phải là thành viên dự án hoặc có quyền trên tài liệu liên quan.",

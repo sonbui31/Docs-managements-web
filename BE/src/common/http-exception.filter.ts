@@ -131,8 +131,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (normalized.includes("work item comment not found")) return API_ERROR_CODES.WORK_ITEM_COMMENT_NOT_FOUND;
     if (normalized.includes("work item not found")) return API_ERROR_CODES.WORK_ITEM_NOT_FOUND;
     if (normalized.includes("comment not found")) return API_ERROR_CODES.COMMENT_NOT_FOUND;
+    if (
+      normalized.includes("không thể xóa comment này vì đang có reply") ||
+      normalized.includes("không thể xóa comment này vì đang có trả lời")
+    ) return API_ERROR_CODES.COMMENT_DELETE_BLOCKED;
     if (normalized.includes("chỉ có thể sửa") || normalized.includes("chỉ có thể xóa")) return API_ERROR_CODES.COMMENT_CHANGE_FORBIDDEN;
-    if (normalized.includes("không thể xóa comment này vì đang có reply")) return API_ERROR_CODES.COMMENT_DELETE_BLOCKED;
     if (normalized.includes("người phụ trách phải là thành viên")) return API_ERROR_CODES.WORK_ITEM_ASSIGNMENT_INVALID;
     if (normalized.includes("workboard column not found")) return API_ERROR_CODES.WORKBOARD_COLUMN_NOT_FOUND;
     if (normalized.includes("không thể xóa cột")) return API_ERROR_CODES.WORKBOARD_COLUMN_DELETE_BLOCKED;
@@ -183,7 +186,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       DOCUMENT_VERSION_NOT_FOUND: "Không tìm thấy phiên bản tài liệu.",
       COMMENT_NOT_FOUND: "Không tìm thấy nhận xét.",
       COMMENT_CHANGE_FORBIDDEN: "Bạn chỉ có thể sửa hoặc xóa nhận xét của chính mình.",
-      COMMENT_DELETE_BLOCKED: "Không thể xóa nhận xét này vì đang có reply của người khác.",
+      COMMENT_DELETE_BLOCKED: "Không thể xóa nhận xét này vì đang có trả lời của người khác.",
       WORK_ITEM_NOT_FOUND: "Không tìm thấy ticket.",
       WORK_ITEM_COMMENT_NOT_FOUND: "Không tìm thấy comment ticket.",
       WORK_ITEM_ASSIGNMENT_INVALID: "Người phụ trách phải là thành viên dự án hoặc có quyền trên tài liệu liên quan.",

@@ -181,7 +181,7 @@ export class CommentsService {
       }
     });
     if (otherUserReplies > 0) {
-      throw new BadRequestException("Không thể xóa comment này vì đang có reply của người khác");
+      throw new BadRequestException("Không thể xóa comment này vì đang có trả lời của người khác");
     }
   }
 
