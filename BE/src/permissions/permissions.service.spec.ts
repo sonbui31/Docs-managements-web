@@ -72,6 +72,22 @@ describe("PermissionsService", () => {
     await expect(service.assertDocumentRole(baseUser, "doc-1", ["EDITOR"])).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it("allows the document owner to manage the document without a permission row", async () => {
+    const prisma = prismaMock();
+    prisma.document.findUnique.mockResolvedValue({
+      id: "doc-owned",
+      projectId: "project-1",
+      ownerId: baseUser.id,
+      externalCompanyId: null,
+      externalDepartmentId: null,
+      project: { externalCompanyId: null, externalDepartmentId: null }
+    });
+    const service = new PermissionsService(prisma as any);
+
+    await expect(service.assertDocumentRole(baseUser, "doc-owned", ["MANAGER"])).resolves.toMatchObject({ id: "doc-owned" });
+    expect(prisma.documentPermission.findUnique).not.toHaveBeenCalled();
+  });
+
   it("scopes external admins to their company instead of granting cross-company access", async () => {
     const prisma = prismaMock();
     const admin: AuthenticatedUser = {

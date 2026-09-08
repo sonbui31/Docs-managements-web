@@ -241,6 +241,7 @@ export class CommentsService {
     const document = await this.prisma.document.findUnique({
       where: { id: documentId },
       select: {
+        ownerId: true,
         createdByEmail: true,
         permissions: { select: { userId: true } }
       }
@@ -255,6 +256,7 @@ export class CommentsService {
       : null;
 
     return this.uniqueIds([
+      document.ownerId,
       owner?.id,
       ...document.permissions.map((permission) => permission.userId)
     ]);

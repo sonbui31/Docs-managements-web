@@ -61,8 +61,9 @@ import {
     Users,
     X
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
+    acquireDocumentEditSession,
     createComment,
     createDocument,
     createDocumentFromTemplate,
@@ -104,8 +105,11 @@ import {
     fetchWorkItemCommentContext,
     fetchWorkItemComments,
     importDocument,
+    heartbeatDocumentEditSession,
     markAllNotificationsRead,
     markNotificationRead,
+    publishDocumentVersion,
+    releaseDocumentEditSession,
     reorderWorkboardColumns,
     resolveComment,
     restoreDocumentVersion,
@@ -116,11 +120,13 @@ import {
     updateWorkboardColumn,
     updateWorkItem,
     updateWorkItemComment,
+    transferDocumentOwner,
     uploadMediaAsset
 } from "./api";
 import { getErrorMessage } from "./apiError";
 import { clearAuthSession, fetchCurrentUser, getAccessToken, getStoredUser, logout } from "./authApi";
 import { AuthPage } from "./AuthPage";
+import { DocumentEditor, type EditorTocItem } from "./DocumentEditor";
 import type {
     ActivityLog,
     CommentThread,
@@ -132,6 +138,7 @@ import type {
     ProjectDashboard,
     ProjectDocument,
     ProjectMemberOption,
+    ProjectRole,
     RequirementTag,
     RoleDashboard,
     SearchResult,
@@ -283,6 +290,8 @@ const EMPTY_DOCUMENT: ProjectDocument = {
   type: "DOC",
   owner: "BA Team",
   status: "Draft",
+  sourceType: "manual",
+  effectiveRole: null,
   version: "v0.1",
   updatedAt: "Hôm nay",
   projectId: "",
@@ -437,6 +446,13 @@ const WORK_ITEM_PRIORITY_RANK: Record<WorkItemPriority, number> = {
   CRITICAL: 4
 };
 
+const PROJECT_ROLE_RANK: Record<ProjectRole, number> = {
+  VIEWER: 1,
+  REVIEWER: 2,
+  EDITOR: 3,
+  MANAGER: 4
+};
+
 type WorkItemDraft = {
   id?: string;
   projectId: string;
@@ -484,6 +500,10 @@ function canAssignMemberToWorkItem(member: ProjectMemberOption, draft?: Pick<Wor
   return Boolean(draft?.documentId && member.documentIds?.includes(draft.documentId));
 }
 
+function canRoleEditDocument(role?: ProjectRole | null) {
+  return Boolean(role && PROJECT_ROLE_RANK[role] >= PROJECT_ROLE_RANK.EDITOR);
+}
+
 function workItemAssigneeNames(item: WorkItem) {
   const names = item.assignees?.map((assignee) => assignee.user.name).filter(Boolean) ?? [];
   return names.length ? names : splitAssigneeNames(item.assigneeName ?? item.assignee?.name ?? "");
@@ -497,11 +517,13 @@ function workItemAssigneeLabel(item: WorkItem) {
 function CustomProjectSelect({
   projects,
   selectedProjectId,
-  onSelectProject
+  onSelectProject,
+  disabled = false
 }: {
   projects: Project[];
   selectedProjectId: string;
   onSelectProject: (projectId: string) => void;
+  disabled?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -536,7 +558,7 @@ function CustomProjectSelect({
         type="button"
         className="custom-select-trigger"
         onClick={() => setIsOpen((prev) => !prev)}
-        disabled={projects.length === 0}
+        disabled={disabled || projects.length === 0}
       >
         <div className="select-trigger-content">
           <FolderKanban size={15} className="trigger-icon" />
@@ -603,13 +625,15 @@ function CustomFormSelect<T extends string>({
   onChange,
   options,
   placeholder,
-  className
+  className,
+  disabled = false
 }: {
   value: T | undefined | null;
   onChange: (val: T) => void;
   options: Array<{ value: T; label: string }>;
   placeholder?: string;
   className?: string;
+  disabled?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -635,6 +659,7 @@ function CustomFormSelect<T extends string>({
         type="button"
         className="form-select-trigger"
         onClick={() => setIsOpen((prev) => !prev)}
+        disabled={disabled}
       >
         <span className="trigger-label-text">
           {selectedOption ? selectedOption.label : (placeholder || "Chọn...")}
@@ -894,6 +919,7 @@ function workItemLabelNames(item: WorkItem) {
 function App() {
   // Authentication State
   const [currentUser, setCurrentUser] = useState<User | null>(() => getStoredUser());
+  const currentUserOwnerName = currentUser?.name?.trim() || currentUser?.email?.trim() || "";
 
   // State for dynamic projects & documents lists
   const [projectsList, setProjectsList] = useState<Project[]>([]);
@@ -926,6 +952,11 @@ function App() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    setIsEditingDocumentContent(false);
+    clearSelectedCommentTarget();
+  }, [selectedDocumentId]);
 
   const [statusFilter, setStatusFilter] = useState<"All" | DocumentStatus>("All");
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -1074,6 +1105,12 @@ function App() {
   const [documentVersions, setDocumentVersions] = useState<DocumentVersion[]>([]);
   const [isLoadingVersions, setIsLoadingVersions] = useState<boolean>(false);
   const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
+  const [isPublishVersionModalOpen, setIsPublishVersionModalOpen] = useState<boolean>(false);
+  const [publishVersionNote, setPublishVersionNote] = useState<string>("");
+  const [isPublishingVersion, setIsPublishingVersion] = useState<boolean>(false);
+  const [isEditingDocumentContent, setIsEditingDocumentContent] = useState<boolean>(false);
+  const [isSavingDocumentContent, setIsSavingDocumentContent] = useState<boolean>(false);
+  const [documentEditSession, setDocumentEditSession] = useState<ProjectDocument["editingSession"]>(null);
   const [isRefreshingDashboard, setIsRefreshingDashboard] = useState<boolean>(false);
 
   // Create Project Modal state
@@ -1099,7 +1136,7 @@ function App() {
   const [newDocTitle, setNewDocTitle] = useState<string>("");
   const [newDocType, setNewDocType] = useState<string>("BRD");
   const [newDocTypeTouched, setNewDocTypeTouched] = useState<boolean>(false);
-  const [newDocOwner, setNewDocOwner] = useState<string>("BA Lead");
+  const [newDocOwner, setNewDocOwner] = useState<string>(currentUserOwnerName);
 
   // Edit Document Metadata Modal state
   const [isEditDocModalOpen, setIsEditDocModalOpen] = useState<boolean>(false);
@@ -1107,6 +1144,7 @@ function App() {
   const [editDocTitle, setEditDocTitle] = useState<string>("");
   const [editDocType, setEditDocType] = useState<string>("BRD");
   const [editDocOwner, setEditDocOwner] = useState<string>("");
+  const [editDocOwnerId, setEditDocOwnerId] = useState<string>("");
   const [editDocStatus, setEditDocStatus] = useState<DocumentStatus>("Draft");
   const [editDocVersion, setEditDocVersion] = useState<string>("v1.0");
 
@@ -1650,6 +1688,7 @@ function App() {
   }
 
   function handleDocumentSelection(event?: MouseEvent | ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>) {
+    if (isEditingDocumentContent) return;
     const selection = window.getSelection();
 
     if (!selection || selection.rangeCount === 0 || !documentContainerRef.current) return;
@@ -2339,6 +2378,76 @@ function App() {
       contentHtml: normalizeVietnameseText(doc.contentHtml || "")
     };
   }, [selectedDocumentId, projectDocuments]);
+  const canEditSelectedDocumentContent =
+    selectedDocument.id !== "empty-document" &&
+    selectedDocument.sourceType !== "imported" &&
+    canRoleEditDocument(selectedDocument.effectiveRole);
+  const selectedDocumentEditingSession = documentEditSession ?? selectedDocument.editingSession ?? null;
+  const isSelectedDocumentLockedByOther = Boolean(
+    selectedDocumentEditingSession &&
+    currentUser &&
+    selectedDocumentEditingSession.userId !== currentUser.id &&
+    new Date(selectedDocumentEditingSession.expiresAt).getTime() > Date.now()
+  );
+  const canPublishSelectedDocumentVersion =
+    canEditSelectedDocumentContent && !isSelectedDocumentLockedByOther && !isEditingDocumentContent;
+  const documentSaveGuardRef = useRef<{ id: string; updatedAtIso?: string; version: string } | null>(null);
+  useEffect(() => {
+    documentSaveGuardRef.current = {
+      id: selectedDocument.id,
+      updatedAtIso: selectedDocument.updatedAtIso,
+      version: selectedDocument.version
+    };
+  }, [selectedDocument.id, selectedDocument.updatedAtIso, selectedDocument.version]);
+  const selectedDocumentSourceLabel =
+    selectedDocument.sourceType === "imported" ? "Import" : selectedDocument.sourceType === "template" ? "Tạo từ mẫu" : "Tạo trong hệ thống";
+  const handleEditorHeadingsChange = useCallback((items: EditorTocItem[]) => {
+    setTocItems(items);
+  }, []);
+
+  useEffect(() => {
+    setDocumentEditSession(selectedDocument.editingSession ?? null);
+  }, [selectedDocument.id, selectedDocument.editingSession]);
+
+  useEffect(() => {
+    if (!isEditingDocumentContent || selectedDocument.id === "empty-document") return;
+    const documentId = selectedDocument.id;
+    return () => {
+      void releaseDocumentEditSession(documentId).catch((error) => {
+        console.error("Release document edit session cleanup error:", error);
+      });
+    };
+  }, [isEditingDocumentContent, selectedDocument.id]);
+
+  useEffect(() => {
+    if (!isEditingDocumentContent || selectedDocument.id === "empty-document") return;
+    const documentId = selectedDocument.id;
+    const timer = window.setInterval(() => {
+      heartbeatDocumentEditSession(documentId)
+        .then((response) => mergeDocumentSession(documentId, response.editingSession ?? null))
+        .catch((error) => {
+          console.error("Document edit heartbeat error:", error);
+          setIsEditingDocumentContent(false);
+          toastApiError(error, "Phiên sửa đã bị ngắt", "Tài liệu có thể đang được người khác chỉnh sửa. Vui lòng tải lại trước khi sửa tiếp.");
+        });
+    }, 45_000);
+    return () => window.clearInterval(timer);
+  }, [isEditingDocumentContent, selectedDocument.id]);
+
+  useEffect(() => {
+    if (!isBackendConnected || !selectedProjectId || isEditingDocumentContent) return;
+    const timer = window.setInterval(() => {
+      fetchDocumentsByProject(selectedProjectId)
+        .then((documents) => {
+          setDocumentsList((prev) => [
+            ...prev.filter((document) => document.projectId !== selectedProjectId),
+            ...documents
+          ]);
+        })
+        .catch((error) => console.error("Refresh document sessions error:", error));
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [isBackendConnected, isEditingDocumentContent, selectedProjectId]);
 
   function openShareAccessModal() {
     if (selectedDocument.id === "empty-document") {
@@ -2349,6 +2458,62 @@ function App() {
     }
     setIsShareModalOpen(true);
   }
+
+  function mergeDocumentSession(documentId: string, editingSession: ProjectDocument["editingSession"]) {
+    setDocumentEditSession(editingSession);
+    setDocumentsList((prev) =>
+      prev.map((document) =>
+        document.id === documentId ? { ...document, editingSession } : document
+      )
+    );
+  }
+
+  async function releaseActiveDocumentEditSession(documentId = selectedDocument.id) {
+    if (!documentId || documentId === "empty-document") return;
+    try {
+      await releaseDocumentEditSession(documentId);
+    } catch (error) {
+      console.error("Release document edit session error:", error);
+    } finally {
+      mergeDocumentSession(documentId, null);
+    }
+  }
+
+  async function enterDocumentEditing() {
+    if (!canEditSelectedDocumentContent) {
+      addToast("warning", "Không thể sửa nội dung", "Bạn cần quyền Editor hoặc Manager để sửa tài liệu này.");
+      return;
+    }
+    if (isSelectedDocumentLockedByOther && selectedDocumentEditingSession) {
+      addToast("warning", "Tài liệu đang được chỉnh sửa", `${selectedDocumentEditingSession.userName} đang chỉnh sửa tài liệu này.`);
+      return;
+    }
+
+    try {
+      const response = await acquireDocumentEditSession(selectedDocument.id);
+      mergeDocumentSession(selectedDocument.id, response.editingSession ?? null);
+      clearSelectedCommentTarget();
+      setIsEditingDocumentContent(true);
+    } catch (error) {
+      console.error("Acquire document edit session error:", error);
+      toastApiError(error, "Không mở được chế độ sửa", "Tài liệu có thể đang được người khác chỉnh sửa.");
+    }
+  }
+
+  async function cancelDocumentEditing() {
+    setIsEditingDocumentContent(false);
+    clearSelectedCommentTarget();
+    await releaseActiveDocumentEditSession();
+  }
+
+  const handleUploadEditorImage = useCallback(async (file: File) => {
+    const uploaded = await uploadMediaAsset({
+      projectId: selectedDocument.projectId || selectedProject.id,
+      documentId: selectedDocument.id,
+      file
+    });
+    return uploaded.url;
+  }, [selectedDocument.id, selectedDocument.projectId, selectedProject.id]);
 
   const importTargetDocuments = useMemo(
     () => documentsList.filter((doc) => doc.projectId === importTargetProjectId),
@@ -2589,6 +2754,24 @@ function App() {
     }
     return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name, "vi"));
   }, [currentUser, projectMembersByProject, selectedProjectId]);
+
+  const documentOwnerOptions = useMemo(() => {
+    const targetProjectId = editingDoc?.projectId || selectedProjectId;
+    const options = new Map<string, ProjectMemberOption>();
+    (projectMembersByProject[targetProjectId] ?? []).forEach((member) => {
+      options.set(member.id, member);
+    });
+    if (currentUser) {
+      options.set(currentUser.id, {
+        id: currentUser.id,
+        name: currentUser.name,
+        email: currentUser.email,
+        role: currentUser.role,
+        source: "PROJECT"
+      });
+    }
+    return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }, [currentUser, editingDoc?.projectId, projectMembersByProject, selectedProjectId]);
 
   function workItemTypeIcon(type: WorkItemType) {
     if (type === "BUG") return <AlertTriangle size={13} />;
@@ -3955,7 +4138,10 @@ function App() {
   // Toast Helper
   function addToast(type: ToastMessage["type"], title: string, message: string) {
     const id = Math.random().toString(36).substring(2, 9);
-    setToasts((prev) => [...prev, { id, type, title, message }]);
+    setToasts((prev) => [
+      ...prev.filter((toast) => toast.title !== title || toast.message !== message || toast.type !== type),
+      { id, type, title, message }
+    ]);
     const duration = type === "error" ? 7000 : type === "warning" ? 5000 : 4000;
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -3989,7 +4175,7 @@ function App() {
     setNewDocTitle("");
     setNewDocType("BRD");
     setNewDocTypeTouched(false);
-    setNewDocOwner("BA Lead");
+    setNewDocOwner(currentUserOwnerName);
   }
 
   function openCreateDocumentModal(projectId = selectedProjectId) {
@@ -4310,6 +4496,7 @@ function App() {
     setEditDocTitle(doc.title);
     setEditDocType(doc.type);
     setEditDocOwner(doc.owner);
+    setEditDocOwnerId(doc.ownerId ?? "");
     setEditDocStatus(doc.status);
     setEditDocVersion(doc.version);
     setIsEditDocModalOpen(true);
@@ -4324,19 +4511,21 @@ function App() {
     }
 
     try {
-      const updatedDocument = await updateDocument(editingDoc.id, {
+      let updatedDocument = await updateDocument(editingDoc.id, {
         title: editDocTitle.trim(),
         type: editDocType.trim(),
-        status: editDocStatus,
-        currentVersion: editDocVersion.trim()
+        status: editDocStatus
       });
+      if (editDocOwnerId && editDocOwnerId !== editingDoc.ownerId && editingDoc.effectiveRole === "MANAGER") {
+        updatedDocument = await transferDocumentOwner(editingDoc.id, editDocOwnerId);
+      }
       setDocumentsList((prev) =>
         prev.map((d) =>
           d.id === updatedDocument.id
             ? {
               ...d,
               ...updatedDocument,
-              owner: editDocOwner.trim() || d.owner
+              owner: updatedDocument.owner || editDocOwner.trim() || d.owner
             }
             : d
         )
@@ -4348,6 +4537,74 @@ function App() {
     } catch (error) {
       console.error("Update document error:", error);
       toastApiError(error, "Không cập nhật được tài liệu", "BE chưa lưu được thay đổi tài liệu.");
+    }
+  }
+
+  async function handleSaveDocumentContent(htmlContent: string) {
+    if (!canEditSelectedDocumentContent) {
+      addToast(
+        "warning",
+        "Không thể sửa nội dung",
+        selectedDocument.sourceType === "imported"
+          ? "Tài liệu import chỉ có thể cập nhật bằng cách import lại file."
+          : "Bạn cần quyền Editor hoặc Manager để sửa tài liệu này."
+      );
+      return;
+    }
+
+    setIsSavingDocumentContent(true);
+    try {
+      const saveGuard = documentSaveGuardRef.current?.id === selectedDocument.id
+        ? documentSaveGuardRef.current
+        : {
+          id: selectedDocument.id,
+          updatedAtIso: selectedDocument.updatedAtIso,
+          version: selectedDocument.version
+        };
+      const updatedDocument = await updateDocument(selectedDocument.id, {
+        htmlContent,
+        expectedUpdatedAt: saveGuard.updatedAtIso,
+        expectedVersion: saveGuard.version
+      });
+
+      // Save succeeded — update guard immediately so next auto-save uses fresh values
+      documentSaveGuardRef.current = {
+        id: updatedDocument.id,
+        updatedAtIso: updatedDocument.updatedAtIso,
+        version: updatedDocument.version
+      };
+
+      // Post-save side effects (non-critical — failures here should NOT mark save as failed)
+      try {
+        setDocumentsList((prev) =>
+          prev.map((document) =>
+            document.id === updatedDocument.id
+              ? {
+                ...document,
+                ...updatedDocument,
+                effectiveRole: updatedDocument.effectiveRole ?? document.effectiveRole,
+                sourceType: updatedDocument.sourceType ?? document.sourceType,
+                openCommentsCount: document.openCommentsCount,
+                contentHtml: isEditingDocumentContent ? htmlContent : updatedDocument.contentHtml
+              }
+              : document
+          )
+        );
+        setSelectedDocumentId(updatedDocument.id);
+        void loadDocumentCollaboration(updatedDocument.id);
+        if (isVersionModalOpen) {
+          void openVersionHistoryModal();
+        }
+      } catch (sideEffectError) {
+        console.warn("Post-save side effect error (save itself succeeded):", sideEffectError);
+      }
+    } catch (error) {
+      console.error("Autosave document content error:", error);
+      // Reset guard so next attempt re-derives from selectedDocument state
+      documentSaveGuardRef.current = null;
+      throw error;
+    } finally {
+      setIsSavingDocumentContent(false);
     }
   }
 
@@ -4535,6 +4792,63 @@ function App() {
       toastApiError(error, "Không tải được lịch sử phiên bản", "Vui lòng kiểm tra quyền truy cập hoặc thử lại.");
     } finally {
       setIsLoadingVersions(false);
+    }
+  }
+
+  function openPublishVersionModal() {
+    if (!canPublishSelectedDocumentVersion) {
+      addToast(
+        "warning",
+        "Không thể tạo phiên bản",
+        selectedDocument.sourceType === "imported"
+          ? "Tài liệu import tạo phiên bản bằng cách import lại file."
+          : isEditingDocumentContent
+            ? "Đóng trình soạn thảo sau khi tự lưu xong rồi tạo phiên bản mới."
+            : "Bạn cần quyền Editor hoặc Manager và tài liệu không bị người khác khóa sửa."
+      );
+      return;
+    }
+
+    setPublishVersionNote("");
+    setIsPublishVersionModalOpen(true);
+  }
+
+  async function handlePublishSelectedDocumentVersion() {
+    if (!canPublishSelectedDocumentVersion || isPublishingVersion) return;
+
+    setIsPublishingVersion(true);
+    try {
+      const publishedDocument = await publishDocumentVersion(selectedDocument.id, publishVersionNote.trim() || undefined);
+      setDocumentsList((prev) =>
+        prev.map((document) =>
+          document.id === publishedDocument.id
+            ? {
+              ...document,
+              ...publishedDocument,
+              effectiveRole: publishedDocument.effectiveRole ?? document.effectiveRole,
+              sourceType: publishedDocument.sourceType ?? document.sourceType,
+              openCommentsCount: document.openCommentsCount
+            }
+            : document
+        )
+      );
+      setSelectedDocumentId(publishedDocument.id);
+      setIsPublishVersionModalOpen(false);
+      setPublishVersionNote("");
+      if (isVersionModalOpen) {
+        try {
+          setDocumentVersions(await fetchDocumentVersions(publishedDocument.id));
+        } catch (versionError) {
+          console.error("Reload document versions error:", versionError);
+        }
+      }
+      void loadProjectCollaboration(publishedDocument.projectId || selectedProjectId);
+      addToast("success", "Đã tạo phiên bản mới", `${publishedDocument.title} hiện ở ${publishedDocument.version}.`);
+    } catch (error) {
+      console.error("Publish document version error:", error);
+      toastApiError(error, "Không tạo được phiên bản", "Vui lòng kiểm tra quyền chỉnh sửa hoặc thử lại sau.");
+    } finally {
+      setIsPublishingVersion(false);
     }
   }
 
@@ -5331,6 +5645,7 @@ function App() {
     isEditProjectModalOpen,
     isExportModalOpen,
     isExporting,
+    isEditingDocumentContent,
     isImportModalOpen,
     isImporting,
     isSelectionComposerOpen,
@@ -5365,7 +5680,7 @@ function App() {
       window.clearTimeout(timer);
       document.removeEventListener("mouseup", scheduleSelectionCheck);
     };
-  }, [selectedDocument.id]);
+  }, [selectedDocument.id, isEditingDocumentContent]);
 
   useEffect(() => {
     if (!selectedCommentTarget && !selectionPopover && !isSelectionComposerOpen) return;
@@ -5463,6 +5778,7 @@ function App() {
 
   // Render Mermaid diagrams whenever imported HTML mutates in the reader.
   useEffect(() => {
+    if (isEditingDocumentContent) return;
     let isCancelled = false;
     let raf = 0;
 
@@ -5485,9 +5801,10 @@ function App() {
       window.clearTimeout(retry);
       observer.disconnect();
     };
-  }, [selectedDocument.id, selectedDocument.contentHtml, fontSize]);
+  }, [selectedDocument.id, selectedDocument.contentHtml, fontSize, isEditingDocumentContent]);
 
   useEffect(() => {
+    if (isEditingDocumentContent) return;
     const root = documentContainerRef.current;
     if (!root) return;
 
@@ -5515,7 +5832,7 @@ function App() {
     const observer = new MutationObserver(classifyImages);
     observer.observe(root, { childList: true, subtree: true });
     return () => observer.disconnect();
-  }, [selectedDocument.id, selectedDocument.contentHtml]);
+  }, [selectedDocument.id, selectedDocument.contentHtml, isEditingDocumentContent]);
 
   // Extract document headings (h1, h2, h3, h4) to generate Table of Contents (TOC)
   useEffect(() => {
@@ -5529,6 +5846,7 @@ function App() {
         return;
       }
 
+      if (isEditingDocumentContent) return;
       if (activeTabNav === "dashboard" || activeTabNav === "admin") return;
       if (!documentContainerRef.current) return;
       const container = documentContainerRef.current;
@@ -5559,7 +5877,7 @@ function App() {
       window.cancelAnimationFrame(rafId);
       window.clearTimeout(timer);
     };
-  }, [activeTabNav, selectedDocument.id, selectedDocument.contentHtml]);
+  }, [activeTabNav, selectedDocument.id, selectedDocument.contentHtml, isEditingDocumentContent]);
 
   // Smooth scroll and focus target heading in reader
   const scrollToHeading = (item: TocItem) => {
@@ -6195,16 +6513,25 @@ function App() {
     <main className={`${isZenMode ? "app-shell zen-mode" : "app-shell"} ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
 
       {/* Sidebar Navigation */}
-      <aside className="sidebar">
+      <aside
+        className="sidebar"
+        onClick={(e) => {
+          if (isSidebarCollapsed && !(e.target as HTMLElement).closest("button")) {
+            setIsSidebarCollapsed(false);
+          }
+        }}
+        style={isSidebarCollapsed ? { cursor: "pointer" } : undefined}
+        title={isSidebarCollapsed ? "Mở rộng thanh menu (bấm vào khoảng trống)" : undefined}
+      >
         <div className="brand">
           <button
             className="sidebar-logo-button"
             type="button"
-            title={isSidebarCollapsed ? "Mở rộng thanh menu" : "ProjectSpace"}
-            aria-label={isSidebarCollapsed ? "Mở rộng thanh menu" : "ProjectSpace"}
+            title={isSidebarCollapsed ? "ProjectSpace" : "ProjectSpace"}
+            aria-label="ProjectSpace"
             data-tooltip="ProjectSpace"
             onClick={() => {
-              if (isSidebarCollapsed) toggleSidebar();
+              setActiveTabNav("dashboard");
             }}
           >
             <img src="/logo.png" alt="ProjectSpace" className="sidebar-logo-img" />
@@ -7828,14 +8155,16 @@ function App() {
                     </button>
                   )}
                   <div className="doc-toolbar-meta">
-                    <span className="eyebrow" style={{ color: "var(--accent-cyan)", fontWeight: 700 }}>
-                      {selectedDocument.type} • PHIÊN BẢN {selectedDocument.version} • CẬP NHẬT {selectedDocument.updatedAt}
-                    </span>
                     <h2>{selectedDocument.title}</h2>
+                    <span className="eyebrow" style={{ color: "var(--text-muted)", fontWeight: 600 }}>
+                      PHIÊN BẢN {selectedDocument.version} • CẬP NHẬT {selectedDocument.updatedAt}
+                    </span>
                   </div>
                 </div>
 
                 <div className="doc-toolbar-actions">
+
+
                   {/* Prominent Primary Share Button */}
                   <button
                     className="btn-primary share-highlight-btn"
@@ -7908,6 +8237,21 @@ function App() {
                           <Layers size={14} /> Lịch sử phiên bản
                         </button>
 
+                        {canEditSelectedDocumentContent && (
+                          <button
+                            type="button"
+                            className="menu-item"
+                            disabled={!canPublishSelectedDocumentVersion}
+                            title={isEditingDocumentContent ? "Đóng trình soạn thảo sau khi tự lưu xong để tạo phiên bản mới" : undefined}
+                            onClick={() => {
+                              setIsActionsDropdownOpen(false);
+                              openPublishVersionModal();
+                            }}
+                          >
+                            <GitBranch size={14} /> Tạo phiên bản mới
+                          </button>
+                        )}
+
                         <div className="doc-actions-divider" />
 
                         <button
@@ -7963,8 +8307,46 @@ function App() {
                     </button>
                   </div>
                 </div>
+                {selectedDocument.id !== "empty-document" && canEditSelectedDocumentContent && (
+                  <button
+                    className={`btn-secondary edit-content-btn ${isEditingDocumentContent ? "active" : ""}`}
+                    type="button"
+                    onClick={() => {
+                      if (isEditingDocumentContent) {
+                        void cancelDocumentEditing();
+                      } else {
+                        void enterDocumentEditing();
+                      }
+                    }}
+                    disabled={isSelectedDocumentLockedByOther}
+                    title={
+                      isSelectedDocumentLockedByOther && selectedDocumentEditingSession
+                        ? `${selectedDocumentEditingSession.userName} đang chỉnh sửa tài liệu này`
+                        : isEditingDocumentContent
+                          ? "Quay lại chế độ đọc"
+                          : "Sửa nội dung tài liệu"
+                    }
+                    style={{ marginLeft: "auto" }}
+                  >
+                    <PenLine size={14} />
+                    <span>
+                      {isSelectedDocumentLockedByOther && selectedDocumentEditingSession
+                        ? `Đang sửa bởi ${selectedDocumentEditingSession.userName}`
+                        : isEditingDocumentContent
+                          ? "Đang sửa"
+                          : "Sửa nội dung"}
+                    </span>
+                  </button>
+                )}
 
               </div>
+
+              {isSelectedDocumentLockedByOther && selectedDocumentEditingSession && (
+                <div className="document-edit-session-banner">
+                  <UserCheck size={14} />
+                  <span>{selectedDocumentEditingSession.userName} đang chỉnh sửa tài liệu này. Bạn có thể đọc/bình luận và quay lại sửa sau.</span>
+                </div>
+              )}
 
               {/* Floating Right Toggle for Team Discussion Panel when collapsed */}
               {!showCommentsPanel && (
@@ -7982,93 +8364,108 @@ function App() {
 
               {/* Pure Document Reader View */}
               <div className="doc-page">
-
-                {/* Rendered HTML Document Content for Reading & Comment Discussion */}
-                <section
-                  ref={documentContainerRef}
-                  className={`html-document font-${fontSize}`}
-                  onMouseUp={handleDocumentSelection}
-                  onKeyUp={handleDocumentSelection}
-                  dangerouslySetInnerHTML={{
-                    __html: selectedDocument.contentHtml || DEFAULT_DOC_CONTENT
-                  }}
-                />
-                {selectionHighlightRects.length > 0 && (
-                  <div className="held-selection-layer" aria-hidden="true">
-                    {selectionHighlightRects.map((rect, index) => (
-                      <span
-                        key={`${index}-${rect.top}-${rect.left}`}
-                        className="held-selection-rect"
-                        style={{
-                          top: rect.top,
-                          left: rect.left,
-                          width: rect.width,
-                          height: rect.height
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
-                {selectedCommentTarget && selectionPopover && !isSelectionComposerOpen && (
-                  <div
-                    className="selection-action-toolbar"
-                    style={{ top: selectionPopover.top, left: selectionPopover.left }}
-                    onPointerDown={(event) => event.preventDefault()}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onMouseUp={(event) => event.stopPropagation()}
-                  >
-                    <button type="button" title="Copy đoạn đã bôi đen" onClick={handleCopySelectedText}>
-                      <Copy size={15} />
-                      <span>Copy</span>
-                    </button>
-                    <button type="button" title="Nhận xét đoạn đã bôi đen" onClick={focusSelectedCommentComposer}>
-                      <MessageSquarePlus size={15} />
-                      <span>Nhận xét</span>
-                    </button>
-                  </div>
-                )}
-                {selectedCommentTarget && selectionPopover && isSelectionComposerOpen && (
-                  <div
-                    className="selection-comment-editor"
-                    style={{ top: selectionPopover.top, left: selectionPopover.left }}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onMouseDown={(event) => event.stopPropagation()}
-                  >
-                    <div className="selection-comment-editor-header">
-                      <strong>Nhận xét đoạn này</strong>
-                      <button type="button" onClick={clearSelectedCommentTarget}>
-                        <X size={13} />
-                      </button>
-                    </div>
-                    <blockquote>{selectedCommentTarget.selectedText}</blockquote>
-                    <div className="document-mention-input">
+                {isEditingDocumentContent && canEditSelectedDocumentContent ? (
+                  <DocumentEditor
+                    documentId={selectedDocument.id}
+                    initialHtml={selectedDocument.contentHtml || DEFAULT_DOC_CONTENT}
+                    fontSize={fontSize}
+                    isSaving={isSavingDocumentContent}
+                    contentRef={documentContainerRef}
+                    onSave={handleSaveDocumentContent}
+                    onCancel={() => void cancelDocumentEditing()}
+                    onHeadingsChange={handleEditorHeadingsChange}
+                    onUploadImage={handleUploadEditorImage}
+                  />
+                ) : (
+                  <>
+                    {/* Rendered HTML Document Content for Reading & Comment Discussion */}
+                    <section
+                      ref={documentContainerRef}
+                      className={`html-document font-${fontSize}`}
+                      onMouseUp={handleDocumentSelection}
+                      onKeyUp={handleDocumentSelection}
+                      dangerouslySetInnerHTML={{
+                        __html: selectedDocument.contentHtml || DEFAULT_DOC_CONTENT
+                      }}
+                    />
+                    {selectionHighlightRects.length > 0 && (
+                      <div className="held-selection-layer" aria-hidden="true">
+                        {selectionHighlightRects.map((rect, index) => (
+                          <span
+                            key={`${index}-${rect.top}-${rect.left}`}
+                            className="held-selection-rect"
+                            style={{
+                              top: rect.top,
+                              left: rect.left,
+                              width: rect.width,
+                              height: rect.height
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {selectedCommentTarget && selectionPopover && !isSelectionComposerOpen && (
                       <div
-                        ref={inlineCommentTextareaRef}
-                        className="document-mention-editor"
-                        contentEditable
-                        onInput={() => {
-                          const text = inlineCommentTextareaRef.current ? getEditorText(inlineCommentTextareaRef.current) : "";
-                          handleDocumentCommentTextChange(text, "comment");
-                        }}
-                        onFocus={() => {
-                          const text = inlineCommentTextareaRef.current ? getEditorText(inlineCommentTextareaRef.current) : newCommentText;
-                          setActiveDocumentMentionTarget(getMentionTrigger(text) ? "comment" : null);
-                        }}
-                        onBlur={() => window.setTimeout(() => setActiveDocumentMentionTarget(null), 150)}
-                        onKeyDown={(event) => submitTextareaOnEnter(event, handleAddComment)}
-                        data-placeholder="Nhập nhận xét..."
-                      />
-                      {renderDocumentMentionMenu("comment")}
-                    </div>
-                    <div className="selection-comment-editor-actions">
-                      <button type="button" onClick={clearSelectedCommentTarget}>
-                        Hủy
-                      </button>
-                      <button type="button" onClick={handleAddComment}>
-                        <Send size={12} /> Gửi
-                      </button>
-                    </div>
-                  </div>
+                        className="selection-action-toolbar"
+                        style={{ top: selectionPopover.top, left: selectionPopover.left }}
+                        onPointerDown={(event) => event.preventDefault()}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onMouseUp={(event) => event.stopPropagation()}
+                      >
+                        <button type="button" title="Copy đoạn đã bôi đen" onClick={handleCopySelectedText}>
+                          <Copy size={15} />
+                          <span>Copy</span>
+                        </button>
+                        <button type="button" title="Nhận xét đoạn đã bôi đen" onClick={focusSelectedCommentComposer}>
+                          <MessageSquarePlus size={15} />
+                          <span>Nhận xét</span>
+                        </button>
+                      </div>
+                    )}
+                    {selectedCommentTarget && selectionPopover && isSelectionComposerOpen && (
+                      <div
+                        className="selection-comment-editor"
+                        style={{ top: selectionPopover.top, left: selectionPopover.left }}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onMouseDown={(event) => event.stopPropagation()}
+                      >
+                        <div className="selection-comment-editor-header">
+                          <strong>Nhận xét đoạn này</strong>
+                          <button type="button" onClick={clearSelectedCommentTarget}>
+                            <X size={13} />
+                          </button>
+                        </div>
+                        <blockquote>{selectedCommentTarget.selectedText}</blockquote>
+                        <div className="document-mention-input">
+                          <div
+                            ref={inlineCommentTextareaRef}
+                            className="document-mention-editor"
+                            contentEditable
+                            onInput={() => {
+                              const text = inlineCommentTextareaRef.current ? getEditorText(inlineCommentTextareaRef.current) : "";
+                              handleDocumentCommentTextChange(text, "comment");
+                            }}
+                            onFocus={() => {
+                              const text = inlineCommentTextareaRef.current ? getEditorText(inlineCommentTextareaRef.current) : newCommentText;
+                              setActiveDocumentMentionTarget(getMentionTrigger(text) ? "comment" : null);
+                            }}
+                            onBlur={() => window.setTimeout(() => setActiveDocumentMentionTarget(null), 150)}
+                            onKeyDown={(event) => submitTextareaOnEnter(event, handleAddComment)}
+                            data-placeholder="Nhập nhận xét..."
+                          />
+                          {renderDocumentMentionMenu("comment")}
+                        </div>
+                        <div className="selection-comment-editor-actions">
+                          <button type="button" onClick={clearSelectedCommentTarget}>
+                            Hủy
+                          </button>
+                          <button type="button" onClick={handleAddComment}>
+                            <Send size={12} /> Gửi
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </article>
@@ -8384,6 +8781,79 @@ function App() {
         </div>
       )}
 
+      {isPublishVersionModalOpen && (
+        <div className="modal-backdrop">
+          <div className="modal-content publish-version-modal-content">
+            <div className="modal-header">
+              <div className="modal-title-with-icon">
+                <div className="modal-header-badge">
+                  <GitBranch size={20} />
+                </div>
+                <div>
+                  <h3>Tạo phiên bản mới</h3>
+                  <p className="modal-subtitle">
+                    {selectedDocument.title} • phiên bản hiện tại {selectedDocument.version}
+                  </p>
+                </div>
+              </div>
+              <button
+                className="icon-btn"
+                type="button"
+                onClick={() => setIsPublishVersionModalOpen(false)}
+                disabled={isPublishingVersion}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="modal-body publish-version-body">
+              <div className="version-publish-summary">
+                <div>
+                  <span>Đang lưu nội dung ở</span>
+                  <strong>{selectedDocument.version}</strong>
+                </div>
+                <ChevronRight size={18} />
+                <div>
+                  <span>Sẽ tạo mốc mới</span>
+                  <strong>phiên bản kế tiếp</strong>
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Ghi chú phiên bản</label>
+                <textarea
+                  className="form-input publish-version-note"
+                  value={publishVersionNote}
+                  onChange={(event) => setPublishVersionNote(event.target.value)}
+                  placeholder="Ví dụ: Chốt nội dung AC sau review lần 1..."
+                  maxLength={500}
+                  disabled={isPublishingVersion}
+                />
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              <button
+                className="btn-secondary"
+                type="button"
+                onClick={() => setIsPublishVersionModalOpen(false)}
+                disabled={isPublishingVersion}
+              >
+                Hủy
+              </button>
+              <button
+                className="btn-primary"
+                type="button"
+                onClick={() => void handlePublishSelectedDocumentVersion()}
+                disabled={isPublishingVersion}
+              >
+                <GitBranch size={14} />
+                {isPublishingVersion ? "Đang tạo..." : "Tạo phiên bản"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isVersionModalOpen && (
         <div className="modal-backdrop">
           <div className="modal-content version-modal-content">
@@ -8661,7 +9131,7 @@ function App() {
       {/* Modal 3: Create New Document */}
       {isCreateDocModalOpen && (
         <div className="modal-backdrop">
-          <div className="modal-content">
+          <div className="modal-content create-doc-modal">
             <div className="modal-header">
               <div className="modal-title-with-icon">
                 <div className="modal-header-badge amber">
@@ -8679,17 +9149,11 @@ function App() {
             <div className="modal-body">
               <div className="form-group">
                 <label>Chọn Dự Án Thuộc Về</label>
-                <select
-                  className="form-select"
-                  value={newDocProjectId}
-                  onChange={(e) => setNewDocProjectId(e.target.value)}
-                >
-                  {projectsList.map((proj) => (
-                    <option key={proj.id} value={proj.id}>
-                      [{proj.code}] {proj.name}
-                    </option>
-                  ))}
-                </select>
+                <CustomProjectSelect
+                  projects={projectsList}
+                  selectedProjectId={newDocProjectId}
+                  onSelectProject={setNewDocProjectId}
+                />
               </div>
 
               <div className="form-group">
@@ -8705,20 +9169,14 @@ function App() {
               <div className="form-row">
                 <div className="form-group">
                   <label>Loại Tài Liệu</label>
-                  <select
-                    className="form-select"
+                  <CustomFormSelect
                     value={newDocType}
-                    onChange={(e) => {
-                      setNewDocType(e.target.value);
+                    onChange={(value) => {
+                      setNewDocType(value);
                       setNewDocTypeTouched(true);
                     }}
-                  >
-                    {DOCUMENT_TYPE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                    options={DOCUMENT_TYPE_OPTIONS}
+                  />
                 </div>
 
                 <div className="form-group">
@@ -8835,14 +9293,33 @@ function App() {
                   </div>
 
                   <div className="form-group">
-                    <label>Người Import / Phụ Trách</label>
+                    <label>Chủ sở hữu</label>
                     <div className="input-with-icon-wrapper">
                       <Users size={16} className="field-icon" />
-                      <input
-                        className="form-input document-owner-readonly"
-                        value={editDocOwner || "Người import tài liệu"}
-                        readOnly
-                      />
+                      {editingDoc.effectiveRole === "MANAGER" && documentOwnerOptions.length > 0 ? (
+                        <select
+                          className="form-select"
+                          value={editDocOwnerId || editingDoc.ownerId || currentUser.id}
+                          onChange={(event) => {
+                            const ownerId = event.target.value;
+                            const owner = documentOwnerOptions.find((item) => item.id === ownerId);
+                            setEditDocOwnerId(ownerId);
+                            setEditDocOwner(owner?.name ?? editDocOwner);
+                          }}
+                        >
+                          {documentOwnerOptions.map((member) => (
+                            <option key={member.id} value={member.id}>
+                              {member.name} · {member.email}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          className="form-input document-owner-readonly"
+                          value={editDocOwner || "Người tạo/import tài liệu"}
+                          readOnly
+                        />
+                      )}
                     </div>
                   </div>
 
@@ -8851,12 +9328,12 @@ function App() {
                     <div className="input-with-icon-wrapper">
                       <Clock size={16} className="field-icon" />
                       <input
-                        className="form-input"
-                        placeholder="Ví dụ: v0.1, v1.0..."
+                        className="form-input document-version-readonly"
                         value={editDocVersion}
-                        onChange={(e) => setEditDocVersion(e.target.value)}
+                        readOnly
                       />
                     </div>
+                    <p className="form-helper-text">Phiên bản chỉ tăng khi dùng thao tác “Tạo phiên bản mới”.</p>
                   </div>
                 </div>
               </div>
@@ -9609,7 +10086,7 @@ function App() {
       {/* Modal 6: Import File with Target Project Selector */}
       {isImportModalOpen && (
         <div className="modal-backdrop">
-          <div className="modal-content import-modal-content">
+          <div className="modal-content import-modal-content import-file-modal">
             <div className="modal-header">
               <h3>Import tệp vào Dự Án</h3>
               <button
@@ -9627,18 +10104,12 @@ function App() {
                 <label style={{ fontWeight: 700, color: "var(--accent-primary)" }}>
                   Chọn Dự Án Đích để Import vào:
                 </label>
-                <select
-                  className="form-select"
-                  value={importTargetProjectId}
+                <CustomProjectSelect
+                  projects={projectsList}
+                  selectedProjectId={importTargetProjectId}
+                  onSelectProject={setImportTargetProjectId}
                   disabled={isImporting}
-                  onChange={(e) => setImportTargetProjectId(e.target.value)}
-                >
-                  {projectsList.map((proj) => (
-                    <option key={proj.id} value={proj.id}>
-                      [{proj.code}] {proj.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
 
               <div className="form-group">
@@ -9670,18 +10141,15 @@ function App() {
                   <label style={{ fontWeight: 700, color: "var(--text-primary)" }}>
                     Chọn tài liệu cần cập nhật:
                   </label>
-                  <select
-                    className="form-select"
+                  <CustomFormSelect
                     value={importTargetDocumentId}
+                    onChange={setImportTargetDocumentId}
+                    options={importTargetDocuments.map((doc) => ({
+                      value: doc.id,
+                      label: `[${doc.type}] ${doc.title} (${doc.version})`
+                    }))}
                     disabled={isImporting}
-                    onChange={(e) => setImportTargetDocumentId(e.target.value)}
-                  >
-                    {importTargetDocuments.map((doc) => (
-                      <option key={doc.id} value={doc.id}>
-                        [{doc.type}] {doc.title} ({doc.version})
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
               )}
 
@@ -9690,18 +10158,12 @@ function App() {
                   <label style={{ fontWeight: 700, color: "var(--text-primary)" }}>
                     Loại tài liệu sau khi import:
                   </label>
-                  <select
-                    className="form-select"
+                  <CustomFormSelect
                     value={importDocType}
+                    onChange={setImportDocType}
+                    options={DOCUMENT_TYPE_OPTIONS}
                     disabled={isImporting}
-                    onChange={(e) => setImportDocType(e.target.value)}
-                  >
-                    {DOCUMENT_TYPE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
               )}
 

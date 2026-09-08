@@ -32,6 +32,11 @@ const shareRoleLabels: Record<ProjectRole, { label: string; desc: string }> = {
 };
 
 const shareRoles = Object.keys(shareRoleLabels) as ProjectRole[];
+const globalRoleLabels: Record<ManagedUser["role"], string> = {
+  ADMIN: "Admin",
+  MANAGER: "Manager",
+  EMPLOYEE: "Nhân viên"
+};
 
 export function ShareAccessModal({
   isOpen,
@@ -101,14 +106,25 @@ export function ShareAccessModal({
     [accessUsers]
   );
 
+  const inheritedAccessUsers = useMemo(() => {
+    if (scope !== "document" || !projectId) return [];
+    return users
+      .map((user) => {
+        const permission = user.projects.find((item) => item.projectId === projectId);
+        if (!permission) return null;
+        return { user, role: permission.role, roles: permission.roles?.length ? permission.roles : [permission.role] };
+      })
+      .filter((item): item is Array<{ user: ManagedUser; role: ProjectRole; roles: ProjectRole[] }>[number] => Boolean(item))
+      .filter(({ user }) => !accessibleUserIds.has(user.id));
+  }, [accessibleUserIds, projectId, scope, users]);
+
   const candidateUsers = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return users
-      .filter((user) => user.role === "EMPLOYEE")
       .filter((user) => !accessibleUserIds.has(user.id))
       .filter((user) => {
         if (!normalizedQuery) return true;
-        return `${user.name} ${user.email} ${user.role}`.toLowerCase().includes(normalizedQuery);
+        return `${user.name} ${user.email} ${user.role} ${globalRoleLabels[user.role]}`.toLowerCase().includes(normalizedQuery);
       })
       .slice(0, 20);
   }, [accessibleUserIds, query, users]);
@@ -294,9 +310,9 @@ export function ShareAccessModal({
 
                     <div className="share-candidate-list dropdown-list">
                       {loading ? (
-                        <div className="share-empty-state">Đang tải nhân viên...</div>
+                        <div className="share-empty-state">Đang tải người dùng...</div>
                       ) : candidateUsers.length === 0 ? (
-                        <div className="share-empty-state">Không có nhân viên phù hợp để thêm.</div>
+                        <div className="share-empty-state">Không có người dùng phù hợp để thêm.</div>
                       ) : (
                         candidateUsers.map((user) => {
                           const selected = selectedUserIds.includes(user.id);
@@ -311,6 +327,9 @@ export function ShareAccessModal({
                               <span className="share-user-copy">
                                 <strong>{user.name}</strong>
                                 <small>{user.email}</small>
+                              </span>
+                              <span className={`share-user-role-badge role-${user.role.toLowerCase()}`}>
+                                {globalRoleLabels[user.role]}
                               </span>
                               <span className={`share-checkbox ${selected ? "checked" : ""}`}>
                                 {selected && <Check size={12} />}
@@ -374,7 +393,7 @@ export function ShareAccessModal({
           <div className="share-access-section">
             <div className="share-section-title">
               <ShieldCheck size={16} />
-              <span>Người có quyền truy cập</span>
+              <span>Quyền trực tiếp trên {targetLabel}</span>
               <span className="share-count-badge">{accessUsers.length}</span>
             </div>
 
@@ -388,7 +407,7 @@ export function ShareAccessModal({
                       <span className="share-avatar">{user.name.charAt(0).toUpperCase()}</span>
                       <span className="share-user-copy">
                         <strong>{user.name}</strong>
-                        <small>{user.email}</small>
+                        <small>{user.email} · {roles.map((role) => shareRoleLabels[role].desc).join(", ")}</small>
                       </span>
                     </div>
 
@@ -422,6 +441,41 @@ export function ShareAccessModal({
               )}
             </div>
           </div>
+
+          {scope === "document" && (
+            <div className="share-access-section inherited">
+              <div className="share-section-title">
+                <FolderKanban size={16} />
+                <span>Kế thừa từ dự án</span>
+                <span className="share-count-badge">{inheritedAccessUsers.length}</span>
+              </div>
+
+              <div className="share-access-list">
+                {inheritedAccessUsers.length === 0 ? (
+                  <div className="share-empty-state">Không có quyền kế thừa từ dự án.</div>
+                ) : (
+                  inheritedAccessUsers.map(({ user, roles }) => (
+                    <div key={user.id} className="share-access-item inherited">
+                      <div className="share-user-info">
+                        <span className="share-avatar">{user.name.charAt(0).toUpperCase()}</span>
+                        <span className="share-user-copy">
+                          <strong>{user.name}</strong>
+                          <small>{user.email} · {roles.map((role) => shareRoleLabels[role].label).join(", ")}</small>
+                        </span>
+                      </div>
+                      <div className="share-inherited-roles">
+                        {roles.map((role) => (
+                          <span key={role} className={`share-role-badge role-${role.toLowerCase()}`}>
+                            {shareRoleLabels[role].label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Modal Footer */}

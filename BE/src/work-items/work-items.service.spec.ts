@@ -98,8 +98,11 @@ function serviceHarness() {
     }),
     statusForColumn: jest.fn().mockReturnValue("DONE")
   };
-  const service = new WorkItemsService(prisma as any, permissions as any, collaboration as any, media as any, workboardColumns as any);
-  return { service, prisma, permissions, collaboration, media, workboardColumns };
+  const notifications = {
+    notifyWorkItemParticipants: jest.fn().mockResolvedValue(undefined)
+  };
+  const service = new WorkItemsService(prisma as any, permissions as any, collaboration as any, media as any, workboardColumns as any, notifications as any);
+  return { service, prisma, permissions, collaboration, media, workboardColumns, notifications };
 }
 
 describe("WorkItemsService permissions", () => {
