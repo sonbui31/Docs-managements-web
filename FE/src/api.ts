@@ -55,7 +55,10 @@ type BackendDocument = {
   currentVersion: string;
   htmlContent: string;
   sourceFileName?: string | null;
-  sourceType?: string;
+  ownerId?: string | null;
+  sourceType?: ProjectDocument["sourceType"];
+  effectiveRole?: ProjectDocument["effectiveRole"];
+  editingSession?: ProjectDocument["editingSession"];
   externalCompanyId?: string | null;
   externalDepartmentId?: string | null;
   createdBy?: string | null;
@@ -172,10 +175,15 @@ export function mapDocument(document: BackendDocument): ProjectDocument {
     title,
     type: document.type,
     owner: importOwner || (document.sourceType === "imported" ? "Người import tài liệu" : "Người tạo tài liệu"),
+    ownerId: document.ownerId ?? null,
     status: mapDocumentStatus(document.status),
+    sourceType: document.sourceType ?? "manual",
+    effectiveRole: document.effectiveRole ?? null,
+    editingSession: document.editingSession ?? null,
     version: document.currentVersion,
     createdAt: document.createdAt,
     updatedAt: new Date(document.updatedAt).toLocaleDateString("vi-VN"),
+    updatedAtIso: document.updatedAt,
     projectId: document.projectId,
     externalCompanyId: document.externalCompanyId ?? null,
     externalDepartmentId: document.externalDepartmentId ?? null,
@@ -311,9 +319,9 @@ export async function updateDocument(
     title: string;
     type: string;
     status: DocumentStatus;
-    currentVersion: string;
+    expectedUpdatedAt: string;
+    expectedVersion: string;
     htmlContent: string;
-    changeNote: string;
   }>
 ) {
   const document = await apiFetch<BackendDocument>(`/documents/${documentId}`, {
@@ -326,6 +334,32 @@ export async function updateDocument(
   return mapDocument(document);
 }
 
+export async function acquireDocumentEditSession(documentId: string) {
+  return apiFetch<{ editingSession: ProjectDocument["editingSession"] }>(`/documents/${documentId}/edit-session`, {
+    method: "POST"
+  });
+}
+
+export async function heartbeatDocumentEditSession(documentId: string) {
+  return apiFetch<{ editingSession: ProjectDocument["editingSession"] }>(`/documents/${documentId}/edit-session`, {
+    method: "PATCH"
+  });
+}
+
+export async function releaseDocumentEditSession(documentId: string) {
+  return apiFetch<{ ok: boolean }>(`/documents/${documentId}/edit-session`, {
+    method: "DELETE"
+  });
+}
+
+export async function transferDocumentOwner(documentId: string, ownerId: string) {
+  const document = await apiFetch<BackendDocument>(`/documents/${documentId}/owner`, {
+    method: "PATCH",
+    body: JSON.stringify({ ownerId })
+  });
+  return mapDocument(document);
+}
+
 export async function deleteDocument(documentId: string) {
   return apiFetch<{ ok: boolean }>(`/documents/${documentId}`, {
     method: "DELETE"
@@ -334,6 +368,14 @@ export async function deleteDocument(documentId: string) {
 
 export async function fetchDocumentVersions(documentId: string) {
   return apiFetch<DocumentVersion[]>(`/documents/${documentId}/versions`);
+}
+
+export async function publishDocumentVersion(documentId: string, changeNote?: string) {
+  const document = await apiFetch<BackendDocument>(`/documents/${documentId}/versions`, {
+    method: "POST",
+    body: JSON.stringify({ changeNote })
+  });
+  return mapDocument(document);
 }
 
 export async function restoreDocumentVersion(documentId: string, versionId: string) {

@@ -22,7 +22,8 @@ export class PermissionsService {
       return {
         OR: [
           { members: { some: { userId: user.id } } },
-          { documentPermissions: { some: { userId: user.id } } }
+          { documentPermissions: { some: { userId: user.id } } },
+          { documents: { some: { ownerId: user.id } } }
         ]
       };
     }
@@ -32,14 +33,16 @@ export class PermissionsService {
         OR: [
           { externalCompanyId: user.externalCompanyId },
           { members: { some: { userId: user.id } } },
-          { documentPermissions: { some: { userId: user.id } } }
+          { documentPermissions: { some: { userId: user.id } } },
+          { documents: { some: { ownerId: user.id } } }
         ]
       };
     }
 
     const assignedProjects: Prisma.ProjectWhereInput[] = [
       { members: { some: { userId: user.id } } },
-      { documentPermissions: { some: { userId: user.id } } }
+      { documentPermissions: { some: { userId: user.id } } },
+      { documents: { some: { ownerId: user.id } } }
     ];
 
     if (user.role !== "MANAGER") {
@@ -70,6 +73,9 @@ export class PermissionsService {
 
     const acceptedRoles = this.rolesAtLeast(allowedRoles);
     const directAccess: Prisma.DocumentWhereInput[] = [
+      {
+        ownerId: user.id
+      },
       {
         permissions: {
           some: {
@@ -160,6 +166,7 @@ export class PermissionsService {
         projectId: true,
         externalCompanyId: true,
         externalDepartmentId: true,
+        ownerId: true,
         project: {
           select: {
             externalCompanyId: true,
@@ -174,6 +181,7 @@ export class PermissionsService {
     }
 
     if (this.isExternalSuperAdmin(user)) return document;
+    if (document.ownerId === user.id && this.roleAllowed("MANAGER", allowedRoles)) return document;
 
     const documentPermission = await this.prisma.documentPermission.findUnique({
       where: { documentId_userId: { documentId, userId: user.id } }

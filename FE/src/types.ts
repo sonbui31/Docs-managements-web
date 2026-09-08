@@ -1,4 +1,16 @@
 export type DocumentStatus = "Draft" | "Triển khai";
+export type DocumentSourceType = "manual" | "template" | "imported";
+export type ProjectRole = "VIEWER" | "REVIEWER" | "EDITOR" | "MANAGER";
+
+export type DocumentEditingSession = {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  startedAt: string;
+  heartbeatAt: string;
+  expiresAt: string;
+  isCurrentUser: boolean;
+};
 
 export type Project = {
   id: string;
@@ -24,9 +36,14 @@ export type ProjectDocument = {
   title: string;
   type: string;
   owner: string;
+  ownerId?: string | null;
   status: DocumentStatus;
+  sourceType?: DocumentSourceType;
+  effectiveRole?: ProjectRole | null;
+  editingSession?: DocumentEditingSession | null;
   version: string;
   updatedAt: string;
+  updatedAtIso?: string;
   createdAt?: string;
   projectId?: string;
   externalCompanyId?: string | null;
@@ -408,8 +425,6 @@ export type DocumentTemplate = {
 
 export type UserRole = "ADMIN" | "MANAGER" | "EMPLOYEE";
 export type UserStatus = "ACTIVE" | "DISABLED" | "LOCKED";
-export type ProjectRole = "VIEWER" | "REVIEWER" | "EDITOR" | "MANAGER";
-
 export type User = {
   id: string;
   email: string;

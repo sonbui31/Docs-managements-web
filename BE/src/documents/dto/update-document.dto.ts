@@ -18,15 +18,14 @@ export class UpdateDocumentDto {
 
   @IsOptional()
   @IsString()
+  expectedUpdatedAt?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(40)
-  currentVersion?: string;
+  expectedVersion?: string;
 
   @IsOptional()
   @IsString()
   htmlContent?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(500)
-  changeNote?: string;
 }

@@ -183,6 +183,8 @@ export class ImportsService {
         }
       });
 
+      await tx.documentEditingSession.deleteMany({ where: { documentId } });
+
       return updatedDocument;
     });
   }

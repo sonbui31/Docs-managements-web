@@ -16,7 +16,7 @@ export class CreateDocumentDto {
   htmlContent: string;
 
   @IsOptional()
-  @IsIn(["manual", "imported"])
+  @IsIn(["manual", "template", "imported"])
   sourceType?: string;
 
   @IsOptional()

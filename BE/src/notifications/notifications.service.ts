@@ -67,6 +67,7 @@ export class NotificationsService {
         id: true,
         title: true,
         projectId: true,
+        ownerId: true,
         permissions: { select: { userId: true } },
         project: { select: { members: { select: { userId: true } } } }
       }
@@ -75,9 +76,10 @@ export class NotificationsService {
 
     return this.createForUsers({
       userIds: [
+        document.ownerId,
         ...document.permissions.map((permission) => permission.userId),
         ...document.project.members.map((member) => member.userId)
-      ],
+      ].filter(Boolean) as string[],
       actor,
       title,
       message,
