@@ -2217,6 +2217,7 @@ button:active:not(:disabled) {
 }
 
 .doc-info small {
+  display: block;
   display: grid;
   gap: 2px;
   font-size: 0.69rem;
@@ -2399,6 +2400,7 @@ button:active:not(:disabled) {
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   font-size: 0.78rem;
   color: var(--text-secondary);
@@ -7961,6 +7963,10 @@ button:active:not(:disabled) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .recent-accounts-header {
@@ -7977,14 +7983,18 @@ button:active:not(:disabled) {
 }
 
 .recent-accounts-list {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
   gap: 6px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .recent-account-chip {
   display: inline-flex;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
   background: #ffffff;
   border: 1px solid #cbd5e1;
   border-radius: 20px;
@@ -8014,6 +8024,7 @@ button:active:not(:disabled) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   padding: 5px 6px 5px 10px;
   background: transparent;
   border: none;
@@ -8026,6 +8037,7 @@ button:active:not(:disabled) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   padding: 5px 8px 5px 2px;
   background: transparent;
   border: none;
@@ -8050,6 +8062,10 @@ button:active:not(:disabled) {
 
 .recent-account-chip .chip-email-text {
   font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .recent-account-chip .chip-role-tag {
@@ -11420,6 +11436,7 @@ button:active:not(:disabled) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03);
   box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.8);
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -12538,6 +12555,7 @@ button:active:not(:disabled) {
   flex-direction: column;
   gap: 4px;
   overflow: hidden;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
   box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.8);
   transition: box-shadow 0.25s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
   cursor: default;
@@ -12670,6 +12688,9 @@ button:active:not(:disabled) {
 }
 
 .status-breakdown-list {
+  max-height: 280px;
+  overflow-y: auto;
+  justify-content: space-evenly;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-content: start;
@@ -12679,7 +12700,12 @@ button:active:not(:disabled) {
 }
 
 .workload-list {
-  overflow: visible;
+  max-height: clamp(330px, 42vh, 430px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 6px 2px 0;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
 
 .workload-filter-row {
@@ -12687,6 +12713,7 @@ button:active:not(:disabled) {
   grid-template-columns: minmax(160px, 1fr) minmax(150px, auto);
   gap: 8px;
   padding-top: 10px;
+  min-width: 0;
 }
 
 .workload-name-filter {
@@ -12710,7 +12737,13 @@ button:active:not(:disabled) {
   background: transparent;
   color: #0f172a;
   font-size: 0.72rem;
+  font-weight: 700;
   font-weight: 750;
+}
+
+.status-breakdown-row div,
+.workload-track {
+  height: 8px;
 }
 
 .workload-name-filter input::placeholder {
@@ -12828,15 +12861,26 @@ button:active:not(:disabled) {
   margin-top: 12px;
   padding: 2px;
   border-radius: 999px;
+  background: #e2e8f0;
   background: #f1f5f9;
   overflow: hidden;
+}
+
+.status-breakdown-row i,
+.workload-track span {
+  display: block;
 }
 
 .status-segment {
   min-width: 8px;
   height: 100%;
   border-radius: inherit;
+  background: #6366f1;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+}
+
+.status-breakdown-row.status-done i {
+  background: #10b981;
 }
 
 .status-breakdown-row {
@@ -12851,12 +12895,20 @@ button:active:not(:disabled) {
   color: #475569;
 }
 
+.status-breakdown-row.status-blocked i {
+  background: #ef4444;
+}
+
 .status-breakdown-row::before {
   content: "";
   width: 28px;
   height: 3px;
   border-radius: 999px;
   background: var(--status-accent);
+}
+
+.status-breakdown-row.status-in_progress i {
+  background: #f59e0b;
 }
 
 .status-row-main,
@@ -12974,6 +13026,8 @@ button:active:not(:disabled) {
   background: #ffffff;
   text-align: left;
   cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
   transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
@@ -12981,6 +13035,10 @@ button:active:not(:disabled) {
   border-color: #c7d2fe;
   box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
   transform: translateY(-1px);
+}
+
+.wl-person-header {
+  display: flex;
 }
 
 .wl-person:active {
@@ -12991,7 +13049,9 @@ button:active:not(:disabled) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
+  min-width: 0;
 }
 
 .wl-person-identity {
@@ -13008,12 +13068,17 @@ button:active:not(:disabled) {
   white-space: nowrap;
 }
 
+.wl-person-meta {
+  flex-shrink: 0;
+}
+
 .wl-person-metrics {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 4px;
+  min-width: 0;
 }
 
 .wl-person-metrics span {
@@ -13048,6 +13113,7 @@ button:active:not(:disabled) {
   color: #64748b;
   font-size: 0.7rem;
   font-weight: 800;
+  min-width: 0;
 }
 
 .wl-progress-summary strong {
@@ -13056,11 +13122,17 @@ button:active:not(:disabled) {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .wl-progress-summary em {
   color: #059669;
   font-style: normal;
+}
+
+.wl-done-pct {
+  color: #059669;
+  font-weight: 800;
 }
 
 .wl-bar-track {
@@ -13074,12 +13146,14 @@ button:active:not(:disabled) {
   height: 100%;
   border-radius: 999px;
   background: linear-gradient(90deg, #10b981, #059669);
+  transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .wl-stat-row {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
+  min-width: 0;
 }
 
 .wl-chip {
@@ -13139,6 +13213,10 @@ button:active:not(:disabled) {
 @media (max-width: 760px) {
   .workload-filter-row {
     grid-template-columns: 1fr;
+  }
+
+  .workload-completion-filter {
+    min-width: 0;
   }
 
   .wl-person-top {
@@ -13614,6 +13692,10 @@ button:active:not(:disabled) {
   scrollbar-color: transparent transparent;
 }
 
+.workload-list {
+  scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+}
+
 .exec-project-list-v2:hover,
 .project-health-list:hover,
 .workload-list:hover,
@@ -13649,6 +13731,10 @@ button:active:not(:disabled) {
 .workload-list:hover::-webkit-scrollbar-thumb,
 .exec-compact-list:hover::-webkit-scrollbar-thumb {
   background: rgba(148, 163, 184, 0.4);
+}
+
+.workload-list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.42);
 }
 
 .exec-compact-list button {
@@ -14490,6 +14576,7 @@ button:active:not(:disabled) {
   border-left: 3px solid #94a3b8;
   border-radius: 10px;
   padding: 12px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03);
   box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.8);
   cursor: grab;
   transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
@@ -16750,6 +16837,7 @@ button:active:not(:disabled) {
   flex-direction: column;
   gap: 14px;
   transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.03);
   box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.8);
   position: relative;
   overflow: hidden;

@@ -890,7 +890,7 @@ export function DocumentEditor({
           <button type="button" title="Danh sách số" className={editor.isActive("orderedList") ? "active" : ""} onClick={() => editor.chain().focus().toggleOrderedList().run()}>
             <ListOrdered size={15} />
           </button>
-          <button type="button" title="Trích dẫn" className={editor.isActive("blockquote") ? "active" : ""} onClick={() => editor.chain().focus().toggleBlockquote().run()}>
+          <button type="button" title="Trích dẫn" className={editor.isActive("blockquote") ? "active" : ""} onClick={() => editor.commands.toggleWrap("blockquote")}>
             <Quote size={15} />
           </button>
           <button type="button" title="Liên kết" className={editor.isActive("link") ? "active" : ""} onClick={setLink}>

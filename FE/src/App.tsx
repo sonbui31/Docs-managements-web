@@ -7113,7 +7113,7 @@ function App() {
                 </div>
               </section>
 
-              <section className="exec-panel">
+              <section className="exec-panel workload-panel">
                 <div className="exec-panel-header">
                   <div>
                     <span>Workload</span>

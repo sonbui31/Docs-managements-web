@@ -39,19 +39,14 @@ export type RecentAccount = {
   role?: string;
 };
 
-const DEFAULT_RECENT_ACCOUNTS: RecentAccount[] = [
-  { email: "admin@docs.vn", name: "System Admin", role: "Admin" },
-  { email: "son@yopmail.com", name: "Son Bui", role: "Manager" }
-];
-
 export function getRecentAccounts(): RecentAccount[] {
   try {
     const raw = localStorage.getItem(RECENT_ACCOUNTS_KEY);
-    if (!raw) return DEFAULT_RECENT_ACCOUNTS;
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed.slice(0, 2) : DEFAULT_RECENT_ACCOUNTS;
+    return Array.isArray(parsed) ? parsed.slice(0, 2) : [];
   } catch {
-    return DEFAULT_RECENT_ACCOUNTS;
+    return [];
   }
 }
 
@@ -163,7 +158,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
     } else {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(cleanEmail)) {
-        errors.loginEmail = "Định dạng Email không hợp lệ (ví dụ: admin@docs.vn)";
+        errors.loginEmail = "Định dạng Email không hợp lệ (ví dụ: name@company.com)";
       }
     }
 
@@ -237,6 +232,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
         password: cleanPass
       });
       const user = await login(cleanEmail, cleanPass);
+      saveRecentAccount({ email: user.email, name: user.name, role: user.role });
+      setRecentAccounts(getRecentAccounts());
       onSuccess(user);
     } catch (err: any) {
       setErrorMsg(formatAuthErrorMessage(err));
