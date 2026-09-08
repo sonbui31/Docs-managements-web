@@ -497,11 +497,13 @@ function workItemAssigneeLabel(item: WorkItem) {
 function CustomProjectSelect({
   projects,
   selectedProjectId,
-  onSelectProject
+  onSelectProject,
+  disabled = false
 }: {
   projects: Project[];
   selectedProjectId: string;
   onSelectProject: (projectId: string) => void;
+  disabled?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -536,7 +538,7 @@ function CustomProjectSelect({
         type="button"
         className="custom-select-trigger"
         onClick={() => setIsOpen((prev) => !prev)}
-        disabled={projects.length === 0}
+        disabled={disabled || projects.length === 0}
       >
         <div className="select-trigger-content">
           <FolderKanban size={15} className="trigger-icon" />
@@ -603,13 +605,15 @@ function CustomFormSelect<T extends string>({
   onChange,
   options,
   placeholder,
-  className
+  className,
+  disabled = false
 }: {
   value: T | undefined | null;
   onChange: (val: T) => void;
   options: Array<{ value: T; label: string }>;
   placeholder?: string;
   className?: string;
+  disabled?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -635,6 +639,7 @@ function CustomFormSelect<T extends string>({
         type="button"
         className="form-select-trigger"
         onClick={() => setIsOpen((prev) => !prev)}
+        disabled={disabled}
       >
         <span className="trigger-label-text">
           {selectedOption ? selectedOption.label : (placeholder || "Chọn...")}
@@ -894,6 +899,7 @@ function workItemLabelNames(item: WorkItem) {
 function App() {
   // Authentication State
   const [currentUser, setCurrentUser] = useState<User | null>(() => getStoredUser());
+  const currentUserOwnerName = currentUser?.name?.trim() || currentUser?.email?.trim() || "";
 
   // State for dynamic projects & documents lists
   const [projectsList, setProjectsList] = useState<Project[]>([]);
@@ -1099,7 +1105,7 @@ function App() {
   const [newDocTitle, setNewDocTitle] = useState<string>("");
   const [newDocType, setNewDocType] = useState<string>("BRD");
   const [newDocTypeTouched, setNewDocTypeTouched] = useState<boolean>(false);
-  const [newDocOwner, setNewDocOwner] = useState<string>("BA Lead");
+  const [newDocOwner, setNewDocOwner] = useState<string>(currentUserOwnerName);
 
   // Edit Document Metadata Modal state
   const [isEditDocModalOpen, setIsEditDocModalOpen] = useState<boolean>(false);
@@ -3989,7 +3995,7 @@ function App() {
     setNewDocTitle("");
     setNewDocType("BRD");
     setNewDocTypeTouched(false);
-    setNewDocOwner("BA Lead");
+    setNewDocOwner(currentUserOwnerName);
   }
 
   function openCreateDocumentModal(projectId = selectedProjectId) {
@@ -8661,7 +8667,7 @@ function App() {
       {/* Modal 3: Create New Document */}
       {isCreateDocModalOpen && (
         <div className="modal-backdrop">
-          <div className="modal-content">
+          <div className="modal-content create-doc-modal">
             <div className="modal-header">
               <div className="modal-title-with-icon">
                 <div className="modal-header-badge amber">
@@ -8679,17 +8685,11 @@ function App() {
             <div className="modal-body">
               <div className="form-group">
                 <label>Chọn Dự Án Thuộc Về</label>
-                <select
-                  className="form-select"
-                  value={newDocProjectId}
-                  onChange={(e) => setNewDocProjectId(e.target.value)}
-                >
-                  {projectsList.map((proj) => (
-                    <option key={proj.id} value={proj.id}>
-                      [{proj.code}] {proj.name}
-                    </option>
-                  ))}
-                </select>
+                <CustomProjectSelect
+                  projects={projectsList}
+                  selectedProjectId={newDocProjectId}
+                  onSelectProject={setNewDocProjectId}
+                />
               </div>
 
               <div className="form-group">
@@ -8705,20 +8705,14 @@ function App() {
               <div className="form-row">
                 <div className="form-group">
                   <label>Loại Tài Liệu</label>
-                  <select
-                    className="form-select"
+                  <CustomFormSelect
                     value={newDocType}
-                    onChange={(e) => {
-                      setNewDocType(e.target.value);
+                    onChange={(value) => {
+                      setNewDocType(value);
                       setNewDocTypeTouched(true);
                     }}
-                  >
-                    {DOCUMENT_TYPE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                    options={DOCUMENT_TYPE_OPTIONS}
+                  />
                 </div>
 
                 <div className="form-group">
@@ -9609,7 +9603,7 @@ function App() {
       {/* Modal 6: Import File with Target Project Selector */}
       {isImportModalOpen && (
         <div className="modal-backdrop">
-          <div className="modal-content import-modal-content">
+          <div className="modal-content import-modal-content import-file-modal">
             <div className="modal-header">
               <h3>Import tệp vào Dự Án</h3>
               <button
@@ -9627,18 +9621,12 @@ function App() {
                 <label style={{ fontWeight: 700, color: "var(--accent-primary)" }}>
                   Chọn Dự Án Đích để Import vào:
                 </label>
-                <select
-                  className="form-select"
-                  value={importTargetProjectId}
+                <CustomProjectSelect
+                  projects={projectsList}
+                  selectedProjectId={importTargetProjectId}
+                  onSelectProject={setImportTargetProjectId}
                   disabled={isImporting}
-                  onChange={(e) => setImportTargetProjectId(e.target.value)}
-                >
-                  {projectsList.map((proj) => (
-                    <option key={proj.id} value={proj.id}>
-                      [{proj.code}] {proj.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
 
               <div className="form-group">
@@ -9670,18 +9658,15 @@ function App() {
                   <label style={{ fontWeight: 700, color: "var(--text-primary)" }}>
                     Chọn tài liệu cần cập nhật:
                   </label>
-                  <select
-                    className="form-select"
+                  <CustomFormSelect
                     value={importTargetDocumentId}
+                    onChange={setImportTargetDocumentId}
+                    options={importTargetDocuments.map((doc) => ({
+                      value: doc.id,
+                      label: `[${doc.type}] ${doc.title} (${doc.version})`
+                    }))}
                     disabled={isImporting}
-                    onChange={(e) => setImportTargetDocumentId(e.target.value)}
-                  >
-                    {importTargetDocuments.map((doc) => (
-                      <option key={doc.id} value={doc.id}>
-                        [{doc.type}] {doc.title} ({doc.version})
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
               )}
 
@@ -9690,18 +9675,12 @@ function App() {
                   <label style={{ fontWeight: 700, color: "var(--text-primary)" }}>
                     Loại tài liệu sau khi import:
                   </label>
-                  <select
-                    className="form-select"
+                  <CustomFormSelect
                     value={importDocType}
+                    onChange={setImportDocType}
+                    options={DOCUMENT_TYPE_OPTIONS}
                     disabled={isImporting}
-                    onChange={(e) => setImportDocType(e.target.value)}
-                  >
-                    {DOCUMENT_TYPE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
               )}
 

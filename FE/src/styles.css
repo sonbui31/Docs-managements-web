@@ -4360,6 +4360,67 @@ button:active:not(:disabled) {
   position: relative;
 }
 
+.import-file-modal {
+  overflow: visible;
+}
+
+.import-file-modal .modal-header {
+  border-radius: 18px 18px 0 0;
+}
+
+.import-file-modal .modal-body {
+  overflow: visible;
+  border-radius: 0 0 18px 18px;
+}
+
+.import-file-modal .custom-project-select-container,
+.import-file-modal .custom-form-select-wrapper {
+  min-width: 0;
+}
+
+.import-file-modal .custom-select-trigger,
+.import-file-modal .form-select-trigger {
+  min-height: 36px;
+  border-color: #cbd5e1;
+  border-radius: 10px;
+  padding: 9px 14px;
+}
+
+.import-file-modal .custom-select-trigger:disabled,
+.import-file-modal .form-select-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+  background: #f8fafc;
+  box-shadow: none;
+}
+
+.import-file-modal .custom-select-dropdown-menu,
+.import-file-modal .custom-form-select-menu {
+  z-index: 140;
+  border-color: rgba(148, 163, 184, 0.35);
+  box-shadow: 0 18px 40px -12px rgba(15, 23, 42, 0.28), 0 0 0 1px rgba(15, 23, 42, 0.04);
+}
+
+.import-file-modal .custom-form-select-menu {
+  width: 100%;
+  max-width: 100%;
+}
+
+.import-file-modal .dropdown-options-container,
+.import-file-modal .select-options-scroll {
+  max-height: 188px;
+}
+
+.import-file-modal .dropdown-option-row {
+  min-height: 40px;
+}
+
+.import-file-modal .option-title-text,
+.import-file-modal .trigger-name,
+.import-file-modal .trigger-label-text {
+  min-width: 0;
+}
+
 @keyframes modalIn {
   from {
     opacity: 0;
@@ -4760,6 +4821,84 @@ button:active:not(:disabled) {
   padding: 16px 24px;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   border-top: 1px solid #f1f5f9;
+}
+
+.create-doc-modal {
+  max-width: 560px;
+  overflow: visible;
+}
+
+.create-doc-modal .modal-header {
+  border-radius: 18px 18px 0 0;
+}
+
+.create-doc-modal .modal-body {
+  max-height: min(620px, calc(100dvh - 184px));
+  overflow-y: auto;
+  padding-right: 26px;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.create-doc-modal .modal-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.create-doc-modal .modal-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.create-doc-modal .modal-body::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+
+.create-doc-modal .custom-project-select-container,
+.create-doc-modal .custom-form-select-wrapper {
+  min-width: 0;
+}
+
+.create-doc-modal .custom-select-trigger,
+.create-doc-modal .form-select-trigger {
+  min-height: 38px;
+  border-color: #cbd5e1;
+  border-radius: 10px;
+  padding: 9px 14px;
+}
+
+.create-doc-modal .custom-select-dropdown-menu,
+.create-doc-modal .custom-form-select-menu {
+  z-index: 140;
+  border-color: rgba(148, 163, 184, 0.35);
+  box-shadow: 0 18px 40px -12px rgba(15, 23, 42, 0.28), 0 0 0 1px rgba(15, 23, 42, 0.04);
+}
+
+.create-doc-modal .dropdown-options-container {
+  max-height: 188px;
+}
+
+.create-doc-modal .dropdown-option-row {
+  min-height: 40px;
+  align-items: center;
+}
+
+.create-doc-modal .option-title-text,
+.create-doc-modal .trigger-name {
+  min-width: 0;
+}
+
+.create-doc-modal .dropdown-search-header {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+
+.create-doc-modal .custom-form-select-menu {
+  width: 100%;
+  max-width: 100%;
+}
+
+.create-doc-modal .modal-footer {
+  border-radius: 0 0 18px 18px;
 }
 
 .document-edit-modal {
