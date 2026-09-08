@@ -16,6 +16,7 @@ import {
     CornerDownRight,
     Download,
     ExternalLink,
+    Eye,
     File,
     FileCheck2,
     FileCode,
@@ -175,6 +176,8 @@ const DOCUMENT_TYPE_OPTIONS = [
   { value: "MEETING_MINUTES", label: "Meeting Minutes" },
   { value: "CR", label: "CR (Change Request)" }
 ];
+
+const DOCUMENT_TYPE_ORDER = new Map(DOCUMENT_TYPE_OPTIONS.map((option, index) => [option.value, index]));
 
 function getDocumentTypeShortLabel(type: string) {
   const label = DOCUMENT_TYPE_OPTIONS.find((option) => option.value === type)?.label ?? type;
@@ -1067,8 +1070,10 @@ function App() {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [isNotificationMenuOpen, setIsNotificationMenuOpen] = useState<boolean>(false);
+  const notificationCenterRef = useRef<HTMLDivElement>(null);
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("all");
   const [documentTemplates, setDocumentTemplates] = useState<DocumentTemplate[]>([]);
+  const [previewTemplate, setPreviewTemplate] = useState<DocumentTemplate | null>(null);
   const [newTagCode, setNewTagCode] = useState<string>("");
   const [newTagKind, setNewTagKind] = useState<string>("REQ");
   const [newTagLabel, setNewTagLabel] = useState<string>("");
@@ -1296,6 +1301,25 @@ function App() {
       setActiveTabNav("projects");
     }
   }, [currentUser?.role, activeTabNav]);
+
+  useEffect(() => {
+    if (!isNotificationMenuOpen) return;
+
+    const handleClickOutsideNotification = (event: MouseEvent | TouchEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (notificationCenterRef.current?.contains(target)) return;
+      setIsNotificationMenuOpen(false);
+    };
+
+    document.addEventListener("mousedown", handleClickOutsideNotification, true);
+    document.addEventListener("touchstart", handleClickOutsideNotification, true);
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutsideNotification, true);
+      document.removeEventListener("touchstart", handleClickOutsideNotification, true);
+    };
+  }, [isNotificationMenuOpen]);
 
   useEffect(() => {
     if ((activeTabNav !== "projects" && activeTabNav !== "documents") || !selectedProjectId) return;
@@ -4185,6 +4209,7 @@ function App() {
 
   function closeCreateDocumentModal() {
     setIsCreateDocModalOpen(false);
+    setPreviewTemplate(null);
     resetCreateDocumentDraft();
   }
 
@@ -4637,8 +4662,8 @@ function App() {
       isOpen: true,
       type: "document",
       id: docId,
-      title: "Xác nhận xóa tài liệu",
-      message: `Bạn có chắc chắn muốn xóa tài liệu "${doc?.title || docId}"? Thao tác này không thể hoàn tác.`
+      title: "Xóa tài liệu?",
+      message: `Tài liệu "${doc?.title || docId}" sẽ bị xóa khỏi dự án. Các nhận xét gắn với tài liệu này cũng sẽ không còn hiển thị. Thao tác này không thể hoàn tác.`
     });
   }
 
@@ -4977,6 +5002,7 @@ function App() {
       setDocumentsList((prev) => [document, ...prev]);
       setSelectedProjectId(document.projectId || selectedProject.id);
       setSelectedDocumentId(document.id);
+      setPreviewTemplate(null);
       setIsCreateDocModalOpen(false);
       resetCreateDocumentDraft(document.projectId || selectedProject.id);
       addToast("success", "Đã tạo từ mẫu", `"${document.title}" đã được tạo từ template.`);
@@ -5138,7 +5164,7 @@ function App() {
       return true;
     });
     return (
-      <div className="notification-center">
+      <div className="notification-center" ref={notificationCenterRef}>
         <button
           className={`notification-bell ${unreadCount > 0 ? "has-unread" : ""}`}
           type="button"
@@ -6507,6 +6533,12 @@ function App() {
       (workloadCompletionFilter === "MID" && donePercent >= 50 && donePercent < 100) ||
       (workloadCompletionFilter === "DONE" && donePercent === 100);
     return matchesName && matchesCompletion;
+  });
+  const sortedDocumentTemplates = [...documentTemplates].sort((first, second) => {
+    const firstOrder = DOCUMENT_TYPE_ORDER.get(first.type) ?? 999;
+    const secondOrder = DOCUMENT_TYPE_ORDER.get(second.type) ?? 999;
+    if (firstOrder !== secondOrder) return firstOrder - secondOrder;
+    return first.name.localeCompare(second.name, "vi");
   });
 
   return (
@@ -9194,18 +9226,42 @@ function App() {
                 <div className="template-picker">
                   <div className="collab-section-title">Tạo nhanh từ mẫu</div>
                   <div className="template-grid">
-                    {documentTemplates.map((template) => (
-                      <button
+                    {sortedDocumentTemplates.map((template) => (
+                      <article
                         key={template.id}
-                        type="button"
-                        onClick={() => void handleCreateDocumentFromTemplate(template)}
+                        className="template-card"
                       >
-                        <FileText size={15} />
-                        <span>
-                          <strong>{template.name}</strong>
-                          <small>{template.description || `${template.type} template`}</small>
-                        </span>
-                      </button>
+                        <button
+                          className="template-card-main"
+                          type="button"
+                          onClick={() => setPreviewTemplate(template)}
+                        >
+                          <FileText size={15} />
+                          <span>
+                            <strong>
+                              <span className="template-card-title">{template.name}</span>
+                              <em>{getDocumentTypeShortLabel(template.type)}</em>
+                            </strong>
+                            <small>{template.description || `${template.type} template`}</small>
+                          </span>
+                        </button>
+                        <div className="template-card-actions">
+                          <button
+                            className="template-card-action ghost"
+                            type="button"
+                            onClick={() => setPreviewTemplate(template)}
+                          >
+                            <Eye size={13} /> Xem
+                          </button>
+                          <button
+                            className="template-card-action primary"
+                            type="button"
+                            onClick={() => void handleCreateDocumentFromTemplate(template)}
+                          >
+                            <FilePlus size={13} /> Tạo
+                          </button>
+                        </div>
+                      </article>
                     ))}
                   </div>
                 </div>
@@ -9218,6 +9274,59 @@ function App() {
               </button>
               <button className="btn-primary" type="button" onClick={handleCreateDocument}>
                 <FilePlus size={16} /> Tạo Tài Liệu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 4: Preview Document Template */}
+      {previewTemplate && (
+        <div className="modal-backdrop">
+          <div className="modal-content template-preview-modal">
+            <div className="modal-header">
+              <div className="modal-title-with-icon">
+                <div className="modal-header-badge">
+                  <FileText size={20} />
+                </div>
+                <div>
+                  <h3>Xem trước mẫu tài liệu</h3>
+                  <p className="modal-subtitle">Kiểm tra cấu trúc trước khi tạo tài liệu cho dự án</p>
+                </div>
+              </div>
+              <button className="icon-btn" type="button" onClick={() => setPreviewTemplate(null)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-body template-preview-body">
+              <div className="template-preview-summary">
+                <div>
+                  <span>Loại tài liệu</span>
+                  <strong>{getDocumentTypeShortLabel(previewTemplate.type)}</strong>
+                </div>
+                <div>
+                  <span>Tên mẫu</span>
+                  <strong>{previewTemplate.name}</strong>
+                </div>
+              </div>
+              {previewTemplate.description && (
+                <p className="template-preview-description">{previewTemplate.description}</p>
+              )}
+              <section
+                className="html-document template-preview-content font-sm"
+                dangerouslySetInnerHTML={{ __html: previewTemplate.htmlContent }}
+              />
+            </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" type="button" onClick={() => setPreviewTemplate(null)}>
+                Đóng
+              </button>
+              <button
+                className="btn-primary"
+                type="button"
+                onClick={() => void handleCreateDocumentFromTemplate(previewTemplate)}
+              >
+                <FilePlus size={15} /> Tạo từ mẫu này
               </button>
             </div>
           </div>
@@ -9261,58 +9370,51 @@ function App() {
                 <div className="document-property-grid">
                   <div className="form-group">
                     <label>Loại Tài Liệu</label>
-                    <div className="input-with-icon-wrapper">
+                    <div className="input-with-icon-wrapper document-property-select-wrapper">
                       <FileText size={16} className="field-icon" />
-                      <select
-                        className="form-select"
+                      <CustomFormSelect
+                        className="document-property-select"
                         value={editDocType}
-                        onChange={(e) => setEditDocType(e.target.value)}
-                      >
-                        {DOCUMENT_TYPE_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setEditDocType}
+                        options={DOCUMENT_TYPE_OPTIONS}
+                      />
                     </div>
                   </div>
 
                   <div className="form-group">
                     <label>Trạng Thái</label>
-                    <div className="input-with-icon-wrapper">
+                    <div className="input-with-icon-wrapper document-property-select-wrapper">
                       <CheckCircle2 size={16} className="field-icon" />
-                      <select
-                        className="form-select"
+                      <CustomFormSelect<DocumentStatus>
+                        className="document-property-select"
                         value={editDocStatus}
-                        onChange={(e) => setEditDocStatus(e.target.value as DocumentStatus)}
-                      >
-                        <option value="Draft">Draft</option>
-                        <option value="Triển khai">Triển khai</option>
-                      </select>
+                        onChange={setEditDocStatus}
+                        options={[
+                          { value: "Draft", label: "Draft" },
+                          { value: "Triển khai", label: "Triển khai" }
+                        ]}
+                      />
                     </div>
                   </div>
 
                   <div className="form-group">
                     <label>Chủ sở hữu</label>
-                    <div className="input-with-icon-wrapper">
+                    <div className="input-with-icon-wrapper document-property-select-wrapper">
                       <Users size={16} className="field-icon" />
                       {editingDoc.effectiveRole === "MANAGER" && documentOwnerOptions.length > 0 ? (
-                        <select
-                          className="form-select"
+                        <CustomFormSelect
+                          className="document-property-select"
                           value={editDocOwnerId || editingDoc.ownerId || currentUser.id}
-                          onChange={(event) => {
-                            const ownerId = event.target.value;
+                          onChange={(ownerId) => {
                             const owner = documentOwnerOptions.find((item) => item.id === ownerId);
                             setEditDocOwnerId(ownerId);
                             setEditDocOwner(owner?.name ?? editDocOwner);
                           }}
-                        >
-                          {documentOwnerOptions.map((member) => (
-                            <option key={member.id} value={member.id}>
-                              {member.name} · {member.email}
-                            </option>
-                          ))}
-                        </select>
+                          options={documentOwnerOptions.map((member) => ({
+                            value: member.id,
+                            label: `${member.name} · ${member.email}`
+                          }))}
+                        />
                       ) : (
                         <input
                           className="form-input document-owner-readonly"
