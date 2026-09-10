@@ -456,22 +456,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
                 </div>
 
                 <div className="form-group">
-                  <div className="label-with-link">
-                    <label>Mật khẩu</label>
-                    <a
-                      href="#forgot"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        setForgotEmail(loginEmail);
-                        setErrorMsg(null);
-                        setFieldErrors({});
-                        setMode("forgot");
-                      }}
-                      className="forgot-link"
-                    >
-                      Quên mật khẩu?
-                    </a>
-                  </div>
+                  <label>Mật khẩu</label>
                   <div className={`input-with-icon ${fieldErrors.loginPassword ? "has-error" : ""}`}>
                     <Lock className="input-icon" size={18} />
                     <input
@@ -496,6 +481,20 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = "login", onSuc
                       <AlertCircle size={13} /> {fieldErrors.loginPassword}
                     </small>
                   )}
+                  <a
+                    href="#forgot"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setForgotEmail(loginEmail);
+                      setErrorMsg(null);
+                      setFieldErrors({});
+                      setMode("forgot");
+                    }}
+                    className="forgot-link"
+                    style={{ display: "block", textAlign: "right", marginTop: "6px" }}
+                  >
+                    Quên mật khẩu?
+                  </a>
                 </div>
 
                 <button type="submit" className="submit-btn primary" disabled={loading}>

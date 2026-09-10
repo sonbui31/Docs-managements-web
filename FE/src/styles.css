@@ -222,6 +222,46 @@ button:active:not(:disabled) {
   background: #eff6ff;
 }
 
+/* Floating expand tab — visible only when sidebar is collapsed */
+.sidebar-expand-tab {
+  position: absolute;
+  right: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  width: 18px;
+  height: 34px;
+  border-radius: 0 6px 6px 0;
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  border-left: none;
+  background: #eef4ff;
+  color: var(--accent-primary, #2563eb);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 2px 0 6px rgba(37, 99, 235, 0.08);
+  transition: all 0.2s ease;
+  opacity: 0.85;
+  padding: 0;
+}
+
+.sidebar-expand-tab svg {
+  width: 12px;
+  height: 12px;
+}
+
+.sidebar-expand-tab:hover {
+  opacity: 1;
+  background: #dbeafe;
+  border-color: rgba(37, 99, 235, 0.45);
+  width: 22px;
+}
+
+.app-shell:not(.sidebar-collapsed) .sidebar-expand-tab {
+  display: none;
+}
+
 .sidebar-logo-button {
   position: relative;
   width: 38px;
@@ -13670,6 +13710,24 @@ button:active:not(:disabled) {
   gap: 16px;
 }
 
+.dash-secondary-grid > .dash-card {
+  max-height: 380px;
+  display: flex;
+  flex-direction: column;
+}
+
+.dash-secondary-grid > .dash-card > .dash-panel-header {
+  flex-shrink: 0;
+}
+
+.dash-secondary-grid > .dash-card > .dash-panel-header ~ div {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  padding-right: 2px;
+}
+
 /* Risk indicator dot */
 .dash-risk-dot {
   width: 8px;
@@ -13700,6 +13758,108 @@ button:active:not(:disabled) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   WORKLOAD + PROJECT PROGRESS GRID
+   ═══════════════════════════════════════════════════════════════ */
+
+.dash-workload-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+/* ── Project Progress Card ────────────────────────────────────── */
+.dash-proj-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: clamp(300px, 40vh, 400px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+.dash-proj-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  text-align: left;
+  width: 100%;
+  font-family: var(--dash-font-body);
+}
+
+.dash-proj-row:hover {
+  background: rgba(37, 99, 235, 0.03);
+  border-color: rgba(37, 99, 235, 0.08);
+}
+
+.dash-proj-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dash-proj-row-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dash-proj-row-code {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--dash-accent);
+  background: rgba(37, 99, 235, 0.06);
+  padding: 2px 8px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+
+.dash-proj-row-name {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--dash-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-proj-row-pct {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--dash-accent);
+  flex-shrink: 0;
+}
+
+.dash-proj-row-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  color: var(--dash-text-muted);
+}
+
+.dash-proj-row-stats em {
+  font-style: normal;
+  font-weight: 700;
+  color: var(--dash-text);
+}
+
+.dash-chip-violet {
+  background: rgba(139, 92, 246, 0.1);
+  color: #7c3aed;
+}
+
+/* ═══════════════════════════════════════════════════════════════
    EMPLOYEE DASHBOARD
    ═══════════════════════════════════════════════════════════════ */
 
@@ -13712,6 +13872,10 @@ button:active:not(:disabled) {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: clamp(300px, 45vh, 450px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 
 .dash-emp-ticket-row {
@@ -13861,6 +14025,10 @@ button:active:not(:disabled) {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: clamp(250px, 35vh, 350px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 
 .dash-emp-project-row {
@@ -13936,6 +14104,10 @@ button:active:not(:disabled) {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: clamp(250px, 35vh, 350px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 
 .dash-emp-notif-row {
@@ -14022,6 +14194,10 @@ button:active:not(:disabled) {
   }
 
   .dash-main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dash-workload-grid {
     grid-template-columns: 1fr;
   }
 
@@ -16017,7 +16193,7 @@ button:active:not(:disabled) {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: repeat(6, minmax(220px, 1fr));
+  /* grid-template-columns set dynamically via inline style */
   gap: 12px;
   overflow-x: auto;
   padding-bottom: 6px;

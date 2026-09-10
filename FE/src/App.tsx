@@ -6689,13 +6689,25 @@ function App() {
           }
         }}
         style={isSidebarCollapsed ? { cursor: "pointer" } : undefined}
-        title={isSidebarCollapsed ? "Mở rộng thanh menu (bấm vào khoảng trống)" : undefined}
+        title={isSidebarCollapsed ? "Mở rộng thanh menu" : undefined}
       >
+        {/* Floating expand tab */}
+        {isSidebarCollapsed && (
+          <button
+            className="sidebar-expand-tab"
+            type="button"
+            title="Mở rộng menu"
+            aria-label="Mở rộng menu"
+            onClick={(e) => { e.stopPropagation(); setIsSidebarCollapsed(false); }}
+          >
+            <ChevronRight size={14} />
+          </button>
+        )}
         <div className="brand">
           <button
             className="sidebar-logo-button"
             type="button"
-            title={isSidebarCollapsed ? "ProjectSpace" : "ProjectSpace"}
+            title="ProjectSpace"
             aria-label="ProjectSpace"
             data-tooltip="ProjectSpace"
             onClick={() => {
@@ -8281,7 +8293,7 @@ function App() {
               </div>
             </div>
 
-            <div className="workboard-kanban" aria-label="Project workboard">
+            <div className="workboard-kanban" aria-label="Project workboard" style={{ gridTemplateColumns: `repeat(${selectedWorkboardColumns.length}, minmax(220px, 1fr))` }}>
               {selectedWorkboardColumns.map((column) => {
                 const columnItems = visibleWorkItems.filter((item) => workItemBelongsToColumn(item, column, selectedWorkboardColumns));
                 return (
