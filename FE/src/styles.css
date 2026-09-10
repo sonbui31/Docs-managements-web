@@ -148,7 +148,7 @@ button:active:not(:disabled) {
   z-index: 30;
   overflow: hidden auto;
   box-shadow: var(--shadow-sm);
-  clip-path: inset(0 0 0 0);
+  /* clip-path removed - was breaking modal backdrop-filter */
   transition:
     transform 0.28s cubic-bezier(0.16, 1, 0.3, 1),
     background-color 0.18s ease,
@@ -924,6 +924,8 @@ button:active:not(:disabled) {
 
 /* Compact Topbar Header */
 .topbar {
+  position: relative;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -5130,8 +5132,9 @@ button:active:not(:disabled) {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.5);
-  backdrop-filter: blur(4px);
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: grid;
   place-items: center;
   z-index: 100;
@@ -10207,7 +10210,8 @@ button:active:not(:disabled) {
 }
 
 .input-with-icon.has-error input,
-.select-input.has-error {
+.select-input.has-error,
+.form-input.has-error {
   border-color: #f43f5e;
   background: #fff5f5;
   box-shadow: 0 0 0 3.5px rgba(244, 63, 94, 0.14);

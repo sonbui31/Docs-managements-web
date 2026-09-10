@@ -1,5 +1,6 @@
 import {
     Activity as ActivityIcon,
+    AlertCircle,
     AlertTriangle,
     Bell,
     BookOpen,
@@ -128,6 +129,8 @@ import { getErrorMessage } from "./apiError";
 import { clearAuthSession, fetchCurrentUser, getAccessToken, getStoredUser, logout } from "./authApi";
 import { AuthPage } from "./AuthPage";
 import type { EditorTocItem } from "./DocumentEditor";
+import { prefetchCache } from "./shared/prefetch/prefetchCache";
+import { canPrefetch, prefetchQueue } from "./shared/prefetch/prefetchQueue";
 import type {
     ActivityLog,
     CommentThread,
@@ -187,6 +190,36 @@ function getDocumentTypeShortLabel(type: string) {
 
 type MermaidRenderer = typeof import("mermaid").default;
 type NotificationFilter = "all" | "unread" | "mention" | "ticket" | "document" | "project";
+type ProjectCollaborationData = { dashboard: ProjectDashboard; traces: TraceLink[]; activity: ActivityLog[] };
+type DocumentCollaborationData = { diff: VersionDiff; tagResult: { saved: RequirementTag[]; inferred: RequirementTag[] } };
+
+const CACHE_TTL = {
+  projects: 60_000,
+  projectDocuments: 60_000,
+  projectWorkItems: 30_000,
+  projectMembers: 120_000,
+  workboardColumns: 120_000,
+  projectCollaboration: 30_000,
+  documentComments: 30_000,
+  documentCollaboration: 45_000,
+  roleDashboard: 45_000,
+  notifications: 20_000,
+  templates: 300_000
+} as const;
+
+const cacheKey = {
+  projects: "projects",
+  projectDocuments: (projectId: string) => `project-documents:${projectId}`,
+  projectWorkItems: (projectId: string) => `project-work-items:${projectId}`,
+  projectMembers: (projectId: string) => `project-members:${projectId}`,
+  workboardColumns: (projectId: string) => `workboard-columns:${projectId}`,
+  projectCollaboration: (projectId: string) => `project-collaboration:${projectId}`,
+  documentComments: (documentId: string) => `document-comments:${documentId}`,
+  documentCollaboration: (documentId: string) => `document-collaboration:${documentId}`,
+  roleDashboard: "role-dashboard",
+  notifications: "notifications",
+  templates: "templates"
+} as const;
 
 const mermaidConfig = {
   startOnLoad: false,
@@ -1014,7 +1047,10 @@ function App() {
   const [dashboardWorkItems, setDashboardWorkItems] = useState<WorkItem[]>([]);
   const [workboardColumnsByProject, setWorkboardColumnsByProject] = useState<Record<string, WorkboardColumn[]>>({});
   const [isLoadingWorkItems, setIsLoadingWorkItems] = useState<boolean>(false);
+  const workspaceLoadTokenRef = useRef<number>(0);
+  const loadedDocumentProjectIdsRef = useRef<Set<string>>(new Set());
   const workItemsLoadTokenRef = useRef<number>(0);
+  const loadedWorkItemProjectIdsRef = useRef<Set<string>>(new Set());
   const [draggingWorkItemId, setDraggingWorkItemId] = useState<string | null>(null);
   const pendingWorkItemMovesRef = useRef<Record<string, {
     status: WorkItemStatus;
@@ -1039,6 +1075,7 @@ function App() {
   const [isSavingWorkboardColumns, setIsSavingWorkboardColumns] = useState<boolean>(false);
   const [isWorkItemModalOpen, setIsWorkItemModalOpen] = useState<boolean>(false);
   const [workItemDraft, setWorkItemDraft] = useState<WorkItemDraft | null>(null);
+  const [modalFieldErrors, setModalFieldErrors] = useState<Record<string, string>>({});
   const [isSavingWorkItem, setIsSavingWorkItem] = useState<boolean>(false);
   const [isAssigneeMenuOpen, setIsAssigneeMenuOpen] = useState<boolean>(false);
   const workItemAssigneeDropdownRef = useRef<HTMLDivElement>(null);
@@ -1271,12 +1308,14 @@ function App() {
       setIsBackendConnected(false);
       setIsLoadingBackend(false);
       setProjectMembersByProject({});
+      loadedDocumentProjectIdsRef.current.clear();
+      loadedWorkItemProjectIdsRef.current.clear();
       return;
     }
 
     resetModalDraftsForAccountChange();
     void loadWorkspaceFromBackend().then(() => {
-      if (justLoggedInRef.current) {
+      if (justLoggedInRef.current || shouldShowMyTasksToday()) {
         justLoggedInRef.current = false;
         void loadAndShowMyTasks();
       }
@@ -1288,11 +1327,6 @@ function App() {
     void fetchCurrentUser()
       .then((user) => {
         setCurrentUser(user);
-        void loadWorkspaceFromBackend().then(() => {
-          if (shouldShowMyTasksToday()) {
-            void loadAndShowMyTasks();
-          }
-        });
       })
       .catch(() => {
         setIsBackendConnected(false);
@@ -1349,6 +1383,9 @@ function App() {
 
   useEffect(() => {
     if (!isBackendConnected || !selectedProjectId) return;
+    if (!loadedDocumentProjectIdsRef.current.has(selectedProjectId)) {
+      void loadDocumentsForProject(selectedProjectId);
+    }
     void loadProjectCollaboration(selectedProjectId);
     void loadRoleDashboard();
     void loadNotifications();
@@ -1395,10 +1432,91 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [isBackendConnected, selectedProjectId, searchQuery]);
 
+  async function cachedFetch<T>(key: string, ttlMs: number, fetcher: () => Promise<T>, force = false) {
+    if (!force) {
+      const cached = prefetchCache.get<T>(key);
+      if (cached !== undefined) return cached;
+      const pending = prefetchQueue.getPending<T>(key);
+      if (pending) return pending;
+    }
+
+    const value = await fetcher();
+    prefetchCache.set(key, value, ttlMs);
+    return value;
+  }
+
+  function prefetchValue<T>(key: string, ttlMs: number, fetcher: () => Promise<T>) {
+    if (!canPrefetch() || prefetchCache.get<T>(key) !== undefined) return;
+    void prefetchQueue.enqueue(key, async () => {
+      const value = await fetcher();
+      prefetchCache.set(key, value, ttlMs);
+      return value;
+    }).catch((error) => console.error(`Prefetch failed for ${key}:`, error));
+  }
+
+  function invalidateWorkspaceCache() {
+    prefetchCache.delete(cacheKey.projects);
+    prefetchCache.delete(cacheKey.roleDashboard);
+    prefetchCache.delete(cacheKey.notifications);
+  }
+
+  function invalidateProjectCache(projectId?: string | null) {
+    if (!projectId) return;
+    prefetchCache.delete(cacheKey.projectDocuments(projectId));
+    prefetchCache.delete(cacheKey.projectWorkItems(projectId));
+    prefetchCache.delete(cacheKey.projectMembers(projectId));
+    prefetchCache.delete(cacheKey.workboardColumns(projectId));
+    prefetchCache.delete(cacheKey.projectCollaboration(projectId));
+    invalidateWorkspaceCache();
+    loadedDocumentProjectIdsRef.current.delete(projectId);
+    loadedWorkItemProjectIdsRef.current.delete(projectId);
+  }
+
+  function invalidateDocumentCache(documentId?: string | null, projectId?: string | null) {
+    if (documentId) {
+      prefetchCache.delete(cacheKey.documentComments(documentId));
+      prefetchCache.delete(cacheKey.documentCollaboration(documentId));
+    }
+    invalidateProjectCache(projectId);
+  }
+
+  function prefetchProject(projectId?: string | null) {
+    if (!projectId) return;
+    prefetchValue(cacheKey.projectDocuments(projectId), CACHE_TTL.projectDocuments, () => fetchDocumentsByProject(projectId));
+    prefetchValue(cacheKey.projectWorkItems(projectId), CACHE_TTL.projectWorkItems, () => fetchProjectWorkItems(projectId));
+    prefetchValue(cacheKey.workboardColumns(projectId), CACHE_TTL.workboardColumns, () => fetchWorkboardColumns(projectId));
+    prefetchValue(cacheKey.projectCollaboration(projectId), CACHE_TTL.projectCollaboration, async () => {
+      const [dashboard, traces, activity] = await Promise.all([
+        fetchProjectDashboard(projectId),
+        fetchTraceLinks(projectId),
+        fetchProjectActivity(projectId)
+      ]);
+      return { dashboard, traces, activity };
+    });
+  }
+
+  function prefetchDocument(documentId?: string | null) {
+    if (!documentId || documentId === "empty-document") return;
+    prefetchValue(cacheKey.documentComments(documentId), CACHE_TTL.documentComments, () => fetchComments(documentId));
+    prefetchValue(cacheKey.documentCollaboration(documentId), CACHE_TTL.documentCollaboration, async () => {
+      const [diff, tagResult] = await Promise.all([fetchDocumentDiff(documentId), fetchDocumentTags(documentId)]);
+      return { diff, tagResult };
+    });
+  }
+
+  function prefetchShareAccess() {
+    const targetProjectId = selectedDocument.id === "empty-document" ? selectedProject.id : selectedDocument.projectId ?? selectedProject.id;
+    if (targetProjectId) {
+      prefetchValue(cacheKey.projectMembers(targetProjectId), CACHE_TTL.projectMembers, () => fetchProjectMembers(targetProjectId));
+    }
+  }
+
   async function loadWorkspaceFromBackend(preferredProjectId?: string, preferredDocumentId?: string) {
+    const loadToken = ++workspaceLoadTokenRef.current;
     setIsLoadingBackend(true);
     try {
-      const backendProjects = await fetchProjects();
+      const backendProjects = await cachedFetch(cacheKey.projects, CACHE_TTL.projects, fetchProjects);
+      if (workspaceLoadTokenRef.current !== loadToken) return;
       if (backendProjects.length === 0) {
         setProjectsList([]);
         setDocumentsList([]);
@@ -1411,60 +1529,41 @@ function App() {
         return;
       }
 
-      const hydratedDocuments = (
-        await Promise.all(backendProjects.map((project) => fetchDocumentsByProject(project.id)))
-      ).flat();
-      const hydratedWorkItems = applyPendingWorkItemMoves((
-        await Promise.all(
-          backendProjects.map((project) =>
-            fetchProjectWorkItems(project.id).catch((error) => {
-              console.error(`Cannot load work items for project ${project.id}:`, error);
-              return [] as WorkItem[];
-            })
-          )
-        )
-      ).flat());
-      const hydratedProjectMembers = Object.fromEntries(
-        await Promise.all(
-          backendProjects.map(async (project) => {
-            try {
-              return [project.id, await fetchProjectMembers(project.id)] as const;
-            } catch (error) {
-              console.error(`Cannot load project members for project ${project.id}:`, error);
-              return [project.id, [] as ProjectMemberOption[]] as const;
-            }
-          })
-        )
-      );
-      const projectsWithCounts = backendProjects.map((project) => ({
-        ...project,
-        documents: hydratedDocuments.filter((document) => document.projectId === project.id).length,
-        openComments: hydratedDocuments
-          .filter((document) => document.projectId === project.id)
-          .reduce((total, document) => total + (document.openCommentsCount ?? 0), 0)
-      }));
       const nextProjectId = preferredProjectId ?? selectedProjectId;
-      const selectedProjectExists = projectsWithCounts.some((project) => project.id === nextProjectId);
-      const finalProjectId = selectedProjectExists ? nextProjectId : projectsWithCounts[0].id;
+      const selectedProjectExists = backendProjects.some((project) => project.id === nextProjectId);
+      const finalProjectId = selectedProjectExists ? nextProjectId : backendProjects[0].id;
+      const [selectedProjectDocuments, selectedProjectWorkItems] = await Promise.all([
+        cachedFetch(cacheKey.projectDocuments(finalProjectId), CACHE_TTL.projectDocuments, () => fetchDocumentsByProject(finalProjectId)),
+        cachedFetch(cacheKey.projectWorkItems(finalProjectId), CACHE_TTL.projectWorkItems, () => fetchProjectWorkItems(finalProjectId)).catch((error) => {
+          console.error(`Cannot load work items for project ${finalProjectId}:`, error);
+          return [] as WorkItem[];
+        })
+      ]);
+      if (workspaceLoadTokenRef.current !== loadToken) return;
+      const hydratedWorkItems = applyPendingWorkItemMoves(selectedProjectWorkItems);
+      loadedDocumentProjectIdsRef.current = new Set([finalProjectId]);
+      loadedWorkItemProjectIdsRef.current = new Set([finalProjectId]);
+      const projectsWithSelectedCounts = applyProjectDocumentCounts(backendProjects, selectedProjectDocuments);
       const firstDocument =
-        hydratedDocuments.find((document) => document.id === preferredDocumentId) ??
-        hydratedDocuments.find((document) => document.projectId === finalProjectId) ??
-        hydratedDocuments[0];
+        selectedProjectDocuments.find((document) => document.id === preferredDocumentId) ??
+        selectedProjectDocuments[0];
 
-      setProjectsList(projectsWithCounts);
-      setDocumentsList(hydratedDocuments);
-      setProjectMembersByProject(hydratedProjectMembers);
+      setProjectsList(projectsWithSelectedCounts);
+      setDocumentsList(selectedProjectDocuments);
       setDocumentCommentCounts(
-        Object.fromEntries(hydratedDocuments.map((document) => [document.id, document.openCommentsCount ?? 0]))
+        Object.fromEntries(selectedProjectDocuments.map((document) => [document.id, document.openCommentsCount ?? 0]))
       );
       setDashboardWorkItems(hydratedWorkItems);
-      setWorkItems(hydratedWorkItems.filter((item) => item.projectId === finalProjectId));
+      setWorkItems(hydratedWorkItems);
       setSelectedProjectId(finalProjectId);
       setSelectedDocumentId(firstDocument?.id ?? "empty-document");
       setIsBackendConnected(true);
+      void hydrateWorkspaceInBackground(backendProjects, finalProjectId, loadToken);
     } catch (error: any) {
       console.error("Cannot load backend workspace:", error);
       setIsBackendConnected(false);
+      loadedDocumentProjectIdsRef.current.clear();
+      loadedWorkItemProjectIdsRef.current.clear();
       if (error?.message?.includes("401") || error?.message?.includes("Unauthorized")) {
         clearAuthSession();
         setCurrentUser(null);
@@ -1473,13 +1572,167 @@ function App() {
         addToast("warning", "Đang dùng dữ liệu mẫu", "FE chưa gọi được BE. Kiểm tra Nest server ở port 3000.");
       }
     } finally {
-      setIsLoadingBackend(false);
+      if (workspaceLoadTokenRef.current === loadToken) {
+        setIsLoadingBackend(false);
+      }
+    }
+  }
+
+  function applyProjectDocumentCounts(projects: Project[], documents: ProjectDocument[]) {
+    const documentsByProject = documents.reduce((map, document) => {
+      if (!document.projectId) return map;
+      const current = map.get(document.projectId) ?? { documents: 0, openComments: 0 };
+      current.documents += 1;
+      current.openComments += document.openCommentsCount ?? 0;
+      map.set(document.projectId, current);
+      return map;
+    }, new Map<string, { documents: number; openComments: number }>());
+
+    return projects.map((project) => {
+      const counts = documentsByProject.get(project.id);
+      return counts ? { ...project, ...counts } : project;
+    });
+  }
+
+  async function hydrateWorkspaceInBackground(projects: Project[], primaryProjectId: string, loadToken: number) {
+    const secondaryProjects = projects.filter((project) => project.id !== primaryProjectId);
+    if (!secondaryProjects.length) return;
+
+    const [documentGroups, workItemGroups] = await Promise.all([
+      mapWithConcurrency(secondaryProjects, 4, async (project) => {
+        try {
+          return await cachedFetch(
+            cacheKey.projectDocuments(project.id),
+            CACHE_TTL.projectDocuments,
+            () => fetchDocumentsByProject(project.id)
+          );
+        } catch (error) {
+          console.error(`Cannot background-load documents for project ${project.id}:`, error);
+          return [] as ProjectDocument[];
+        }
+      }),
+      mapWithConcurrency(secondaryProjects, 3, async (project) => {
+        try {
+          return await cachedFetch(
+            cacheKey.projectWorkItems(project.id),
+            CACHE_TTL.projectWorkItems,
+            () => fetchProjectWorkItems(project.id)
+          );
+        } catch (error) {
+          console.error(`Cannot background-load work items for project ${project.id}:`, error);
+          return [] as WorkItem[];
+        }
+      })
+    ]);
+    if (workspaceLoadTokenRef.current !== loadToken) return;
+
+    const backgroundDocuments = documentGroups.flat();
+    const backgroundWorkItems = applyPendingWorkItemMoves(workItemGroups.flat());
+
+    const backgroundProjectIds = new Set(
+      backgroundDocuments
+        .map((document) => document.projectId)
+        .filter((projectId): projectId is string => Boolean(projectId))
+    );
+    loadedDocumentProjectIdsRef.current = new Set([
+      ...loadedDocumentProjectIdsRef.current,
+      ...secondaryProjects.map((project) => project.id)
+    ]);
+    loadedWorkItemProjectIdsRef.current = new Set([
+      ...loadedWorkItemProjectIdsRef.current,
+      ...secondaryProjects.map((project) => project.id)
+    ]);
+
+    setDocumentsList((prev) => mergeProjectDocuments(prev, backgroundDocuments));
+    setDocumentCommentCounts((prev) => ({
+      ...prev,
+      ...Object.fromEntries(backgroundDocuments.map((document) => [document.id, document.openCommentsCount ?? 0]))
+    }));
+    setProjectsList((currentProjects) =>
+      currentProjects.map((project) => {
+        if (!backgroundProjectIds.has(project.id)) return project;
+        const projectDocuments = backgroundDocuments.filter((document) => document.projectId === project.id);
+        return {
+          ...project,
+          documents: projectDocuments.length,
+          openComments: projectDocuments.reduce((total, document) => total + (document.openCommentsCount ?? 0), 0)
+        };
+      })
+    );
+    setDashboardWorkItems((prev) => mergeStableWorkItems(prev, backgroundWorkItems));
+  }
+
+  async function mapWithConcurrency<T, R>(
+    items: T[],
+    limit: number,
+    mapper: (item: T) => Promise<R>
+  ) {
+    const results: R[] = [];
+    let nextIndex = 0;
+
+    async function worker() {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        const item = items[currentIndex];
+        if (item !== undefined) {
+          results[currentIndex] = await mapper(item);
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
+  }
+
+  function mergeProjectDocuments(prevDocuments: ProjectDocument[], nextDocuments: ProjectDocument[]) {
+    const nextProjectIds = new Set(
+      nextDocuments
+        .map((document) => document.projectId)
+        .filter((projectId): projectId is string => Boolean(projectId))
+    );
+    return [
+      ...prevDocuments.filter((document) => !document.projectId || !nextProjectIds.has(document.projectId)),
+      ...nextDocuments
+    ];
+  }
+
+  async function loadDocumentsForProject(projectId: string) {
+    if (!projectId) return;
+    try {
+      const nextDocuments = await cachedFetch(
+        cacheKey.projectDocuments(projectId),
+        CACHE_TTL.projectDocuments,
+        () => fetchDocumentsByProject(projectId)
+      );
+      loadedDocumentProjectIdsRef.current.add(projectId);
+      setDocumentsList((prev) => mergeProjectDocuments(prev, nextDocuments));
+      setDocumentCommentCounts((prev) => ({
+        ...prev,
+        ...Object.fromEntries(nextDocuments.map((document) => [document.id, document.openCommentsCount ?? 0]))
+      }));
+      setProjectsList((prev) =>
+        prev.map((project) => project.id === projectId
+          ? {
+              ...project,
+              documents: nextDocuments.length,
+              openComments: nextDocuments.reduce((total, document) => total + (document.openCommentsCount ?? 0), 0)
+            }
+          : project
+        )
+      );
+    } catch (error) {
+      console.error(`Cannot load documents for project ${projectId}:`, error);
     }
   }
 
   async function loadCommentsForDocument(documentId: string) {
     try {
-      const backendComments = await fetchComments(documentId);
+      const backendComments = await cachedFetch(
+        cacheKey.documentComments(documentId),
+        CACHE_TTL.documentComments,
+        () => fetchComments(documentId)
+      );
       setCommentsList((prev) => {
         const remaining = prev.filter((comment) => comment.documentId !== documentId);
         return [...backendComments, ...remaining.filter((comment) => !comment.documentId)];
@@ -1495,27 +1748,45 @@ function App() {
 
   async function loadProjectCollaboration(projectId: string) {
     try {
-      const [dashboard, traces, activity] = await Promise.all([
-        fetchProjectDashboard(projectId),
-        fetchTraceLinks(projectId),
-        fetchProjectActivity(projectId)
-      ]);
+      const { dashboard, traces, activity } = await cachedFetch<ProjectCollaborationData>(
+        cacheKey.projectCollaboration(projectId),
+        CACHE_TTL.projectCollaboration,
+        async () => {
+          const [dashboard, traces, activity] = await Promise.all([
+            fetchProjectDashboard(projectId),
+            fetchTraceLinks(projectId),
+            fetchProjectActivity(projectId)
+          ]);
+          return { dashboard, traces, activity };
+        }
+      );
       setProjectDashboard(dashboard);
       setTraceLinks(traces);
       setActivityLogs(activity);
     } catch (error) {
       console.error("Cannot load project collaboration:", error);
     }
-    await Promise.all([loadWorkboardColumns(projectId), loadProjectWorkItems(projectId)]);
+    await Promise.all([
+      loadWorkboardColumns(projectId),
+      loadedWorkItemProjectIdsRef.current.has(projectId)
+        ? Promise.resolve()
+        : loadProjectWorkItems(projectId)
+    ]);
   }
 
-  async function loadProjectWorkItems(projectId: string) {
+  async function loadProjectWorkItems(projectId: string, force = false) {
     if (!projectId) return;
     const loadToken = ++workItemsLoadTokenRef.current;
     setIsLoadingWorkItems(true);
     try {
-      const nextItems = applyPendingWorkItemMoves(await fetchProjectWorkItems(projectId));
+      const nextItems = applyPendingWorkItemMoves(await cachedFetch(
+        cacheKey.projectWorkItems(projectId),
+        CACHE_TTL.projectWorkItems,
+        () => fetchProjectWorkItems(projectId),
+        force
+      ));
       if (workItemsLoadTokenRef.current !== loadToken) return;
+      loadedWorkItemProjectIdsRef.current.add(projectId);
       setWorkItems((prev) => mergeStableWorkItems(prev, nextItems));
       setDashboardWorkItems((prev) => mergeStableWorkItems(prev, nextItems, projectId));
     } catch (error) {
@@ -1628,7 +1899,11 @@ function App() {
   async function loadWorkboardColumns(projectId: string) {
     if (!projectId) return DEFAULT_WORKBOARD_COLUMNS;
     try {
-      const columns = await fetchWorkboardColumns(projectId);
+      const columns = await cachedFetch(
+        cacheKey.workboardColumns(projectId),
+        CACHE_TTL.workboardColumns,
+        () => fetchWorkboardColumns(projectId)
+      );
       const normalized = columns.length ? columns : DEFAULT_WORKBOARD_COLUMNS.map((column) => ({ ...column, projectId }));
       setWorkboardColumnsByProject((prev) => ({ ...prev, [projectId]: normalized }));
       return normalized;
@@ -1643,7 +1918,11 @@ function App() {
   async function loadProjectMembers(projectId: string) {
     if (!projectId) return;
     try {
-      const members = await fetchProjectMembers(projectId);
+      const members = await cachedFetch(
+        cacheKey.projectMembers(projectId),
+        CACHE_TTL.projectMembers,
+        () => fetchProjectMembers(projectId)
+      );
       setProjectMembersByProject((prev) => ({ ...prev, [projectId]: members }));
     } catch (error) {
       console.error("Cannot load project members:", error);
@@ -1655,6 +1934,7 @@ function App() {
       scope === "project"
         ? targetId
         : documentsList.find((document) => document.id === targetId)?.projectId ?? selectedProject.id;
+    invalidateProjectCache(projectIdToRefresh);
     await loadProjectMembers(projectIdToRefresh);
     await loadRoleDashboard();
   }
@@ -1662,7 +1942,7 @@ function App() {
   async function loadRoleDashboard() {
     setIsRefreshingDashboard(true);
     try {
-      setRoleDashboard(await fetchRoleDashboard());
+      setRoleDashboard(await cachedFetch(cacheKey.roleDashboard, CACHE_TTL.roleDashboard, fetchRoleDashboard));
     } catch (error) {
       console.error("Cannot load role dashboard:", error);
     } finally {
@@ -1671,10 +1951,13 @@ function App() {
   }
 
   async function refreshWorkspaceDashboard() {
+    prefetchCache.clear();
+    loadedDocumentProjectIdsRef.current.clear();
+    loadedWorkItemProjectIdsRef.current.clear();
     setIsRefreshingDashboard(true);
     try {
       await Promise.all([
-        fetchRoleDashboard()
+        cachedFetch(cacheKey.roleDashboard, CACHE_TTL.roleDashboard, fetchRoleDashboard, true)
           .then((dashboard) => setRoleDashboard(dashboard))
           .catch((error) => console.error("Cannot load role dashboard:", error)),
         loadWorkspaceFromBackend(selectedProjectId, selectedDocumentId)
@@ -1686,10 +1969,17 @@ function App() {
 
   async function loadDocumentCollaboration(documentId: string) {
     try {
-      const [diff, tagResult] = await Promise.all([
-        fetchDocumentDiff(documentId),
-        fetchDocumentTags(documentId)
-      ]);
+      const { diff, tagResult } = await cachedFetch<DocumentCollaborationData>(
+        cacheKey.documentCollaboration(documentId),
+        CACHE_TTL.documentCollaboration,
+        async () => {
+          const [diff, tagResult] = await Promise.all([
+            fetchDocumentDiff(documentId),
+            fetchDocumentTags(documentId)
+          ]);
+          return { diff, tagResult };
+        }
+      );
       setDocumentDiff(diff);
       setSavedTags(tagResult.saved);
       setInferredTags(tagResult.inferred);
@@ -1700,7 +1990,7 @@ function App() {
 
   async function loadNotifications() {
     try {
-      setNotifications(await fetchNotifications());
+      setNotifications(await cachedFetch(cacheKey.notifications, CACHE_TTL.notifications, fetchNotifications));
     } catch (error) {
       console.error("Cannot load notifications:", error);
     }
@@ -1708,7 +1998,7 @@ function App() {
 
   async function loadTemplates() {
     try {
-      setDocumentTemplates(await fetchDocumentTemplates());
+      setDocumentTemplates(await cachedFetch(cacheKey.templates, CACHE_TTL.templates, fetchDocumentTemplates));
     } catch (error) {
       console.error("Cannot load templates:", error);
     }
@@ -2477,6 +2767,7 @@ function App() {
   }, [isBackendConnected, isEditingDocumentContent, selectedProjectId]);
 
   function openShareAccessModal() {
+    prefetchShareAccess();
     if (selectedDocument.id === "empty-document") {
       setShareInitialScope("project");
       addToast("info", "Chưa có tài liệu để chia sẻ", "Mình chuyển sang chia sẻ quyền toàn dự án trước.");
@@ -3176,6 +3467,7 @@ function App() {
     try {
       const updated = await updateWorkItem(item.id, { columnId: column.id });
       if (pendingWorkItemMovesRef.current[item.id]?.token !== moveToken) return;
+      invalidateProjectCache(updated.projectId ?? item.projectId);
       delete pendingWorkItemMovesRef.current[item.id];
       setWorkItems((prev) => prev.map((workItem) => workItem.id === updated.id ? updated : workItem));
       setDashboardWorkItems((prev) => prev.map((workItem) => workItem.id === updated.id ? updated : workItem));
@@ -3219,7 +3511,7 @@ function App() {
     }));
     setIsAssigneeMenuOpen(false);
     void loadProjectMembers(selectedProject.id);
-    setIsWorkItemModalOpen(true);
+    setIsWorkItemModalOpen(true); setModalFieldErrors({});
   }
 
   function openWorkboardConfigModal() {
@@ -3340,6 +3632,8 @@ function App() {
       }
 
       const columns = await reorderWorkboardColumns(selectedProject.id, results);
+      prefetchCache.delete(cacheKey.workboardColumns(selectedProject.id));
+      prefetchCache.set(cacheKey.workboardColumns(selectedProject.id), columns, CACHE_TTL.workboardColumns);
       setWorkboardColumnsByProject((prev) => ({ ...prev, [selectedProject.id]: columns }));
       setIsWorkboardConfigOpen(false);
       setWorkboardColumnDrafts([]);
@@ -3374,7 +3668,7 @@ function App() {
     });
     setIsAssigneeMenuOpen(false);
     void loadProjectMembers(item.projectId);
-    setIsWorkItemModalOpen(true);
+    setIsWorkItemModalOpen(true); setModalFieldErrors({});
   }
 
   function toggleWorkItemAssignee(member: ProjectMemberOption) {
@@ -3691,6 +3985,7 @@ function App() {
     if (!content) return;
     try {
       await createWorkItemComment(viewingWorkItem.id, { content, parentId });
+      invalidateProjectCache(viewingWorkItem.projectId);
       if (parentId) {
         setReplyingWorkItemCommentId(null);
         setWorkItemReplyText("");
@@ -4052,6 +4347,7 @@ function App() {
     if (!viewingWorkItem?.id || !editingWorkItemCommentText.trim()) return;
     try {
       await updateWorkItemComment(viewingWorkItem.id, commentId, { content: editingWorkItemCommentText.trim() });
+      invalidateProjectCache(viewingWorkItem.projectId);
       setEditingWorkItemCommentId(null);
       setEditingWorkItemCommentText("");
       await loadWorkItemComments(viewingWorkItem.id);
@@ -4077,6 +4373,7 @@ function App() {
   async function handleDeleteWorkItemComment(workItemId: string, commentId: string) {
     try {
       await deleteWorkItemComment(workItemId, commentId);
+      invalidateProjectCache(viewingWorkItem?.projectId ?? selectedProjectId);
       await loadWorkItemComments(workItemId);
       await loadWorkItemActivity(workItemId);
       addToast("info", "Đã xóa comment", "Comment ticket đã được xóa.");
@@ -4111,7 +4408,7 @@ function App() {
   async function handleSaveWorkItem() {
     if (!workItemDraft || isSavingWorkItem) return;
     if (!workItemDraft.title.trim()) {
-      addToast("warning", "Thiếu tiêu đề", "Vui lòng nhập tiêu đề ticket.");
+      setModalFieldErrors((prev) => ({ ...prev, ticketTitle: "Vui lòng nhập tiêu đề ticket." }));
       return;
     }
 
@@ -4159,6 +4456,7 @@ function App() {
       const saved = workItemDraft.id
         ? await updateWorkItem(workItemDraft.id, payload)
         : await createWorkItem({ ...payload, projectId: workItemDraft.projectId });
+      invalidateProjectCache(saved.projectId);
       setWorkItems((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)]);
       setDashboardWorkItems((prev) => [saved, ...prev.filter((item) => item.id !== saved.id)]);
       setIsAssigneeMenuOpen(false);
@@ -4195,6 +4493,7 @@ function App() {
         labelNames: workItemLabelNames(item),
         dueDate: item.dueDate ? item.dueDate.slice(0, 10) : undefined
       });
+      invalidateProjectCache(duplicated.projectId);
       setWorkItems((prev) => duplicated.projectId === selectedProjectId ? [duplicated, ...prev] : prev);
       setDashboardWorkItems((prev) => [duplicated, ...prev]);
       addToast("success", "Đã duplicate ticket", `"${displayWorkItemTitle(duplicated)}" đã được tạo.`);
@@ -4218,6 +4517,7 @@ function App() {
     const item = workItems.find((workItem) => workItem.id === itemId);
     try {
       await deleteWorkItem(itemId);
+      invalidateProjectCache(item?.projectId ?? selectedProjectId);
       setWorkItems((prev) => prev.filter((workItem) => workItem.id !== itemId));
       setDashboardWorkItems((prev) => prev.filter((workItem) => workItem.id !== itemId));
       addToast("info", "Đã xóa ticket", `"${item?.title ?? "Ticket"}" đã được xóa khỏi Workboard.`);
@@ -4429,7 +4729,7 @@ function App() {
     if (isCreatingProject) return;
     if (!currentUser) return;
     if (!newProjName.trim()) {
-      addToast("warning", "Thiếu thông tin", "Vui lòng nhập Tên dự án.");
+      setModalFieldErrors((prev) => ({ ...prev, projectName: "Vui lòng nhập Tên dự án." }));
       return;
     }
     const projectCode = newProjCode.trim()
@@ -4442,6 +4742,7 @@ function App() {
         name: newProjName.trim(),
         client: buildProjectClientLabel(newProjCustomer, newProjBusinessUnit)
       });
+      invalidateWorkspaceCache();
       setProjectsList((prev) => [...prev, newProj]);
       setProjectMembersByProject((prev) => ({
         ...prev,
@@ -4488,7 +4789,7 @@ function App() {
   async function handleSaveEditProject() {
     if (!editingProject || isSavingEditProject) return;
     if (!editProjName.trim()) {
-      addToast("warning", "Thiếu thông tin", "Vui lòng nhập Tên dự án.");
+      setModalFieldErrors((prev) => ({ ...prev, editProjectName: "Vui lòng nhập Tên dự án." }));
       return;
     }
     const projectCode = editProjCode.trim()
@@ -4505,6 +4806,7 @@ function App() {
         name: editProjName.trim(),
         client: buildProjectClientLabel(editProjCustomer, editProjBusinessUnit)
       });
+      invalidateProjectCache(updatedProject.id);
       setProjectsList((prev) => prev.map((p) => (p.id === updatedProject.id ? { ...p, ...updatedProject } : p)));
       setIsEditProjectModalOpen(false);
       resetEditProjectDraft();
@@ -4540,6 +4842,7 @@ function App() {
 
     try {
       await deleteProject(projectId);
+      invalidateProjectCache(projectId);
       const updatedProjects = projectsList.filter((p) => p.id !== projectId);
       const removedDocumentIds = new Set(
         documentsList.filter((document) => document.projectId === projectId).map((document) => document.id)
@@ -4565,7 +4868,7 @@ function App() {
   // Create New Document Handler
   async function handleCreateDocument() {
     if (!newDocTitle.trim()) {
-      addToast("warning", "Thiếu tiêu đề", "Vui lòng nhập tên/tiêu đề tài liệu.");
+      setModalFieldErrors((prev) => ({ ...prev, docTitle: "Vui lòng nhập tên/tiêu đề tài liệu." }));
       return;
     }
     const initialContent = `<h3>1. Mục tiêu Yêu cầu (${newDocTitle.trim()})</h3>\n<div class="req-block" data-req="REQ-001">\n  <div class="req-block-header">\n    <span class="req-tag">REQ-001</span>\n  </div>\n  <p>Yêu cầu nghiệp vụ ban đầu cho tài liệu ${newDocTitle.trim()}.</p>\n</div>`;
@@ -4577,6 +4880,7 @@ function App() {
         type: newDocType,
         htmlContent: initialContent
       });
+      invalidateProjectCache(newDocProjectId);
 
       setDocumentsList((prev) => [newDoc, ...prev.filter((doc) => doc.id !== newDoc.id)]);
       setProjectsList((prev) =>
@@ -4611,7 +4915,7 @@ function App() {
   async function handleSaveEditDocument() {
     if (!editingDoc) return;
     if (!editDocTitle.trim()) {
-      addToast("warning", "Thiếu tiêu đề", "Vui lòng nhập tên/tiêu đề tài liệu.");
+      setModalFieldErrors((prev) => ({ ...prev, editDocTitle: "Vui lòng nhập tên/tiêu đề tài liệu." }));
       return;
     }
 
@@ -4624,6 +4928,7 @@ function App() {
       if (editDocOwnerId && editDocOwnerId !== editingDoc.ownerId && editingDoc.effectiveRole === "MANAGER") {
         updatedDocument = await transferDocumentOwner(editingDoc.id, editDocOwnerId);
       }
+      invalidateDocumentCache(updatedDocument.id, updatedDocument.projectId ?? editingDoc.projectId);
       setDocumentsList((prev) =>
         prev.map((d) =>
           d.id === updatedDocument.id
@@ -4671,6 +4976,7 @@ function App() {
         expectedUpdatedAt: saveGuard.updatedAtIso,
         expectedVersion: saveGuard.version
       });
+      invalidateDocumentCache(updatedDocument.id, updatedDocument.projectId ?? selectedDocument.projectId);
 
       // Save succeeded — update guard immediately so next auto-save uses fresh values
       documentSaveGuardRef.current = {
@@ -4720,6 +5026,7 @@ function App() {
       const updatedDocument = await updateDocument(selectedDocument.id, {
         status: "Triển khai"
       });
+      invalidateDocumentCache(updatedDocument.id, updatedDocument.projectId ?? selectedDocument.projectId);
       setDocumentsList((prev) =>
         prev.map((document) =>
           document.id === updatedDocument.id
@@ -4753,6 +5060,7 @@ function App() {
 
     try {
       await deleteDocument(documentId);
+      invalidateDocumentCache(documentId, docToDelete?.projectId ?? selectedProjectId);
       const updatedDocs = documentsList.filter((d) => d.id !== documentId);
       setDocumentsList(updatedDocs);
       setDocumentCommentCounts((prev) => {
@@ -4790,6 +5098,7 @@ function App() {
     const removedDocumentId = commentsToRemove[0]?.documentId;
     try {
       await deleteComment(commentId);
+      invalidateDocumentCache(removedDocumentId, documentsList.find((document) => document.id === removedDocumentId)?.projectId ?? selectedProjectId);
       setCommentsList((prev) => prev.filter((c) => c.id !== commentId && c.parentId !== commentId));
       adjustDocumentCommentCount(removedDocumentId, -commentsToRemove.filter((comment) => comment.status === "open").length);
       addToast("info", "Đã xóa nhận xét", "Ghi chú nhận xét đã được xóa khỏi Neon.");
@@ -4838,6 +5147,7 @@ function App() {
 
     try {
       const importedDoc = await importDocument(file, targetProject.id, targetDocumentId, targetDocumentType);
+      invalidateDocumentCache(importedDoc.id, targetProject.id);
 
       setDocumentsList((prev) => {
         if (targetDocumentId) {
@@ -4924,6 +5234,7 @@ function App() {
     setIsPublishingVersion(true);
     try {
       const publishedDocument = await publishDocumentVersion(selectedDocument.id, publishVersionNote.trim() || undefined);
+      invalidateDocumentCache(publishedDocument.id, publishedDocument.projectId || selectedProjectId);
       setDocumentsList((prev) =>
         prev.map((document) =>
           document.id === publishedDocument.id
@@ -4962,6 +5273,7 @@ function App() {
     setRestoringVersionId(version.id);
     try {
       const restoredDocument = await restoreDocumentVersion(selectedDocument.id, version.id);
+      invalidateDocumentCache(restoredDocument.id, restoredDocument.projectId || selectedProjectId);
       setDocumentsList((prev) => prev.map((doc) => (doc.id === restoredDocument.id ? restoredDocument : doc)));
       setDocumentVersions(await fetchDocumentVersions(restoredDocument.id));
       void loadProjectCollaboration(restoredDocument.projectId || selectedProjectId);
@@ -4991,6 +5303,7 @@ function App() {
         label: newTagLabel,
         selectedText: selectedCommentTarget?.selectedText
       });
+      invalidateDocumentCache(selectedDocument.id, selectedProject.id);
       setSavedTags((prev) => [tag, ...prev.filter((item) => item.id !== tag.id && item.code !== tag.code)]);
       setInferredTags((prev) => prev.filter((item) => item.code !== tag.code));
       setNewTagCode("");
@@ -5011,6 +5324,7 @@ function App() {
         label: tag.label,
         selectedText: tag.selectedText ?? undefined
       });
+      invalidateDocumentCache(selectedDocument.id, selectedProject.id);
       setSavedTags((prev) => [saved, ...prev.filter((item) => item.code !== saved.code)]);
       setInferredTags((prev) => prev.filter((item) => item.code !== saved.code));
       addToast("success", "Đã lưu tag suy luận", `${saved.code} đã vào danh sách truy vết.`);
@@ -5024,6 +5338,7 @@ function App() {
   async function handleDeleteRequirementTag(tagId: string) {
     try {
       await deleteRequirementTag(tagId);
+      invalidateDocumentCache(selectedDocument.id, selectedProject.id);
       setSavedTags((prev) => prev.filter((tag) => tag.id !== tagId));
       addToast("info", "Đã xóa tag", "Tag truy vết đã được gỡ khỏi tài liệu.");
       void loadProjectCollaboration(selectedProject.id);
@@ -5048,6 +5363,7 @@ function App() {
         targetLabel: newTraceTarget,
         relation: "traces"
       });
+      invalidateProjectCache(selectedProject.id);
       setTraceLinks((prev) => [trace, ...prev]);
       setNewTraceSource("");
       setNewTraceTarget("");
@@ -5062,6 +5378,7 @@ function App() {
   async function handleDeleteTraceLink(traceId: string) {
     try {
       await deleteTraceLink(traceId);
+      invalidateProjectCache(selectedProject.id);
       setTraceLinks((prev) => prev.filter((trace) => trace.id !== traceId));
       addToast("info", "Đã xóa truy vết", "Liên kết truy vết đã được gỡ.");
       void loadProjectCollaboration(selectedProject.id);
@@ -5079,6 +5396,7 @@ function App() {
         title: targetTitle,
         type: newDocTypeTouched ? newDocType : template.type
       });
+      invalidateProjectCache(document.projectId || selectedProject.id);
       setDocumentsList((prev) => [document, ...prev]);
       setSelectedProjectId(document.projectId || selectedProject.id);
       setSelectedDocumentId(document.id);
@@ -5097,6 +5415,7 @@ function App() {
     if (notification.readAt) return;
     try {
       const updated = await markNotificationRead(notification.id);
+      prefetchCache.delete(cacheKey.notifications);
       setNotifications((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
     } catch (error) {
       console.error("Mark notification read error:", error);
@@ -5106,6 +5425,7 @@ function App() {
   async function handleMarkAllNotificationsRead() {
     try {
       await markAllNotificationsRead();
+      prefetchCache.delete(cacheKey.notifications);
       setNotifications((prev) => prev.map((item) => ({ ...item, readAt: item.readAt ?? new Date().toISOString() })));
     } catch (error) {
       console.error("Mark all notifications read error:", error);
@@ -5320,6 +5640,7 @@ function App() {
     if (!editingCommentText.trim()) return;
     try {
       const updatedComment = await updateComment(commentId, { content: editingCommentText.trim() });
+      invalidateDocumentCache(updatedComment.documentId, documentsList.find((document) => document.id === updatedComment.documentId)?.projectId ?? selectedProject.id);
       setCommentsList((prev) => prev.map((c) => (c.id === commentId ? { ...c, ...updatedComment } : c)));
       setEditingCommentId(null);
       setEditingCommentText("");
@@ -5338,6 +5659,7 @@ function App() {
 
     try {
       const resolvedComment = await resolveComment(comment.id);
+      invalidateDocumentCache(comment.documentId, selectedProject.id);
       setCommentsList((prev) =>
         prev.map((item) =>
           item.id === comment.id || item.parentId === comment.id
@@ -5377,6 +5699,7 @@ function App() {
         selectedText: selectedCommentTarget.selectedText,
         content
       });
+      invalidateDocumentCache(newComment.documentId, selectedProject.id);
       setCommentsList((prev) => [newComment, ...prev]);
       adjustDocumentCommentCount(newComment.documentId, 1);
       setNewCommentText("");
@@ -5404,6 +5727,7 @@ function App() {
         selectedText: comment.selectedText || rootComment.selectedText,
         content
       });
+      invalidateDocumentCache(newReply.documentId, selectedProject.id);
       setCommentsList((prev) => [newReply, ...prev]);
       adjustDocumentCommentCount(newReply.documentId, 1);
       setReplyText("");
@@ -5653,12 +5977,116 @@ function App() {
     }
   }
 
-  // Keyboard shortcut listener for search and ESC closes the top-most popup.
+  function isEditableShortcutTarget(target: EventTarget | null) {
+    if (!(target instanceof HTMLElement)) return false;
+    const tagName = target.tagName.toLowerCase();
+    return (
+      tagName === "input" ||
+      tagName === "textarea" ||
+      tagName === "select" ||
+      target.isContentEditable ||
+      Boolean(target.closest("[contenteditable='true'], .ProseMirror"))
+    );
+  }
+
+  function hasOpenBlockingSurface() {
+    return Boolean(
+      confirmDeleteModal.isOpen ||
+      isLogoutConfirmOpen ||
+      isShareModalOpen ||
+      isExportModalOpen ||
+      isImportModalOpen ||
+      isEditDocModalOpen ||
+      isCreateDocModalOpen ||
+      isEditProjectModalOpen ||
+      isCreateProjectModalOpen ||
+      isWorkboardConfigOpen ||
+      isWorkItemModalOpen ||
+      viewingWorkItem ||
+      isMyTasksPopupOpen ||
+      isPublishVersionModalOpen ||
+      isVersionModalOpen
+    );
+  }
+
+  function focusMainSearch() {
+    const searchInput = document.getElementById("main-search");
+    if (searchInput instanceof HTMLElement) {
+      searchInput.focus();
+      if (searchInput instanceof HTMLInputElement) searchInput.select();
+    }
+  }
+
+  function refreshCurrentView() {
+    if (activeTabNav === "admin" && (currentUser?.role === "ADMIN" || currentUser?.role === "MANAGER")) {
+      setAdminTriggerRefresh((prev) => prev + 1);
+      return;
+    }
+    if (activeTabNav === "review" && selectedProject.id && !isLoadingWorkItems) {
+      setOpenFilterDropdown(null);
+      void loadProjectWorkItems(selectedProject.id, true).then(() => {
+        addToast("success", "Đã làm mới Workboard", "Danh sách ticket đã được cập nhật.");
+      });
+      return;
+    }
+    if (!isRefreshingDashboard) {
+      void refreshWorkspaceDashboard().then(() => {
+        addToast("success", "Đã làm mới dữ liệu", "Dữ liệu trang hiện tại đã được cập nhật.");
+      });
+    }
+  }
+
+  function openCreateForCurrentView() {
+    if (activeTabNav === "admin" && (currentUser?.role === "ADMIN" || currentUser?.role === "MANAGER")) {
+      setAdminTriggerCreate((prev) => prev + 1);
+      return;
+    }
+    if (activeTabNav === "review" && selectedProject.id) {
+      openCreateWorkItemModal();
+      return;
+    }
+    if (activeTabNav === "documents" && selectedProject.id) {
+      openCreateDocumentModal();
+      return;
+    }
+    if (activeTabNav === "dashboard" || activeTabNav === "projects") {
+      openCreateProjectModal();
+    }
+  }
+
+  // Keyboard shortcut listener for search, navigation, refresh/create, and ESC closes the top-most popup.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      const key = e.key.toLowerCase();
+      const isEditableTarget = isEditableShortcutTarget(e.target);
+
+      if ((e.metaKey || e.ctrlKey) && key === "k") {
         e.preventDefault();
-        document.getElementById("main-search")?.focus();
+        focusMainSearch();
+        return;
+      }
+      if (!isEditableTarget && key === "/" && !hasOpenBlockingSurface()) {
+        e.preventDefault();
+        focusMainSearch();
+        return;
+      }
+      if (!isEditableTarget && e.altKey && ["1", "2", "3", "4", "5"].includes(e.key)) {
+        e.preventDefault();
+        const nextTabs = ["dashboard", "projects", "documents", "review", "admin"] as const;
+        const nextTab = nextTabs[Number(e.key) - 1];
+        if (nextTab === "admin" && currentUser?.role !== "ADMIN" && currentUser?.role !== "MANAGER") return;
+        setActiveTabNav(nextTab);
+        return;
+      }
+      if (!isEditableTarget && (e.metaKey || e.ctrlKey) && key === "r") {
+        e.preventDefault();
+        refreshCurrentView();
+        return;
+      }
+      if (!isEditableTarget && (e.metaKey || e.ctrlKey) && key === "n") {
+        e.preventDefault();
+        openCreateForCurrentView();
+        return;
       }
       if (e.key !== "Escape" && e.key !== "Esc") return;
 
@@ -5688,6 +6116,16 @@ function App() {
       if (isShareModalOpen) {
         e.preventDefault();
         setIsShareModalOpen(false);
+        return;
+      }
+      if (isPublishVersionModalOpen && !isPublishingVersion) {
+        e.preventDefault();
+        setIsPublishVersionModalOpen(false);
+        return;
+      }
+      if (isVersionModalOpen && !restoringVersionId) {
+        e.preventDefault();
+        setIsVersionModalOpen(false);
         return;
       }
       if (isExportModalOpen && !isExporting) {
@@ -5720,6 +6158,46 @@ function App() {
         closeCreateProjectModal();
         return;
       }
+      if (isWorkItemModalOpen) {
+        e.preventDefault();
+        closeWorkItemModal();
+        return;
+      }
+      if (viewingWorkItem) {
+        e.preventDefault();
+        closeWorkItemDetailModal();
+        return;
+      }
+      if (isWorkboardConfigOpen) {
+        e.preventDefault();
+        closeWorkboardConfigModal();
+        return;
+      }
+      if (isMyTasksPopupOpen) {
+        e.preventDefault();
+        setIsMyTasksPopupOpen(false);
+        return;
+      }
+      if (isAssigneeMenuOpen) {
+        e.preventDefault();
+        setIsAssigneeMenuOpen(false);
+        return;
+      }
+      if (isNotificationMenuOpen) {
+        e.preventDefault();
+        setIsNotificationMenuOpen(false);
+        return;
+      }
+      if (isAdvancedSearchOpen) {
+        e.preventDefault();
+        setIsAdvancedSearchOpen(false);
+        return;
+      }
+      if (openFilterDropdown) {
+        e.preventDefault();
+        setOpenFilterDropdown(null);
+        return;
+      }
       if (isActionsDropdownOpen) {
         e.preventDefault();
         setIsActionsDropdownOpen(false);
@@ -5740,10 +6218,14 @@ function App() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    activeTabNav,
     confirmDeleteModal.isOpen,
+    currentUser?.role,
     isLogoutConfirmOpen,
     editingCommentId,
+    isAdvancedSearchOpen,
     isActionsDropdownOpen,
+    isAssigneeMenuOpen,
     isCreateDocModalOpen,
     isCreateProjectModalOpen,
     isDragOver,
@@ -5754,13 +6236,26 @@ function App() {
     isEditingDocumentContent,
     isImportModalOpen,
     isImporting,
+    isLoadingWorkItems,
+    isMyTasksPopupOpen,
+    isNotificationMenuOpen,
+    isPublishVersionModalOpen,
+    isPublishingVersion,
+    isRefreshingDashboard,
     isSelectionComposerOpen,
     isShareModalOpen,
     isTocPopoverOpen,
+    isVersionModalOpen,
+    isWorkboardConfigOpen,
+    isWorkItemModalOpen,
     isZenMode,
+    openFilterDropdown,
     replyingCommentId,
+    restoringVersionId,
     selectedCommentTarget,
-    selectionPopover
+    selectedProject.id,
+    selectionPopover,
+    viewingWorkItem
   ]);
 
   const documentContainerRef = useRef<HTMLDivElement>(null);
@@ -6884,6 +7379,7 @@ function App() {
                 className="exec-action secondary"
                 type="button"
                 disabled={isRefreshingDashboard}
+                title="Làm mới dữ liệu (Ctrl+R)"
                 onClick={async () => {
                   await refreshWorkspaceDashboard();
                   addToast("success", "Đã làm mới dữ liệu", "Cập nhật dữ liệu Dashboard thành công.");
@@ -6892,7 +7388,7 @@ function App() {
                 <RefreshCw size={14} className={isRefreshingDashboard ? "animate-spin" : ""} />
                 <span>{isRefreshingDashboard ? "Đang làm mới..." : "Làm mới"}</span>
               </button>
-              <button className="exec-action primary" type="button" onClick={openCreateProjectModal}>
+              <button className="exec-action primary" type="button" onClick={openCreateProjectModal} title="Tạo dự án mới (Ctrl+N)">
                 <Plus size={15} /> Tạo dự án mới
               </button>
             </div>
@@ -6905,6 +7401,7 @@ function App() {
                 className="exec-action secondary"
                 type="button"
                 disabled={isRefreshingDashboard}
+                title="Làm mới dữ liệu (Ctrl+R)"
                 onClick={async () => {
                   await refreshWorkspaceDashboard();
                   addToast("success", "Đã làm mới dữ liệu", "Cập nhật dữ liệu danh sách dự án thành công.");
@@ -6917,6 +7414,7 @@ function App() {
                 className="exec-action primary"
                 type="button"
                 onClick={openCreateProjectModal}
+                title="Tạo dự án mới (Ctrl+N)"
               >
                 <FolderPlus size={15} />
                 <span>Tạo dự án mới</span>
@@ -6931,7 +7429,7 @@ function App() {
                 className="exec-action secondary"
                 type="button"
                 onClick={() => setAdminTriggerRefresh((prev) => prev + 1)}
-                title="Tải lại danh sách người dùng"
+                title="Tải lại danh sách người dùng (Ctrl+R)"
               >
                 <RefreshCw size={14} />
                 <span>Làm mới</span>
@@ -6941,6 +7439,7 @@ function App() {
                   className="exec-action primary"
                   type="button"
                   onClick={() => setAdminTriggerCreate((prev) => prev + 1)}
+                  title="Tạo tài khoản (Ctrl+N)"
                 >
                   <UserPlus size={15} />
                   <span>Tạo Tài khoản</span>
@@ -6975,8 +7474,13 @@ function App() {
               <button
                 className="exec-action secondary"
                 type="button"
-                onClick={() => void loadProjectWorkItems(selectedProject.id)}
+                onClick={async () => {
+                  setOpenFilterDropdown(null);
+                  await loadProjectWorkItems(selectedProject.id, true);
+                  addToast("success", "Đã làm mới Workboard", "Danh sách ticket đã được cập nhật.");
+                }}
                 disabled={!selectedProject.id || isLoadingWorkItems}
+                title="Làm mới Workboard (Ctrl+R)"
               >
                 <RefreshCw size={14} className={isLoadingWorkItems ? "animate-spin" : ""} />
                 <span>{isLoadingWorkItems ? "Đang tải" : "Làm mới"}</span>
@@ -6986,6 +7490,7 @@ function App() {
                 type="button"
                 onClick={() => openCreateWorkItemModal()}
                 disabled={!selectedProject.id}
+                title="Tạo ticket (Ctrl+N)"
               >
                 <Plus size={15} />
                 <span>Tạo ticket</span>
@@ -7112,6 +7617,7 @@ function App() {
                 className="exec-action secondary"
                 type="button"
                 disabled={isRefreshingDashboard}
+                title="Làm mới dữ liệu (Ctrl+R)"
                 onClick={async () => {
                   await refreshWorkspaceDashboard();
                   addToast("success", "Đã làm mới dữ liệu", "Cập nhật dữ liệu thành công.");
@@ -7276,6 +7782,8 @@ function App() {
                   <div className="dash-emp-project-list">
                     {empData.projectBreakdown.map((project) => (
                       <button key={project.id} className="dash-emp-project-row" type="button"
+                        onMouseEnter={() => prefetchProject(project.id)}
+                        onFocus={() => prefetchProject(project.id)}
                         onClick={() => {
                           setWorkItems([]);
                           setSelectedProjectId(project.id);
@@ -7418,6 +7926,8 @@ function App() {
                         className="dash-list-row"
                         type="button"
                         key={project.id}
+                        onMouseEnter={() => prefetchProject(project.id)}
+                        onFocus={() => prefetchProject(project.id)}
                         onClick={() => {
                           setSelectedProjectId(project.id);
                           const firstDoc = documentsList.find((d) => d.projectId === project.id);
@@ -8085,7 +8595,7 @@ function App() {
 	                  </button>
 	                  {openFilterDropdown === "status" && (
 	                    <>
-	                      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenFilterDropdown(null)} />
+	                      <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setOpenFilterDropdown(null)} />
 	                      <div className="custom-form-select-menu">
 	                        {([
 	                          { value: "ALL", label: "Tất cả trạng thái" },
@@ -8116,7 +8626,7 @@ function App() {
                   </button>
                   {openFilterDropdown === "type" && (
                     <>
-                      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenFilterDropdown(null)} />
+                      <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setOpenFilterDropdown(null)} />
                       <div className="custom-form-select-menu">
                         {(["ALL", "TASK", "BUG", "REVIEW", "CHANGE_REQUEST", "QUESTION"] as const).map((v) => {
                           const isSelected = workboardTypeFilter === v;
@@ -8141,7 +8651,7 @@ function App() {
                   </button>
                   {openFilterDropdown === "priority" && (
                     <>
-                      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenFilterDropdown(null)} />
+                      <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setOpenFilterDropdown(null)} />
                       <div className="custom-form-select-menu">
                         {(["ALL", "LOW", "MEDIUM", "HIGH", "CRITICAL"] as const).map((v) => {
                           const isSelected = workboardPriorityFilter === v;
@@ -8166,7 +8676,7 @@ function App() {
                   </button>
                   {openFilterDropdown === "assignee" && (
                     <>
-                      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenFilterDropdown(null)} />
+                      <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setOpenFilterDropdown(null)} />
                       <div className="custom-form-select-menu">
                         {["ALL", ...workboardAssigneeOptions].map((v) => {
                           const isSelected = workboardAssigneeFilter === v;
@@ -8191,7 +8701,7 @@ function App() {
                   </button>
                   {openFilterDropdown === "creator" && (
                     <>
-                      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenFilterDropdown(null)} />
+                      <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setOpenFilterDropdown(null)} />
                       <div className="custom-form-select-menu">
                         {["ALL", ...workboardCreatorOptions].map((v) => {
                           const isSelected = workboardCreatorFilter === v;
@@ -8216,7 +8726,7 @@ function App() {
                   </button>
                   {openFilterDropdown === "sort" && (
                     <>
-                      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenFilterDropdown(null)} />
+                      <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setOpenFilterDropdown(null)} />
                       <div className="custom-form-select-menu">
                         {([{ value: "BOARD_ORDER", label: "Thứ tự board" }, { value: "UPDATED_DESC", label: "Mới cập nhật" }, { value: "DUE_ASC", label: "Hạn gần nhất" }, { value: "PRIORITY_DESC", label: "Priority cao nhất" }]).map(({ value, label }) => {
                           const isSelected = workboardSortBy === value;
@@ -8408,7 +8918,7 @@ function App() {
                     <button
                       className="btn-add-mini"
                       type="button"
-                      title="Tạo tài liệu thủ công từ mẫu"
+                      title="Tạo tài liệu thủ công từ mẫu (Ctrl+N)"
                       disabled={!selectedProjectId}
                       onClick={() => openCreateDocumentModal()}
                     >
@@ -8534,6 +9044,8 @@ function App() {
                               className={doc.id === selectedDocumentId ? "document-row selected" : "document-row"}
                               type="button"
                               title={fullTitle}
+                              onMouseEnter={() => prefetchDocument(doc.id)}
+                              onFocus={() => prefetchDocument(doc.id)}
                               onClick={() => {
                                 if (doc.projectId) setSelectedProjectId(doc.projectId);
                                 setSelectedDocumentId(doc.id);
@@ -8633,6 +9145,8 @@ function App() {
                   <button
                     className="btn-primary share-highlight-btn"
                     type="button"
+                    onMouseEnter={prefetchShareAccess}
+                    onFocus={prefetchShareAccess}
                     onClick={openShareAccessModal}
                     title={selectedDocument.id === "empty-document" ? "Chia sẻ quyền truy cập dự án" : "Chia sẻ quyền truy cập tài liệu"}
                   >
@@ -9423,8 +9937,11 @@ function App() {
                   className="form-input"
                   placeholder="Ví dụ: Nền tảng tuyển sinh trung tâm..."
                   value={newProjName}
-                  onChange={(e) => setNewProjName(e.target.value)}
+                  onChange={(e) => { setNewProjName(e.target.value); setModalFieldErrors((prev) => { const { projectName: _, ...rest } = prev; return rest; }); }}
                 />
+                {modalFieldErrors.projectName && (
+                  <small className="field-error-msg"><AlertCircle size={13} /> {modalFieldErrors.projectName}</small>
+                )}
               </div>
 
               <div className="form-group">
@@ -9633,8 +10150,11 @@ function App() {
                   className="form-input"
                   placeholder="Ví dụ: System Architecture & Data Flow..."
                   value={newDocTitle}
-                  onChange={(e) => setNewDocTitle(e.target.value)}
+                  onChange={(e) => { setNewDocTitle(e.target.value); setModalFieldErrors((prev) => { const { docTitle: _, ...rest } = prev; return rest; }); }}
                 />
+                {modalFieldErrors.docTitle && (
+                  <small className="field-error-msg"><AlertCircle size={13} /> {modalFieldErrors.docTitle}</small>
+                )}
               </div>
 
               <div className="form-row">
@@ -9797,8 +10317,11 @@ function App() {
                   className="form-input"
                   placeholder="Ví dụ: Mở rộng tính năng web..."
                   value={editDocTitle}
-                  onChange={(e) => setEditDocTitle(e.target.value)}
+                  onChange={(e) => { setEditDocTitle(e.target.value); setModalFieldErrors((prev) => { const { editDocTitle: _, ...rest } = prev; return rest; }); }}
                 />
+                {modalFieldErrors.editDocTitle && (
+                  <small className="field-error-msg"><AlertCircle size={13} /> {modalFieldErrors.editDocTitle}</small>
+                )}
               </div>
 
               <div className="form-group-section document-property-section">
@@ -10368,12 +10891,15 @@ function App() {
                   <PenLine size={13} /> Tiêu đề ticket <span style={{ color: "#ef4444" }}>*</span>
                 </label>
                 <input
-                  className="form-input"
+                  className={`form-input ${modalFieldErrors.ticketTitle ? "has-error" : ""}`}
                   value={workItemDraft.title}
-                  onChange={(event) => setWorkItemDraft({ ...workItemDraft, title: event.target.value })}
+                  onChange={(event) => { setWorkItemDraft({ ...workItemDraft, title: event.target.value }); setModalFieldErrors((prev) => { const { ticketTitle: _, ...rest } = prev; return rest; }); }}
                   placeholder="Ví dụ: Sửa validation ngày hết hạn"
                   autoFocus
                 />
+                {modalFieldErrors.ticketTitle && (
+                  <small className="field-error-msg"><AlertCircle size={13} /> {modalFieldErrors.ticketTitle}</small>
+                )}
               </div>
 
               {/* 2-Column Property Grid */}

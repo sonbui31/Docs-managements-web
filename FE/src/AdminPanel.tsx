@@ -240,13 +240,11 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
     }
   }, [triggerCreate]);
 
-  const isFirstRefreshMount = useRef(true);
+  const handledRefreshTriggerRef = useRef(0);
   useEffect(() => {
-    if (isFirstRefreshMount.current) {
-      isFirstRefreshMount.current = false;
-      return;
-    }
-    if (triggerRefresh && triggerRefresh > 0) {
+    if (triggerRefresh && triggerRefresh > handledRefreshTriggerRef.current) {
+      handledRefreshTriggerRef.current = triggerRefresh;
+      setOpenAdminDropdown(null);
       void loadUsers(true);
     }
   }, [triggerRefresh]);
@@ -443,7 +441,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
     });
   }, [documents]);
 
-  async function loadUsers(showToastOnError = false) {
+  async function loadUsers(showToast = false) {
     setLoading(true);
     try {
       const data = await fetchUsers();
@@ -459,9 +457,12 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
         const kept = current.filter((id) => validIds.has(id));
         return kept.length ? kept : nonAdmin ? [nonAdmin] : [];
       });
+      if (showToast) {
+        onToast("success", "Đã làm mới người dùng", "Danh sách người dùng và phân quyền đã được cập nhật.");
+      }
     } catch (error: any) {
       console.error("Load users failed:", error);
-      if (showToastOnError) {
+      if (showToast) {
         onToast("error", "Không tải được dữ liệu người dùng", getErrorMessage(error, "Vui lòng kiểm tra kết nối API."));
       }
     } finally {
@@ -731,7 +732,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                 </button>
                 {openAdminDropdown === "filter-role" && (
                   <>
-                    <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenAdminDropdown(null)} />
+                    <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setOpenAdminDropdown(null)} />
                     <div className="custom-form-select-menu">
                       {[{ value: "ALL", label: "Tất cả Vai trò" }, ...Object.entries(roleLabels).map(([v, l]) => ({ value: v, label: l }))].map(({ value, label }) => {
                         const isSelected = roleFilter === value;
@@ -758,7 +759,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                 </button>
                 {openAdminDropdown === "filter-status" && (
                   <>
-                    <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenAdminDropdown(null)} />
+                    <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setOpenAdminDropdown(null)} />
                     <div className="custom-form-select-menu">
                       {[{ value: "ALL", label: "Tất cả Trạng thái" }, ...Object.entries(statusLabels).map(([v, l]) => ({ value: v, label: l }))].map(({ value, label }) => {
                         const isSelected = statusFilter === value;
@@ -854,7 +855,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                           </button>
                           {openAdminDropdown === `role-${user.id}` && (
                             <>
-                              <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenAdminDropdown(null)} />
+                              <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setOpenAdminDropdown(null)} />
                               <div className="custom-form-select-menu">
                                 {Object.entries(roleLabels).map(([val, lbl]) => {
                                   const isSelected = user.role === val;
@@ -893,7 +894,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                           </button>
                           {openAdminDropdown === `status-${user.id}` && (
                             <>
-                              <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenAdminDropdown(null)} />
+                              <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setOpenAdminDropdown(null)} />
                               <div className="custom-form-select-menu">
                                 {Object.entries(statusLabels).map(([val, lbl]) => {
                                   const isSelected = currentStatus === val;
