@@ -216,6 +216,11 @@ function readFileAsDataUrl(file: File) {
   });
 }
 
+function formatSavedAt(date: Date | null) {
+  if (!date) return "Đã lưu";
+  return `Đã lưu lúc ${date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
 export function DocumentEditor({
   documentId,
   initialHtml,
@@ -247,6 +252,7 @@ export function DocumentEditor({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_selectionKey, setSelectionKey] = useState(0);
   const [autoSaveStatus, setAutoSaveStatus] = useState<"saved" | "dirty" | "saving" | "retrying">("saved");
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const saveInFlightRef = useRef(false);
   const pendingSaveAfterFlightRef = useRef(false);
@@ -330,6 +336,7 @@ export function DocumentEditor({
     try {
       await onSaveRef.current(htmlToSave);
       lastSavedHtmlRef.current = htmlToSave;
+      setLastSavedAt(new Date());
 
       const currentHtml = editorRef.current?.getHTML() ?? latestHtmlRef.current;
       latestHtmlRef.current = currentHtml;
@@ -429,6 +436,7 @@ export function DocumentEditor({
       lastSavedHtmlRef.current = nextEditor.getHTML();
       setIsDirty(false);
       setAutoSaveStatus("saved");
+      setLastSavedAt(null);
     },
     onUpdate: ({ editor: nextEditor }) => {
       latestHtmlRef.current = nextEditor.getHTML();
@@ -458,6 +466,7 @@ export function DocumentEditor({
     lastSavedHtmlRef.current = editor.getHTML();
     setIsDirty(false);
     setAutoSaveStatus("saved");
+    setLastSavedAt(null);
   }, [clearAutoSaveTimer, documentId, editor, initialHtml, onHeadingsChange]);
 
   useEffect(() => {
@@ -580,7 +589,7 @@ export function DocumentEditor({
 
   const isInTable = editor.isActive("table");
   const isAutoSaveSettled = !isUploadingImage && !isSaving && !isDirty && autoSaveStatus === "saved";
-  const statusLabel = isAutoSaveSettled ? "Đã lưu" : "Đang lưu...";
+  const statusLabel = isAutoSaveSettled ? formatSavedAt(lastSavedAt) : "Đang lưu...";
 
   return (
     <div className="document-editor-shell">
