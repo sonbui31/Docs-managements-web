@@ -80,6 +80,22 @@ export class HttpExceptionFilter implements ExceptionFilter {
       }
     }
 
+    if (this.isMulterError(exception)) {
+      if (exception.code === "LIMIT_FILE_SIZE") {
+        return {
+          statusCode: HttpStatus.BAD_REQUEST,
+          code: API_ERROR_CODES.FILE_TOO_LARGE,
+          message: "File quá lớn. Vui lòng chọn file nhỏ hơn."
+        };
+      }
+
+      return {
+        statusCode: HttpStatus.BAD_REQUEST,
+        code: API_ERROR_CODES.BAD_REQUEST,
+        message: "File upload không hợp lệ."
+      };
+    }
+
     return {
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
       code: API_ERROR_CODES.INTERNAL_SERVER_ERROR,
@@ -141,7 +157,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (normalized.includes("không thể xóa cột")) return API_ERROR_CODES.WORKBOARD_COLUMN_DELETE_BLOCKED;
     if (normalized.includes("email này đã") || normalized.includes("email này đã được đăng ký")) return API_ERROR_CODES.USER_EMAIL_EXISTS;
     if (normalized.includes("file is required")) return API_ERROR_CODES.FILE_REQUIRED;
-    if (normalized.includes("only .md") || normalized.includes("files are supported")) return API_ERROR_CODES.FILE_TYPE_UNSUPPORTED;
+    if (normalized.includes("file too large") || normalized.includes("file size")) return API_ERROR_CODES.FILE_TOO_LARGE;
+    if (normalized.includes("file type is unsupported") || normalized.includes("only .md") || normalized.includes("files are supported")) {
+      return API_ERROR_CODES.FILE_TYPE_UNSUPPORTED;
+    }
     if (normalized.includes("không đọc được") || normalized.includes("không render được") || normalized.includes("không convert được")) {
       return API_ERROR_CODES.IMPORT_PARSE_FAILED;
     }
@@ -166,7 +185,6 @@ export class HttpExceptionFilter implements ExceptionFilter {
   }
 
   private publicMessage(code: ApiErrorCode, statusCode: number, message: string) {
-    const normalized = this.normalizeMessage(message);
     const publicMessages: Partial<Record<ApiErrorCode, string>> = {
       AUTH_MISSING_ACCESS_TOKEN: "Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại.",
       AUTH_ACCESS_TOKEN_EXPIRED: "Phiên đăng nhập đã hết hạn. Hệ thống sẽ thử làm mới phiên.",
@@ -195,6 +213,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       USER_NOT_FOUND: "Không tìm thấy người dùng.",
       USER_EMAIL_EXISTS: "Email này đã tồn tại.",
       FILE_REQUIRED: "Vui lòng chọn file trước khi tải lên.",
+      FILE_TOO_LARGE: "File quá lớn. Vui lòng chọn file nhỏ hơn.",
       FILE_TYPE_UNSUPPORTED: "Định dạng file chưa được hỗ trợ.",
       IMPORT_PARSE_FAILED: "Không đọc được nội dung file. Vui lòng kiểm tra định dạng hoặc thử file khác.",
       MEDIA_NOT_FOUND: "Không tìm thấy file media.",
@@ -220,5 +239,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
       .toLocaleLowerCase("vi-VN")
       .replace(/\s+/g, " ")
       .trim();
+  }
+
+  private isMulterError(exception: unknown): exception is { name: string; code: string } {
+    return Boolean(
+      exception &&
+      typeof exception === "object" &&
+      (exception as { name?: unknown }).name === "MulterError" &&
+      typeof (exception as { code?: unknown }).code === "string"
+    );
   }
 }

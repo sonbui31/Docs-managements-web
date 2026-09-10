@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Post, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiConsumes, ApiTags } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { imageUploadOptions } from "../common/upload-options";
 import { UploadMediaDto } from "./dto/upload-media.dto";
 import { MediaService } from "./media.service";
 
@@ -15,7 +17,8 @@ export class MediaController {
 
   @Post("upload")
   @ApiConsumes("multipart/form-data")
-  @UseInterceptors(FileInterceptor("file"))
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  @UseInterceptors(FileInterceptor("file", imageUploadOptions))
   upload(@UploadedFile() file: Express.Multer.File, @Body() dto: UploadMediaDto, @CurrentUser() user: AuthenticatedUser) {
     return this.mediaService.upload(file, dto, user);
   }

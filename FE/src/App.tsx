@@ -127,7 +127,7 @@ import {
 import { getErrorMessage } from "./apiError";
 import { clearAuthSession, fetchCurrentUser, getAccessToken, getStoredUser, logout } from "./authApi";
 import { AuthPage } from "./AuthPage";
-import { DocumentEditor, type EditorTocItem } from "./DocumentEditor";
+import type { EditorTocItem } from "./DocumentEditor";
 import type {
     ActivityLog,
     CommentThread,
@@ -159,6 +159,7 @@ import type {
 
 const AdminPanel = lazy(() => import("./AdminPanel").then((module) => ({ default: module.AdminPanel })));
 const ShareAccessModal = lazy(() => import("./ShareAccessModal").then((module) => ({ default: module.ShareAccessModal })));
+const DocumentEditor = lazy(() => import("./DocumentEditor").then((module) => ({ default: module.DocumentEditor })));
 
 const DOCUMENT_TYPE_OPTIONS = [
   { value: "BRD", label: "BRD (Business Requirement)" },
@@ -6793,7 +6794,10 @@ function App() {
                 ? (() => {
                   const h = new Date().getHours();
                   const greeting = h < 12 ? "Chào buổi sáng" : h < 18 ? "Chào buổi chiều" : "Chào buổi tối";
-                  return `${greeting}, ${currentUser.name.split(" ").slice(-1)[0]}!`;
+                  const nameParts = currentUser.name.trim().split(" ");
+                  const lastName = nameParts.slice(-1)[0];
+                  const displayName = /^\d+$/.test(lastName) || nameParts.length <= 1 ? currentUser.name : lastName;
+                  return `${greeting}, ${displayName}!`;
                 })()
                 : activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
                   ? "Quản Lý User & Phân Quyền"
@@ -7066,42 +7070,78 @@ function App() {
 
         {activeTabNav === "dashboard" ? (
           <section className="role-dashboard-page executive-dashboard">
-            {/* ── KPI strip ── */}
-            <div className="exec-kpi-grid">
-	              {[
-	                { label: "Project", value: executiveData.projectCount, note: `${executiveData.activeProjects} project còn việc`, color: "kpi-indigo", Icon: FolderKanban, action: "documents" },
-	                { label: "Ticket mở", value: executiveData.openItems, note: "Mở Workboard đang mở", color: "kpi-blue", Icon: Clock, action: "open" },
-	                { label: "Bug critical", value: executiveData.criticalBugs, note: "Lọc bug cần ưu tiên", color: "kpi-rose", Icon: AlertTriangle, action: "critical" },
-	                { label: "Blocked", value: executiveData.blockedItems, note: "Lọc luồng đang kẹt", color: "kpi-violet", Icon: GitBranch, action: "blocked" },
-	                { label: "Quá hạn", value: executiveData.overdueItems, note: "Lọc ticket trễ hạn", color: "kpi-amber", Icon: AlertTriangle, action: "overdue" },
-	                { label: "Hoàn thành", value: `${executiveData.completionRate}%`, note: "Xem ticket đã xong", color: "kpi-emerald", Icon: CheckCheck, action: "done" },
-	              ].map(({ label, value, note, color, Icon, action }) => (
-	                <button className={`exec-kpi-card ${color}`} type="button" key={label} onClick={() => openDashboardQuickFilter(action as Parameters<typeof openDashboardQuickFilter>[0])}>
-	                  <div className="kpi-icon-box"><Icon size={17} /></div>
-	                  <strong>{String(value)}</strong>
-	                  <span>{label}</span>
-	                  <small>{note}</small>
-	                </button>
-	              ))}
+            {/* ═══ BENTO KPI STRIP ═══ */}
+            <div className="dash-kpi-bento">
+              {/* Hero — Completion Rate with SVG Ring */}
+              <div className="dash-kpi-hero dash-animate dash-delay-1">
+                <div className="dash-ring-wrap">
+                  <svg viewBox="0 0 100 100">
+                    <circle className="dash-ring-bg" cx="50" cy="50" r="45" />
+                    <circle
+                      className="dash-ring-fill dash-ring-animated"
+                      cx="50" cy="50" r="45"
+                      strokeDasharray={2 * Math.PI * 45}
+                      strokeDashoffset={2 * Math.PI * 45 * (1 - executiveData.completionRate / 100)}
+                      style={{
+                        "--ring-circumference": `${2 * Math.PI * 45}`,
+                        "--ring-target": `${2 * Math.PI * 45 * (1 - executiveData.completionRate / 100)}`
+                      } as React.CSSProperties}
+                    />
+                  </svg>
+                  <div className="dash-ring-label">
+                    <strong>{executiveData.completionRate}%</strong>
+                    <small>hoàn thành</small>
+                  </div>
+                </div>
+                <div className="dash-kpi-hero-info">
+                  <h3>Tiến độ tổng thể</h3>
+                  <p>Tỷ lệ ticket hoàn thành trên toàn bộ workboard. {executiveData.activeProjects} project đang hoạt động.</p>
+                  <div className="dash-kpi-hero-stats">
+                    <span><em>{executiveData.openItems}</em> đang mở</span>
+                    <span><em>{executiveData.projectCount}</em> dự án</span>
+                    <span><em>{executiveData.totalDocuments}</em> tài liệu</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Small KPI — Tickets mở */}
+              <div className="dash-kpi-sm kpi-blue dash-animate dash-delay-2">
+                <div className="kpi-sm-icon"><Clock size={16} /></div>
+                <strong>{executiveData.openItems}</strong>
+                <span className="kpi-sm-label">Ticket mở</span>
+                <span className="kpi-sm-note">Chưa hoàn thành</span>
+              </div>
+
+              {/* Small KPI — Bug critical */}
+              <div className={`dash-kpi-sm kpi-rose dash-animate dash-delay-3${executiveData.criticalBugs > 0 ? " kpi-active" : ""}`}>
+                <div className="kpi-sm-icon"><AlertTriangle size={16} /></div>
+                <strong>{executiveData.criticalBugs}</strong>
+                <span className="kpi-sm-label">Bug critical</span>
+                <span className="kpi-sm-note">Cần ưu tiên xử lý</span>
+              </div>
+
+
             </div>
 
-            <div className="exec-main-grid">
-              <section className="exec-panel doc-stats-panel">
-                <div className="exec-panel-header">
+            {/* ═══ MAIN GRID: Documents + Status Donut ═══ */}
+            <div className="dash-main-grid">
+              {/* Left: Documents by project */}
+              <section className="dash-card dash-animate dash-delay-6">
+                <div className="dash-panel-header">
                   <div>
-                    <span>Tổng quan</span>
+                    <span className="dash-label">Tổng quan</span>
                     <h3>Tài liệu theo dự án</h3>
                   </div>
-                  <strong>{projectsList.length} dự án · {documentsList.length} tài liệu</strong>
+                  <span className="dash-panel-badge">{projectsList.length} dự án · {documentsList.length} tài liệu</span>
                 </div>
-                <div className="doc-project-list">
+                <div className="dash-list">
                   {projectsList.map((project) => {
                     const projectDocs = documentsList.filter((d) => d.projectId === project.id);
                     const draftCount = projectDocs.filter((d) => d.status === "Draft").length;
                     const deployedCount = projectDocs.filter((d) => d.status === "Triển khai").length;
                     return (
                       <button
-                        className="exec-item-row"
+                        className="dash-list-row"
                         type="button"
                         key={project.id}
                         onClick={() => {
@@ -7111,147 +7151,106 @@ function App() {
                           setActiveTabNav("documents");
                         }}
                       >
-                        <div className="exec-item-left">
-                          <span className="exec-item-icon-box">
-                            <FileText size={13} />
-                          </span>
-                          <strong className="exec-item-name">{project.name}</strong>
-                        </div>
-                        <div className="exec-item-right">
-                          <div className="exec-item-chips">
-                            {draftCount > 0 && <span className="pr-chip pr-chip-progress">{draftCount} Draft</span>}
-                            {deployedCount > 0 && <span className="pr-chip pr-chip-done">{deployedCount} Triển khai</span>}
+                        <div className="dash-list-row-left">
+                          <span className="dash-list-icon"><FileText size={14} /></span>
+                          <div>
+                            <span className="dash-list-name">{project.name}</span>
                           </div>
-                          <span className="exec-item-count">{projectDocs.length} tài liệu</span>
+                        </div>
+                        <div className="dash-list-row-right">
+                          {draftCount > 0 && <span className="dash-chip dash-chip-amber">{draftCount} Draft</span>}
+                          {deployedCount > 0 && <span className="dash-chip dash-chip-emerald">{deployedCount} Triển khai</span>}
+                          <span className="dash-list-count">{projectDocs.length} tài liệu</span>
                         </div>
                       </button>
                     );
                   })}
-                  {projectsList.length === 0 && <div className="empty-collab-state">Chưa có dự án nào.</div>}
+                  {projectsList.length === 0 && <div className="dash-empty">Chưa có dự án nào.</div>}
                 </div>
               </section>
 
-              <section className="exec-panel project-volume">
-                <div className="exec-panel-header">
+              {/* Right: Status Donut Chart */}
+              <section className="dash-card dash-animate dash-delay-7">
+                <div className="dash-panel-header">
                   <div>
-                    <span>Theo Project</span>
-                    <h3>Ticket mở theo Project</h3>
+                    <span className="dash-label">Trạng thái</span>
+                    <h3>Phân bổ ticket</h3>
                   </div>
-                  <strong>{executiveData.projectRows.length} project</strong>
+                  <span className="dash-panel-badge">{executiveData.totalStatusBreakdown} ticket</span>
                 </div>
-                <div className="exec-project-list-v2">
-                  {executiveData.projectRows.slice(0, 8).map((project, idx) => (
-                    <button
-                      className="exec-item-row"
-                      type="button"
-                      key={project.id}
-                      onClick={() => {
-                        setSelectedProjectId(project.id);
-                        setActiveTabNav("review");
-                      }}
-                    >
-                      <div className="exec-item-left">
-                        <span className="project-row-idx">{idx + 1}</span>
-                        <strong className="exec-item-name">{project.name}</strong>
+                <div className="dash-donut-row">
+                  <div className="dash-donut-wrap">
+                    <svg viewBox="0 0 100 100">
+                      {(() => {
+                        const total = executiveData.totalStatusBreakdown || 1;
+                        const radius = 35;
+                        const circumference = 2 * Math.PI * radius;
+                        let accumulated = 0;
+                        return executiveData.statusBreakdown.map((item) => {
+                          const ratio = item.value / total;
+                          const dashLength = ratio * circumference;
+                          const dashOffset = -accumulated * circumference;
+                          accumulated += ratio;
+                          return item.value > 0 ? (
+                            <circle
+                              key={item.id}
+                              className="dash-donut-segment"
+                              cx="50" cy="50" r={radius}
+                              stroke={item.color}
+                              strokeDasharray={`${dashLength} ${circumference - dashLength}`}
+                              strokeDashoffset={dashOffset}
+                            />
+                          ) : null;
+                        });
+                      })()}
+                    </svg>
+                    <div className="dash-donut-center">
+                      <strong>{executiveData.totalStatusBreakdown}</strong>
+                      <small>ticket</small>
+                    </div>
+                  </div>
+                  <div className="dash-donut-legend">
+                    {executiveData.statusBreakdown.map((item) => (
+                      <div className="dash-legend-item" key={item.id}>
+                        <span className="dash-legend-dot" style={{ background: item.color }} />
+                        <span>{item.label}</span>
+                        <strong>{item.value}</strong>
                       </div>
-                      <div className="exec-item-right">
-                        <div className="exec-item-chips">
-                          {project.backlogItems > 0 && <span className="pr-chip pr-chip-total">{project.backlogItems} backlog</span>}
-                          {project.todoItems > 0 && <span className="pr-chip pr-chip-total">{project.todoItems} to do</span>}
-                          {project.inProgressItems > 0 && <span className="pr-chip pr-chip-progress">{project.inProgressItems} đang làm</span>}
-                          {project.reviewItems > 0 && <span className="pr-chip pr-chip-total">{project.reviewItems} review</span>}
-                          {project.blockedItems > 0 && <span className="pr-chip pr-chip-bug">{project.blockedItems} blocked</span>}
-                          {project.doneItems > 0 && <span className="pr-chip pr-chip-done">{project.doneItems} done</span>}
-                        </div>
-                        <span className="exec-item-count">{project.items} ticket</span>
-                      </div>
-                    </button>
-                  ))}
-                  {executiveData.projectRows.length === 0 && (
-                    <div className="empty-collab-state">Chưa có project nào.</div>
-                  )}
+                    ))}
+                  </div>
                 </div>
               </section>
             </div>
 
-            <div className="exec-insight-grid">
-              <section className="exec-panel">
-                <div className="exec-panel-header">
+            {/* ═══ WORKLOAD ═══ */}
+              <section className="dash-card dash-card-full dash-animate dash-delay-8">
+                <div className="dash-panel-header">
                   <div>
-                    <span>Trạng thái</span>
-                    <h3>Phân bổ ticket</h3>
-                  </div>
-                  <strong>{executiveData.totalStatusBreakdown} ticket</strong>
-                </div>
-                <div className="status-distribution-rail" aria-label="Tỷ lệ ticket theo trạng thái">
-                  {executiveData.statusBreakdown.map((item) => (
-                    item.value > 0 ? (
-                      <span
-                        className={`status-segment status-${item.id.toLowerCase()}`}
-                        key={item.id}
-                        style={{ flexGrow: item.value, background: item.color }}
-                        title={`${item.label}: ${item.value} ticket`}
-                      />
-                    ) : null
-                  ))}
-                </div>
-                <div className="status-breakdown-list">
-                  {executiveData.statusBreakdown.map((item) => {
-                    const percent = executiveData.totalStatusBreakdown
-                      ? Math.round((item.value / executiveData.totalStatusBreakdown) * 100)
-                      : 0;
-                    const scale = executiveData.maxStatusBreakdown ? item.value / executiveData.maxStatusBreakdown : 0;
-                    return (
-                      <div
-                        className={`status-breakdown-row status-${item.id.toLowerCase()}`}
-                        key={item.id}
-                        style={{ "--status-accent": item.color } as React.CSSProperties}
-                      >
-                        <div className="status-row-main">
-                          <span>{item.label}</span>
-                          <strong>{item.value}</strong>
-                        </div>
-                        <div className="status-row-copy">
-                          <small>{item.hint}</small>
-                          <em>{percent}%</em>
-                        </div>
-                        <div className="status-row-meter" aria-hidden="true">
-                          <i style={{ transform: `scaleX(${scale})` }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-
-              <section className="exec-panel workload-panel">
-                <div className="exec-panel-header">
-                  <div>
-                    <span>Workload</span>
+                    <span className="dash-label">Workload</span>
                     <h3>Theo người phụ trách</h3>
                   </div>
-                  <strong>{filteredWorkloadRows.length}/{executiveData.workloadRows.length} người</strong>
+                  <span className="dash-panel-badge">{filteredWorkloadRows.length}/{executiveData.workloadRows.length} người</span>
                 </div>
-                <div className="workload-filter-row" aria-label="Lọc workload">
-                  <label className="workload-name-filter">
+                <div className="dash-workload-filters">
+                  <label className="dash-workload-search">
                     <Search size={13} />
                     <input
                       value={workloadNameFilter}
-                      onChange={(event) => setWorkloadNameFilter(event.target.value)}
+                      onChange={(e) => setWorkloadNameFilter(e.target.value)}
                       placeholder="Lọc theo tên..."
                     />
                   </label>
-                  <div className="workload-completion-filter">
+                  <div className="dash-workload-select">
                     <button
                       type="button"
-                      className="workload-completion-trigger"
+                      className="dash-workload-select-trigger"
                       onClick={() => setOpenFilterDropdown(openFilterDropdown === "workloadCompletion" ? null : "workloadCompletion")}
                     >
                       <span>
                         {({
                           ALL: "Tất cả % hoàn thiện",
                           LOW: "Dưới 50%",
-                          MID: "50% đến dưới 100%",
+                          MID: "50% – dưới 100%",
                           DONE: "100% hoàn thiện"
                         } as Record<typeof workloadCompletionFilter, string>)[workloadCompletionFilter]}
                       </span>
@@ -7259,12 +7258,12 @@ function App() {
                     </button>
                     {openFilterDropdown === "workloadCompletion" && (
                       <>
-                        <div className="workload-filter-scrim" onClick={() => setOpenFilterDropdown(null)} />
-                        <div className="workload-completion-menu">
+                        <div className="dash-workload-dropdown-scrim" onClick={() => setOpenFilterDropdown(null)} />
+                        <div className="dash-workload-dropdown">
                           {([
                             { value: "ALL", label: "Tất cả % hoàn thiện" },
                             { value: "LOW", label: "Dưới 50%" },
-                            { value: "MID", label: "50% đến dưới 100%" },
+                            { value: "MID", label: "50% – dưới 100%" },
                             { value: "DONE", label: "100% hoàn thiện" }
                           ] as const).map((option) => {
                             const isSelected = workloadCompletionFilter === option.value;
@@ -7273,10 +7272,7 @@ function App() {
                                 key={option.value}
                                 type="button"
                                 className={isSelected ? "selected" : ""}
-                                onClick={() => {
-                                  setWorkloadCompletionFilter(option.value);
-                                  setOpenFilterDropdown(null);
-                                }}
+                                onClick={() => { setWorkloadCompletionFilter(option.value); setOpenFilterDropdown(null); }}
                               >
                                 <span>{option.label}</span>
                                 {isSelected && <CheckCheck size={14} />}
@@ -7288,14 +7284,12 @@ function App() {
                     )}
                   </div>
                 </div>
-                <div className="workload-list">
+                <div className="dash-workload-list">
                   {filteredWorkloadRows.map((row) => {
                     const donePercent = row.total ? Math.round((row.done / row.total) * 100) : 0;
-                    const riskCount = row.risk;
-                    const targetProject = projectsList.find((project) => project.id === row.projectId);
-                    const targetProjectLabel = targetProject ? `Mở Workboard: ${targetProject.name}` : "Mở Workboard theo người phụ trách";
+                    const targetProject = projectsList.find((p) => p.id === row.projectId);
                     return (
-                      <button className="wl-person" type="button" key={row.name} title={targetProjectLabel} onClick={() => {
+                      <button className="dash-wl-card" type="button" key={row.name} title={targetProject ? `Mở Workboard: ${targetProject.name}` : ""} onClick={() => {
                         setWorkItems([]);
                         setSelectedProjectId(row.projectId);
                         const firstDoc = documentsList.find((doc) => doc.projectId === row.projectId);
@@ -7304,186 +7298,150 @@ function App() {
                         setWorkboardAssigneeFilter(row.name);
                         void loadProjectWorkItems(row.projectId);
                       }}>
-                        <div className="wl-person-top">
-                          <div className="wl-person-identity">
-                            <strong>{row.name}</strong>
-                          </div>
-                          <div className="wl-person-metrics" aria-label={`Tổng ${row.total}, đang mở ${row.open}, đã xong ${row.done}`}>
+                        <div className="dash-wl-top">
+                          <span className="dash-wl-name">{row.name}</span>
+                          <div className="dash-wl-metrics">
                             <span><em>{row.total}</em> Tổng</span>
                             <span><em>{row.open}</em> Mở</span>
                             <span><em>{row.done}</em> Done</span>
                           </div>
                         </div>
-                        <div className="wl-progress-summary">
-                          <span>Tiến độ hoàn thành</span>
+                        <div className="dash-wl-progress-row">
+                          <span>Tiến độ</span>
                           <strong>{row.done}/{row.total} done · <em>{donePercent}%</em></strong>
                         </div>
-                        <div className="wl-bar-track">
-                          <div className="wl-bar-fill" style={{ width: `${donePercent}%` }} />
+                        <div className="dash-wl-bar-track">
+                          <div className="dash-wl-bar-fill" style={{ width: `${donePercent}%` }} />
                         </div>
-                        <div className="wl-stat-row">
-                          {row.backlog > 0 && <span className="wl-chip wl-chip-neutral"><em>{row.backlog}</em> Chờ xử lý</span>}
-                          {row.todo > 0 && <span className="wl-chip wl-chip-blue"><em>{row.todo}</em> Cần làm</span>}
-                          {row.inProgress > 0 && <span className="wl-chip wl-chip-amber"><em>{row.inProgress}</em> Đang làm</span>}
-                          {row.review > 0 && <span className="wl-chip wl-chip-blue"><em>{row.review}</em> Review</span>}
-                          {riskCount > 0 && <span className="wl-chip wl-chip-danger"><em>{riskCount}</em> Rủi ro</span>}
-                          {row.done > 0 && <span className="wl-chip wl-chip-green"><em>{row.done}</em> Đã xong</span>}
+                        <div className="dash-wl-chips">
+                          {row.backlog > 0 && <span className="dash-chip dash-chip-default"><em>{row.backlog}</em> Chờ</span>}
+                          {row.todo > 0 && <span className="dash-chip dash-chip-blue"><em>{row.todo}</em> Cần làm</span>}
+                          {row.inProgress > 0 && <span className="dash-chip dash-chip-amber"><em>{row.inProgress}</em> Đang làm</span>}
+                          {row.review > 0 && <span className="dash-chip dash-chip-blue"><em>{row.review}</em> Review</span>}
+                          {row.risk > 0 && <span className="dash-chip dash-chip-rose"><em>{row.risk}</em> Rủi ro</span>}
+                          {row.done > 0 && <span className="dash-chip dash-chip-emerald"><em>{row.done}</em> Xong</span>}
                         </div>
                       </button>
                     );
                   })}
-                  {filteredWorkloadRows.length === 0 && <div className="empty-collab-state">Không có người phụ trách phù hợp bộ lọc.</div>}
+                  {filteredWorkloadRows.length === 0 && <div className="dash-empty">Không tìm thấy người phù hợp.</div>}
                 </div>
               </section>
 
-            </div>
-
-            <div className="exec-secondary-grid">
-              <section className="exec-panel recent-projects">
-                <div className="exec-panel-header">
+            {/* ═══ BOTTOM ROW: Risk + Recent + Project Health ═══ */}
+            <div className="dash-secondary-grid">
+              {/* Risk alerts */}
+              <section className="dash-card dash-animate dash-delay-10">
+                <div className="dash-panel-header">
                   <div>
-                    <span>Ưu tiên</span>
+                    <span className="dash-label">Cảnh báo</span>
+                    <h3>Rủi ro Workboard</h3>
+                  </div>
+                  <span className="dash-panel-badge">{executiveData.riskItems.length} item</span>
+                </div>
+                <div className="dash-list">
+                  {executiveData.riskItems.map((item) => {
+                    const project = projectsList.find((p) => p.id === item.projectId);
+                    const assignees = workItemAssigneeNames(item);
+                    const isUnassigned = !assignees || assignees.length === 0;
+                    const riskReason = item.status === "BLOCKED" ? "Blocked"
+                      : isWorkItemOverdue(item) ? "Quá hạn"
+                      : item.type === "BUG" && item.priority === "CRITICAL" ? "Critical bug"
+                      : isUnassigned ? "Chưa giao"
+                      : `${WORK_ITEM_PRIORITY_LABEL[item.priority]} priority`;
+                    const isHighRisk = item.status === "BLOCKED" || item.priority === "CRITICAL" || isWorkItemOverdue(item) || isUnassigned;
+                    const chipClass = (item.status === "BLOCKED" || isWorkItemOverdue(item) || (item.type === "BUG" && item.priority === "CRITICAL"))
+                      ? "dash-chip-rose" : isUnassigned ? "dash-chip-amber" : "dash-chip-default";
+                    return (
+                      <button className="dash-list-row" type="button" key={item.id} onClick={() => openDashboardWorkItem(item)}>
+                        <div className="dash-list-row-left">
+                          <span className={isHighRisk ? "dash-risk-dot high" : "dash-risk-dot"} />
+                          <div>
+                            <span className="dash-list-name">{displayWorkItemTitle(item)}</span>
+                            <span className="dash-list-sub">{project?.code ?? "Project"}</span>
+                          </div>
+                        </div>
+                        <div className="dash-list-row-right">
+                          <span className={`dash-chip ${chipClass}`}>{riskReason}</span>
+                          <span className="dash-list-count">{formatWorkItemDate(item.dueDate)}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {executiveData.riskItems.length === 0 && <div className="dash-empty">Không có ticket rủi ro.</div>}
+                </div>
+              </section>
+
+              {/* Recent tickets */}
+              <section className="dash-card dash-animate dash-delay-10">
+                <div className="dash-panel-header">
+                  <div>
+                    <span className="dash-label">Ticket</span>
+                    <h3>Ticket gần đây</h3>
+                  </div>
+                  <span className="dash-panel-badge">{executiveData.recentWorkItems.length} item</span>
+                </div>
+                <div className="dash-list">
+                  {executiveData.recentWorkItems.map((item) => {
+                    const project = projectsList.find((p) => p.id === item.projectId);
+                    const chipClass = item.status === "DONE" ? "dash-chip-emerald"
+                      : item.status === "IN_PROGRESS" ? "dash-chip-blue" : "dash-chip-default";
+                    return (
+                      <button className="dash-list-row" type="button" key={item.id} onClick={() => openDashboardWorkItem(item)}>
+                        <div className="dash-list-row-left">
+                          <span className="dash-list-icon">{workItemTypeIcon(item.type)}</span>
+                          <div>
+                            <span className="dash-list-name">{displayWorkItemTitle(item)}</span>
+                            <span className="dash-list-sub">{project?.code ?? "Project"}</span>
+                          </div>
+                        </div>
+                        <div className="dash-list-row-right">
+                          <span className={`dash-chip ${chipClass}`}>{dashboardColumnLabelForItem(item)}</span>
+                          <span className="dash-list-count">{relativeDashboardTime(item.updatedAt ?? item.createdAt)}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {executiveData.recentWorkItems.length === 0 && <div className="dash-empty">Chưa có ticket nào gần đây.</div>}
+                </div>
+              </section>
+
+              {/* Project attention */}
+              <section className="dash-card dash-animate dash-delay-10">
+                <div className="dash-panel-header">
+                  <div>
+                    <span className="dash-label">Ưu tiên</span>
                     <h3>Project cần chú ý</h3>
                   </div>
-                  <strong>Risk</strong>
+                  <span className="dash-panel-badge">Risk</span>
                 </div>
-                <div className="exec-project-list-v2">
+                <div className="dash-list">
                   {executiveData.projectRows
-                    .filter((project) => project.blockedItems > 0 || project.overdueItems > 0 || project.criticalBugs > 0)
-                    .sort((first, second) =>
-                      (second.blockedItems * 5 + second.criticalBugs * 4 + second.overdueItems * 3) -
-                      (first.blockedItems * 5 + first.criticalBugs * 4 + first.overdueItems * 3)
-                    )
+                    .filter((p) => p.blockedItems > 0 || p.overdueItems > 0 || p.criticalBugs > 0)
+                    .sort((a, b) => (b.blockedItems * 5 + b.criticalBugs * 4 + b.overdueItems * 3) - (a.blockedItems * 5 + a.criticalBugs * 4 + a.overdueItems * 3))
                     .slice(0, 5)
                     .map((project) => (
-                      <button
-                        className="exec-item-row"
-                        type="button"
-                        key={project.id}
-                        onClick={() => {
-                          setSelectedProjectId(project.id);
-                          setActiveTabNav("review");
-                        }}
-                      >
-                        <div className="exec-item-left">
-                          <span className="ops-code-chip">{project.code}</span>
-                          <strong className="exec-item-name">{project.name}</strong>
+                      <button className="dash-list-row" type="button" key={project.id} onClick={() => { setSelectedProjectId(project.id); setActiveTabNav("review"); }}>
+                        <div className="dash-list-row-left">
+                          <span className="dash-list-idx">{project.code?.slice(0, 3) ?? "#"}</span>
+                          <span className="dash-list-name">{project.name}</span>
                         </div>
-                        <div className="exec-item-right">
-                          <div className="exec-item-chips">
-                            {project.blockedItems > 0 && <span className="pr-chip pr-chip-bug">{project.blockedItems} blocked</span>}
-                            {project.overdueItems > 0 && <span className="pr-chip pr-chip-bug">{project.overdueItems} quá hạn</span>}
-                            {project.criticalBugs > 0 && <span className="pr-chip pr-chip-bug">{project.criticalBugs} critical bug</span>}
-                          </div>
+                        <div className="dash-list-row-right">
+                          {project.blockedItems > 0 && <span className="dash-chip dash-chip-rose">{project.blockedItems} blocked</span>}
+                          {project.overdueItems > 0 && <span className="dash-chip dash-chip-rose">{project.overdueItems} quá hạn</span>}
+                          {project.criticalBugs > 0 && <span className="dash-chip dash-chip-rose">{project.criticalBugs} critical</span>}
                         </div>
                       </button>
                     ))}
-                  {executiveData.projectRows.filter((project) => project.blockedItems > 0 || project.overdueItems > 0 || project.criticalBugs > 0).length === 0 && (
-                    <div className="empty-collab-state">Không có project nào cần cảnh báo rủi ro.</div>
-                  )}
-                </div>
-              </section>
-
-              <section className="exec-panel recent-docs">
-                <div className="exec-panel-header">
-                  <div>
-                    <span>Ticket</span>
-                    <h3>Ticket gần đây</h3>
-                  </div>
-                  <strong>{executiveData.recentWorkItems.length} item</strong>
-                </div>
-                <div className="exec-project-list-v2">
-                  {executiveData.recentWorkItems.map((item) => {
-                    const project = projectsList.find((project) => project.id === item.projectId);
-                    return (
-                      <button
-                        className="exec-item-row"
-                        type="button"
-                        key={item.id}
-                        onClick={() => openDashboardWorkItem(item)}
-                      >
-                        <div className="exec-item-left">
-                          <span className="exec-item-icon-box">
-                            {workItemTypeIcon(item.type)}
-                          </span>
-                          <div className="exec-item-title-group">
-                            <strong className="exec-item-name">{displayWorkItemTitle(item)}</strong>
-                            <small className="exec-item-sub">{project?.code ?? "Project"}</small>
-                          </div>
-                        </div>
-                        <div className="exec-item-right">
-                          <span className={`pr-chip ${item.status === "DONE" ? "pr-chip-done" : item.status === "IN_PROGRESS" ? "pr-chip-progress" : "pr-chip-total"}`}>
-                            {dashboardColumnLabelForItem(item)}
-                          </span>
-                          <span className="exec-item-count">{relativeDashboardTime(item.updatedAt ?? item.createdAt)}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                  {executiveData.recentWorkItems.length === 0 && (
-                    <div className="empty-collab-state">Không có ticket thường mới. Ticket cần xử lý nằm ở khối rủi ro.</div>
-                  )}
-                </div>
-              </section>
-
-              <section className="exec-panel quiet-projects">
-                <div className="exec-panel-header">
-                  <div>
-                    <span>Cảnh báo</span>
-                    <h3>Rủi ro Workboard</h3>
-                  </div>
-                  <strong>{executiveData.riskItems.length} item</strong>
-                </div>
-                <div className="exec-project-list-v2">
-                  {executiveData.riskItems.map((item) => {
-                    const project = projectsList.find((project) => project.id === item.projectId);
-                    const assignees = workItemAssigneeNames(item);
-                    const isUnassigned = !assignees || assignees.length === 0;
-                    const riskReason = item.status === "BLOCKED"
-                      ? "Blocked"
-                      : isWorkItemOverdue(item)
-                        ? "Quá hạn"
-                        : item.type === "BUG" && item.priority === "CRITICAL"
-                          ? "Critical bug"
-                          : isUnassigned
-                            ? "Chưa giao"
-                            : `${WORK_ITEM_PRIORITY_LABEL[item.priority]} priority`;
-                    const isHighRisk = item.status === "BLOCKED" || item.priority === "CRITICAL" || isWorkItemOverdue(item) || isUnassigned;
-                    const riskChipClass = item.status === "BLOCKED" || isWorkItemOverdue(item) || (item.type === "BUG" && item.priority === "CRITICAL")
-                      ? "pr-chip-bug"
-                      : isUnassigned
-                        ? "pr-chip-progress"
-                        : "pr-chip-total";
-
-                    return (
-                      <button
-                        className="exec-item-row"
-                        type="button"
-                        key={item.id}
-                        onClick={() => openDashboardWorkItem(item)}
-                      >
-                        <div className="exec-item-left">
-                          <span className={isHighRisk ? "quiet-dot high" : "quiet-dot"}></span>
-                          <div className="exec-item-title-group">
-                            <strong className="exec-item-name">{displayWorkItemTitle(item)}</strong>
-                            <small className="exec-item-sub">{project?.code ?? "Project"}</small>
-                          </div>
-                        </div>
-                        <div className="exec-item-right">
-                          <span className={`pr-chip ${riskChipClass}`}>{riskReason}</span>
-                          <span className="exec-item-count">{formatWorkItemDate(item.dueDate)}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                  {executiveData.riskItems.length === 0 && (
-                    <div className="empty-collab-state">Không có ticket rủi ro.</div>
+                  {executiveData.projectRows.filter((p) => p.blockedItems > 0 || p.overdueItems > 0 || p.criticalBugs > 0).length === 0 && (
+                    <div className="dash-empty">Không có project cần cảnh báo.</div>
                   )}
                 </div>
               </section>
             </div>
           </section>
         ) : activeTabNav === "projects" ? (
+
           <section className="project-hub-page">
             {/* Executive Hero Stats Strip */}
             <div className="project-hub-hero">
@@ -8547,17 +8505,19 @@ function App() {
               {/* Pure Document Reader View */}
               <div className="doc-page">
                 {isEditingDocumentContent && canEditSelectedDocumentContent ? (
-                  <DocumentEditor
-                    documentId={selectedDocument.id}
-                    initialHtml={selectedDocument.contentHtml || DEFAULT_DOC_CONTENT}
-                    fontSize={fontSize}
-                    isSaving={isSavingDocumentContent}
-                    contentRef={documentContainerRef}
-                    onSave={handleSaveDocumentContent}
-                    onCancel={() => void cancelDocumentEditing()}
-                    onHeadingsChange={handleEditorHeadingsChange}
-                    onUploadImage={handleUploadEditorImage}
-                  />
+                  <Suspense fallback={<div className="content-loading">Đang tải trình soạn thảo...</div>}>
+                    <DocumentEditor
+                      documentId={selectedDocument.id}
+                      initialHtml={selectedDocument.contentHtml || DEFAULT_DOC_CONTENT}
+                      fontSize={fontSize}
+                      isSaving={isSavingDocumentContent}
+                      contentRef={documentContainerRef}
+                      onSave={handleSaveDocumentContent}
+                      onCancel={() => void cancelDocumentEditing()}
+                      onHeadingsChange={handleEditorHeadingsChange}
+                      onUploadImage={handleUploadEditorImage}
+                    />
+                  </Suspense>
                 ) : (
                   <>
                     {/* Rendered HTML Document Content for Reading & Comment Discussion */}

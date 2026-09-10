@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma, ProjectRole } from "@prisma/client";
 import sanitizeHtml = require("sanitize-html");
 import { AuthenticatedUser } from "../auth/auth.types";

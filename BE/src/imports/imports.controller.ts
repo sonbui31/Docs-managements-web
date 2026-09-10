@@ -1,9 +1,11 @@
 import { Body, Controller, Post, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiConsumes, ApiTags } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { importUploadOptions } from "../common/upload-options";
 import { ImportDocumentDto } from "./dto/import-document.dto";
 import { ImportsService } from "./imports.service";
 
@@ -15,7 +17,8 @@ export class ImportsController {
 
   @Post("documents")
   @ApiConsumes("multipart/form-data")
-  @UseInterceptors(FileInterceptor("file"))
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @UseInterceptors(FileInterceptor("file", importUploadOptions))
   importDocument(
     @UploadedFile() file: Express.Multer.File,
     @Body() dto: ImportDocumentDto,

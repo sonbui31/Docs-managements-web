@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
-import { ThrottlerModule } from "@nestjs/throttler";
+import { APP_GUARD } from "@nestjs/core";
+import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { AuthModule } from "./auth/auth.module";
 import { CollaborationModule } from "./collaboration/collaboration.module";
 import { CommentsModule } from "./comments/comments.module";
@@ -40,6 +41,12 @@ import { WorkItemsModule } from "./work-items/work-items.module";
     ExportsModule,
     WorkboardColumnsModule,
     WorkItemsModule
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard
+    }
   ]
 })
 export class AppModule {}

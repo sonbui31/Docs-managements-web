@@ -235,7 +235,7 @@ export class ImportsService {
     if (extension === "pdf") {
       try {
         return this.cleanHtml(await this.convertPdfToVisualHtml(file, dto, user));
-      } catch (renderError) {
+      } catch {
         try {
           return this.cleanHtml(await this.convertPdfToEmbeddedHtml(file, dto, user));
         } catch {
