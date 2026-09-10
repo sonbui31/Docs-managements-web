@@ -962,6 +962,7 @@ function App() {
   }, [selectedDocumentId]);
 
   const [statusFilter, setStatusFilter] = useState<"All" | DocumentStatus>("All");
+  const [documentTypeFilter, setDocumentTypeFilter] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [searchShortcutLabel, setSearchShortcutLabel] = useState<string>("Ctrl K");
 
@@ -1023,6 +1024,7 @@ function App() {
   }>>({});
   const workItemMoveTokenRef = useRef<number>(0);
   const [workboardSearchQuery, setWorkboardSearchQuery] = useState<string>("");
+  const [workboardStatusFilter, setWorkboardStatusFilter] = useState<"ALL" | "OPEN" | "BLOCKED" | "OVERDUE" | "DONE">("ALL");
   const [workboardTypeFilter, setWorkboardTypeFilter] = useState<"ALL" | WorkItemType>("ALL");
   const [workboardPriorityFilter, setWorkboardPriorityFilter] = useState<"ALL" | WorkItemPriority>("ALL");
   const [workboardAssigneeFilter, setWorkboardAssigneeFilter] = useState<string>("ALL");
@@ -2548,13 +2550,23 @@ function App() {
   const filteredDocuments = useMemo(() => {
     return projectDocuments.filter((doc) => {
       const matchesStatus = statusFilter === "All" || doc.status === statusFilter;
+      const matchesType = documentTypeFilter === "ALL" || doc.type === documentTypeFilter;
       const matchesSearch =
         doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         doc.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
         doc.owner.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchesStatus && matchesSearch;
+      return matchesStatus && matchesType && matchesSearch;
     });
-  }, [projectDocuments, statusFilter, searchQuery]);
+  }, [documentTypeFilter, projectDocuments, statusFilter, searchQuery]);
+
+  const documentTypeFilterOptions = useMemo(() => {
+    const typesInProject = Array.from(new Set(projectDocuments.map((doc) => doc.type).filter(Boolean)));
+    const knownTypes = DOCUMENT_TYPE_OPTIONS
+      .map((option) => option.value)
+      .filter((type) => typesInProject.includes(type));
+    const customTypes = typesInProject.filter((type) => !DOCUMENT_TYPE_ORDER.has(type));
+    return ["ALL", ...knownTypes, ...customTypes];
+  }, [projectDocuments]);
 
   const AVATAR_PALETTES = [
     "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
@@ -2623,6 +2635,17 @@ function App() {
       });
   }, [commentsList, selectedDocument.id, commentFilter, currentUser?.email, currentUser?.name]);
 
+  const commentFilterCounts = useMemo(() => {
+    const documentComments = commentsList.filter((comment) => comment.documentId === selectedDocument.id || !comment.documentId);
+    const roots = documentComments.filter((comment) => !comment.parentId);
+    return {
+      all: roots.length,
+      open: roots.filter((comment) => comment.status === "open").length,
+      resolved: roots.filter((comment) => comment.status === "resolved").length,
+      mine: roots.filter((comment) => comment.authorEmail === currentUser?.email || comment.author === currentUser?.name).length
+    };
+  }, [commentsList, currentUser?.email, currentUser?.name, selectedDocument.id]);
+
   const selectedWorkboardColumns = useMemo(() => {
     const columns = workboardColumnsByProject[selectedProjectId];
     return (columns?.length ? columns : DEFAULT_WORKBOARD_COLUMNS.map((column) => ({ ...column, projectId: selectedProjectId })))
@@ -2670,6 +2693,14 @@ function App() {
   const visibleWorkItems = useMemo(() => {
     const filtered = workItems.filter((item) => {
       if (item.projectId !== selectedProjectId) return false;
+      const isDone = item.column?.isDone || item.status === "DONE";
+      const isBlocked = item.column?.type === "BLOCKED" || item.status === "BLOCKED";
+      const matchesStatus =
+        workboardStatusFilter === "ALL" ||
+        (workboardStatusFilter === "OPEN" && !isDone) ||
+        (workboardStatusFilter === "DONE" && isDone) ||
+        (workboardStatusFilter === "BLOCKED" && isBlocked) ||
+        (workboardStatusFilter === "OVERDUE" && isWorkItemOverdue(item));
       const matchesType = workboardTypeFilter === "ALL" || item.type === workboardTypeFilter;
       const matchesPriority = workboardPriorityFilter === "ALL" || item.priority === workboardPriorityFilter;
       const matchesAssignee =
@@ -2684,7 +2715,7 @@ function App() {
         (item.document?.title ?? "").toLowerCase().includes(query) ||
         workItemAssigneeLabel(item).toLowerCase().includes(query) ||
         getWorkItemCreatorName(item).toLowerCase().includes(query);
-      return matchesType && matchesPriority && matchesAssignee && matchesCreator && matchesSearch;
+      return matchesStatus && matchesType && matchesPriority && matchesAssignee && matchesCreator && matchesSearch;
     });
 
     if (workboardSortBy === "BOARD_ORDER") return filtered;
@@ -2711,6 +2742,7 @@ function App() {
     workboardPriorityFilter,
     workboardSearchQuery,
     workboardSortBy,
+    workboardStatusFilter,
     workboardTypeFilter,
     selectedProjectId
   ]);
@@ -3074,6 +3106,51 @@ function App() {
     setActiveTabNav("review");
     openViewWorkItemModal(item);
     void loadProjectWorkItems(item.projectId);
+  }
+
+  function openDashboardQuickFilter(kind: "documents" | "open" | "critical" | "blocked" | "overdue" | "done") {
+    if (kind === "documents") {
+      setActiveTabNav("documents");
+      if (!selectedProjectId || !documentsList.some((document) => document.projectId === selectedProjectId)) {
+        const firstProjectWithDocs = projectsList.find((project) => documentsList.some((document) => document.projectId === project.id));
+        if (firstProjectWithDocs) setSelectedProjectId(firstProjectWithDocs.id);
+      }
+      setStatusFilter("All");
+      setDocumentTypeFilter("ALL");
+      setLeftPanelMode("docs");
+      return;
+    }
+
+    const dashboardItems = dashboardWorkItems.length > 0 ? dashboardWorkItems : workItems;
+    const matches = dashboardItems.filter((item) => {
+      const isDone = item.column?.isDone || item.status === "DONE";
+      const isBlocked = item.column?.type === "BLOCKED" || item.status === "BLOCKED";
+      if (kind === "open") return !isDone;
+      if (kind === "critical") return item.type === "BUG" && item.priority === "CRITICAL" && !isDone;
+      if (kind === "blocked") return isBlocked;
+      if (kind === "overdue") return isWorkItemOverdue(item);
+      if (kind === "done") return isDone;
+      return false;
+    });
+
+    const firstMatch = matches[0];
+    if (!firstMatch) {
+      addToast("info", "Chưa có dữ liệu phù hợp", "Không có ticket nào khớp với nhóm này.");
+      return;
+    }
+
+    setSelectedProjectId(firstMatch.projectId);
+    setSelectedDocumentId(firstMatch.documentId ?? documentsList.find((document) => document.projectId === firstMatch.projectId)?.id ?? "empty-document");
+    setWorkboardSearchQuery("");
+    setWorkboardAssigneeFilter("ALL");
+    setWorkboardCreatorFilter("ALL");
+    setWorkboardSortBy(kind === "overdue" ? "DUE_ASC" : "BOARD_ORDER");
+    setWorkboardStatusFilter(kind === "open" ? "OPEN" : kind === "blocked" ? "BLOCKED" : kind === "overdue" ? "OVERDUE" : kind === "done" ? "DONE" : "ALL");
+    setWorkboardTypeFilter(kind === "critical" ? "BUG" : "ALL");
+    setWorkboardPriorityFilter(kind === "critical" ? "CRITICAL" : "ALL");
+    setActiveTabNav("review");
+    void loadProjectWorkItems(firstMatch.projectId);
+    addToast("info", "Đã lọc Workboard", `Đang mở ${matches.length} ticket phù hợp trong project liên quan.`);
   }
 
   async function handleDropWorkItem(column: WorkboardColumn, targetId?: string, placement: "before" | "after" | "end" = "end") {
@@ -4293,6 +4370,7 @@ function App() {
     setSelectedProjectId("");
     setSelectedDocumentId("empty-document");
     setStatusFilter("All");
+    setDocumentTypeFilter("ALL");
     setSearchQuery("");
     setAdvancedSearchResults(null);
     setIsAdvancedSearchOpen(false);
@@ -4304,6 +4382,7 @@ function App() {
     setIsActionsDropdownOpen(false);
     setOpenFilterDropdown(null);
     setWorkboardSearchQuery("");
+    setWorkboardStatusFilter("ALL");
     setWorkboardTypeFilter("ALL");
     setWorkboardPriorityFilter("ALL");
     setWorkboardAssigneeFilter("ALL");
@@ -5268,7 +5347,7 @@ function App() {
       adjustDocumentCommentCount(comment.documentId, -resolvedOpenCount);
       clearActiveCommentHighlight();
       void loadProjectCollaboration(selectedProject.id);
-      addToast("success", "Đã đánh dấu hoàn thành", "Comment này đã được chuyển sang trạng thái hoàn thành.");
+      addToast("success", "Đã đánh dấu xử lý", "Nhận xét này đã được chuyển sang trạng thái đã xử lý.");
     } catch (error) {
       console.error("Resolve comment error:", error);
       toastApiError(error, "Không đánh dấu được", "BE chưa cập nhật được trạng thái comment.");
@@ -5468,7 +5547,7 @@ function App() {
               </div>
               {reply.status === "resolved" && (
                 <span className="comment-status-badge compact">
-                  <CheckCircle2 size={10} /> Hoàn thành
+                  <CheckCircle2 size={10} /> Đã xử lý
                 </span>
               )}
               <div className="reply-thread-actions">
@@ -6989,21 +7068,21 @@ function App() {
           <section className="role-dashboard-page executive-dashboard">
             {/* ── KPI strip ── */}
             <div className="exec-kpi-grid">
-              {[
-                { label: "Project", value: executiveData.projectCount, note: `${executiveData.activeProjects} project còn việc`, color: "kpi-indigo", Icon: FolderKanban },
-                { label: "Ticket mở", value: executiveData.openItems, note: "Chưa hoàn thành", color: "kpi-blue", Icon: Clock },
-                { label: "Bug critical", value: executiveData.criticalBugs, note: "Cần ưu tiên xử lý", color: "kpi-rose", Icon: AlertTriangle },
-                { label: "Blocked", value: executiveData.blockedItems, note: "Luồng đang kẹt", color: "kpi-violet", Icon: GitBranch },
-                { label: "Quá hạn", value: executiveData.overdueItems, note: "Chưa xong trước deadline", color: "kpi-amber", Icon: AlertTriangle },
-                { label: "Hoàn thành", value: `${executiveData.completionRate}%`, note: "Tỷ lệ done toàn workboard", color: "kpi-emerald", Icon: CheckCheck },
-              ].map(({ label, value, note, color, Icon }) => (
-                <div className={`exec-kpi-card ${color}`} key={label}>
-                  <div className="kpi-icon-box"><Icon size={17} /></div>
-                  <strong>{String(value)}</strong>
-                  <span>{label}</span>
-                  <small>{note}</small>
-                </div>
-              ))}
+	              {[
+	                { label: "Project", value: executiveData.projectCount, note: `${executiveData.activeProjects} project còn việc`, color: "kpi-indigo", Icon: FolderKanban, action: "documents" },
+	                { label: "Ticket mở", value: executiveData.openItems, note: "Mở Workboard đang mở", color: "kpi-blue", Icon: Clock, action: "open" },
+	                { label: "Bug critical", value: executiveData.criticalBugs, note: "Lọc bug cần ưu tiên", color: "kpi-rose", Icon: AlertTriangle, action: "critical" },
+	                { label: "Blocked", value: executiveData.blockedItems, note: "Lọc luồng đang kẹt", color: "kpi-violet", Icon: GitBranch, action: "blocked" },
+	                { label: "Quá hạn", value: executiveData.overdueItems, note: "Lọc ticket trễ hạn", color: "kpi-amber", Icon: AlertTriangle, action: "overdue" },
+	                { label: "Hoàn thành", value: `${executiveData.completionRate}%`, note: "Xem ticket đã xong", color: "kpi-emerald", Icon: CheckCheck, action: "done" },
+	              ].map(({ label, value, note, color, Icon, action }) => (
+	                <button className={`exec-kpi-card ${color}`} type="button" key={label} onClick={() => openDashboardQuickFilter(action as Parameters<typeof openDashboardQuickFilter>[0])}>
+	                  <div className="kpi-icon-box"><Icon size={17} /></div>
+	                  <strong>{String(value)}</strong>
+	                  <span>{label}</span>
+	                  <small>{note}</small>
+	                </button>
+	              ))}
             </div>
 
             <div className="exec-main-grid">
@@ -7705,17 +7784,49 @@ function App() {
                   <span>Bộ lọc:</span>
                 </div>
 
-                <label className="workboard-search-box">
-                  <Search size={14} />
-                  <input
-                    value={workboardSearchQuery}
-                    onChange={(event) => setWorkboardSearchQuery(event.target.value)}
-                    placeholder="Tìm ticket..."
-                  />
-                </label>
+	                <label className="workboard-search-box">
+	                  <Search size={14} />
+	                  <input
+	                    value={workboardSearchQuery}
+	                    onChange={(event) => setWorkboardSearchQuery(event.target.value)}
+	                    placeholder="Tìm ticket..."
+	                  />
+	                </label>
 
-                {/* LOẠI filter */}
-                <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
+	                <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
+	                  <span className="select-label">Trạng thái:</span>
+	                  <button type="button" className="form-select-trigger" onClick={() => setOpenFilterDropdown(openFilterDropdown === "status" ? null : "status")}>
+	                    <span className="trigger-label-text">
+	                      {({ ALL: "Tất cả trạng thái", OPEN: "Đang mở", BLOCKED: "Blocked", OVERDUE: "Quá hạn", DONE: "Đã xong" } as Record<typeof workboardStatusFilter, string>)[workboardStatusFilter]}
+	                    </span>
+	                    <ChevronDown size={13} className={`trigger-arrow-icon${openFilterDropdown === "status" ? " rotate" : ""}`} />
+	                  </button>
+	                  {openFilterDropdown === "status" && (
+	                    <>
+	                      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpenFilterDropdown(null)} />
+	                      <div className="custom-form-select-menu">
+	                        {([
+	                          { value: "ALL", label: "Tất cả trạng thái" },
+	                          { value: "OPEN", label: "Đang mở" },
+	                          { value: "BLOCKED", label: "Blocked" },
+	                          { value: "OVERDUE", label: "Quá hạn" },
+	                          { value: "DONE", label: "Đã xong" }
+	                        ] as const).map((option) => {
+	                          const isSelected = workboardStatusFilter === option.value;
+	                          return (
+	                            <button key={option.value} type="button" className={`custom-select-option${isSelected ? " selected" : ""}`} onClick={() => { setWorkboardStatusFilter(option.value); setOpenFilterDropdown(null); }}>
+	                              <span>{option.label}</span>
+	                              {isSelected && <CheckCheck size={14} className="option-check-mark" />}
+	                            </button>
+	                          );
+	                        })}
+	                      </div>
+	                    </>
+	                  )}
+	                </div>
+
+	                {/* LOẠI filter */}
+	                <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
                   <span className="select-label">Loại:</span>
                   <button type="button" className="form-select-trigger" onClick={() => setOpenFilterDropdown(openFilterDropdown === "type" ? null : "type")}>
                     <span className="trigger-label-text">{workboardTypeFilter === "ALL" ? "Tất cả loại" : WORK_ITEM_TYPE_LABEL[workboardTypeFilter]}</span>
@@ -7839,8 +7950,9 @@ function App() {
                   )}
                 </div>
 
-                {(workboardTypeFilter !== "ALL" ||
-                  workboardPriorityFilter !== "ALL" ||
+	                {(workboardStatusFilter !== "ALL" ||
+	                  workboardTypeFilter !== "ALL" ||
+	                  workboardPriorityFilter !== "ALL" ||
                   workboardAssigneeFilter !== "ALL" ||
                   workboardCreatorFilter !== "ALL" ||
                   workboardSearchQuery.trim() ||
@@ -7850,8 +7962,9 @@ function App() {
                       type="button"
                       title="Xóa tất cả bộ lọc"
                       onClick={() => {
-                        setWorkboardSearchQuery("");
-                        setWorkboardTypeFilter("ALL");
+	                        setWorkboardSearchQuery("");
+	                        setWorkboardStatusFilter("ALL");
+	                        setWorkboardTypeFilter("ALL");
                         setWorkboardPriorityFilter("ALL");
                         setWorkboardAssigneeFilter("ALL");
                         setWorkboardCreatorFilter("ALL");
@@ -8070,8 +8183,8 @@ function App() {
 
                 {leftPanelMode === "docs" ? (
                   <>
-                    <div className="library-filter-tabs">
-                      {(["All", "Draft", "Triển khai"] as const).map((tab) => (
+	                    <div className="library-filter-tabs">
+	                      {(["All", "Draft", "Triển khai"] as const).map((tab) => (
                         <button
                           key={tab}
                           className={statusFilter === tab ? "tab-btn active" : "tab-btn"}
@@ -8080,10 +8193,45 @@ function App() {
                         >
                           {tab === "All" ? "Tất cả" : tab}
                         </button>
-                      ))}
-                    </div>
+	                      ))}
+	                    </div>
 
-                    {/* Documents List */}
+	                    <div className="document-type-filter-row">
+	                      <button
+	                        type="button"
+	                        className="document-type-filter-trigger"
+	                        onClick={() => setOpenFilterDropdown(openFilterDropdown === "documentType" ? null : "documentType")}
+	                      >
+	                        <span>{documentTypeFilter === "ALL" ? "Tất cả loại tài liệu" : getDocumentTypeShortLabel(documentTypeFilter)}</span>
+	                        <ChevronDown size={13} className={openFilterDropdown === "documentType" ? "rotate" : ""} />
+	                      </button>
+	                      {openFilterDropdown === "documentType" && (
+	                        <>
+	                          <div className="workload-filter-scrim" onClick={() => setOpenFilterDropdown(null)} />
+	                          <div className="document-type-filter-menu">
+	                            {documentTypeFilterOptions.map((type) => {
+	                              const isSelected = documentTypeFilter === type;
+	                              return (
+	                                <button
+	                                  key={type}
+	                                  type="button"
+	                                  className={isSelected ? "selected" : ""}
+	                                  onClick={() => {
+	                                    setDocumentTypeFilter(type);
+	                                    setOpenFilterDropdown(null);
+	                                  }}
+	                                >
+	                                  <span>{type === "ALL" ? "Tất cả loại tài liệu" : getDocumentTypeShortLabel(type)}</span>
+	                                  {isSelected && <CheckCheck size={14} />}
+	                                </button>
+	                              );
+	                            })}
+	                          </div>
+	                        </>
+	                      )}
+	                    </div>
+
+	                    {/* Documents List */}
                     <div className="document-table">
                       {filteredDocuments.length === 0 ? (
                         <div className="document-empty-state">
@@ -8093,10 +8241,11 @@ function App() {
                       ) : (
                         filteredDocuments.map((doc) => {
                           const docCommentsCount = documentCommentCounts[doc.id] ?? doc.openCommentsCount ?? 0;
-                          const fullTitle = normalizeVietnameseText(doc.title);
-                          const docTypeLabel = getDocumentTypeShortLabel(doc.type);
-                          const docMetaTitle = `Người phụ trách: ${doc.owner}`;
-                          const fileKind = doc.fileType === "pdf" ? "pdf" : doc.fileType === "md" ? "md" : "doc";
+	                          const fullTitle = normalizeVietnameseText(doc.title);
+	                          const docTypeLabel = getDocumentTypeShortLabel(doc.type);
+	                          const updatedLabel = relativeDashboardTime(doc.updatedAtIso ?? doc.updatedAt);
+	                          const docMetaTitle = `Người phụ trách: ${doc.owner} · Cập nhật ${updatedLabel}`;
+	                          const fileKind = doc.fileType === "pdf" ? "pdf" : doc.fileType === "md" ? "md" : "doc";
                           return (
                             <button
                               key={doc.id}
@@ -8120,9 +8269,10 @@ function App() {
                                 </div>
                                 <div className="doc-info">
                                   <strong title={fullTitle}>{fullTitle}</strong>
-                                  <small title={docMetaTitle}>
-                                    <span>Người phụ trách: {doc.owner}</span>
-                                  </small>
+	                                  <small title={docMetaTitle}>
+	                                    <span>Người phụ trách: {doc.owner}</span>
+	                                    <span>Cập nhật: {updatedLabel}</span>
+	                                  </small>
                                 </div>
                               </div>
                               <div className="doc-row-bottom">
@@ -8528,7 +8678,7 @@ function App() {
                   {[
                     ["all", "Tất cả"],
                     ["open", "Đang mở"],
-                    ["resolved", "Hoàn thành"],
+	                    ["resolved", "Đã xử lý"],
                     ["mine", "Của tôi"]
                   ].map(([id, label]) => (
                     <button
@@ -8537,7 +8687,8 @@ function App() {
                       className={commentFilter === id ? "active" : ""}
                       onClick={() => setCommentFilter(id as typeof commentFilter)}
                     >
-                      {label}
+	                      <span>{label}</span>
+	                      <em>{commentFilterCounts[id as keyof typeof commentFilterCounts]}</em>
                     </button>
                   ))}
                 </div>
@@ -8566,7 +8717,7 @@ function App() {
                         <div className="comment-top-meta">
                           {comment.status === "resolved" ? (
                             <span className="comment-status-badge resolved">
-                              <CheckCircle2 size={11} /> Hoàn thành
+	                              <CheckCircle2 size={11} /> Đã xử lý
                             </span>
                           ) : (
                             <span className="comment-status-badge open">
@@ -8626,13 +8777,13 @@ function App() {
                                 <button
                                   className="btn-comment-action success"
                                   type="button"
-                                  title="Đánh dấu comment đã hoàn thành"
+	                                  title="Đánh dấu nhận xét đã xử lý"
                                   onClick={(event) => {
                                     event.stopPropagation();
                                     void handleResolveComment(comment);
                                   }}
                                 >
-                                  <CheckCircle2 size={11} /> Hoàn thành
+	                                  <CheckCircle2 size={11} /> Đã xử lý
                                 </button>
                               )}
                               {comment.status === "open" && (
@@ -8714,7 +8865,11 @@ function App() {
                     </div>
                   ))}
                   {displayedComments.length === 0 && (
-                    <div className="empty-collab-state">Không có nhận xét phù hợp với bộ lọc.</div>
+	                    <div className="comment-empty-state">
+	                      <MessageSquareText size={20} />
+	                      <strong>Không có nhận xét phù hợp</strong>
+	                      <span>Nhận xét mới sẽ hiện ở đây khi bạn bôi đen nội dung và gửi trao đổi.</span>
+	                    </div>
                   )}
                 </div>
               </>

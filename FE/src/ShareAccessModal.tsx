@@ -25,10 +25,10 @@ type ShareAccessModalProps = {
 };
 
 const shareRoleLabels: Record<ProjectRole, { label: string; desc: string }> = {
-  VIEWER: { label: "Viewer", desc: "Chỉ xem" },
-  REVIEWER: { label: "Reviewer", desc: "Xem và bình luận" },
-  EDITOR: { label: "Editor", desc: "Chỉnh sửa nội dung" },
-  MANAGER: { label: "Manager", desc: "Quản lý và chia sẻ" }
+  VIEWER: { label: "Xem", desc: "Chỉ xem" },
+  REVIEWER: { label: "Bình luận", desc: "Xem và bình luận" },
+  EDITOR: { label: "Sửa", desc: "Chỉnh sửa nội dung" },
+  MANAGER: { label: "Quản lý", desc: "Quản lý và chia sẻ" }
 };
 
 const shareRoles = Object.keys(shareRoleLabels) as ProjectRole[];
@@ -169,7 +169,11 @@ export function ShareAccessModal({
       setSelectedUserIds([]);
       await loadUsers();
       await onAccessChanged?.(scope, targetId);
-      onToast("success", "Đã chia sẻ quyền", `Đã cấp ${selectedRoles.join(", ")} cho ${selectedUserIds.length} người trên ${targetLabel}.`);
+      onToast(
+        "success",
+        "Đã chia sẻ quyền",
+        `Đã cấp quyền ${selectedRoles.map((role) => shareRoleLabels[role].label).join(", ")} cho ${selectedUserIds.length} người trên ${targetLabel}.`
+      );
     } catch (error: any) {
       onToast("error", "Chia sẻ thất bại", error?.message || "Vui lòng thử lại.");
     } finally {
@@ -188,7 +192,7 @@ export function ShareAccessModal({
       }
       await loadUsers();
       await onAccessChanged?.(scope, targetId);
-      onToast("success", "Đã cập nhật quyền", `Quyền ${targetLabel} đã đổi thành ${roles.join(", ")}.`);
+      onToast("success", "Đã cập nhật quyền", `Quyền ${targetLabel} đã đổi thành ${roles.map((role) => shareRoleLabels[role].label).join(", ")}.`);
     } catch (error: any) {
       onToast("error", "Không đổi được quyền", error?.message || "Vui lòng thử lại.");
     } finally {
@@ -285,8 +289,8 @@ export function ShareAccessModal({
                 >
                   <span className="share-trigger-text">
                     {selectedUsers.length
-                      ? `Đã chọn ${selectedUsers.length} nhân viên`
-                      : "Chọn một hoặc nhiều nhân viên..."}
+                      ? `Đã chọn ${selectedUsers.length} người dùng`
+                      : "Chọn một hoặc nhiều người dùng..."}
                   </span>
                   <ChevronDown size={16} className={`chevron-icon ${isUserDropdownOpen ? "open" : ""}`} />
                 </button>
@@ -401,15 +405,18 @@ export function ShareAccessModal({
               {accessUsers.length === 0 ? (
                 <div className="share-empty-state">Chưa có quyền trực tiếp trên {targetLabel} này.</div>
               ) : (
-                accessUsers.map(({ user, roles }) => (
-                  <div key={user.id} className="share-access-item">
-                    <div className="share-user-info">
-                      <span className="share-avatar">{user.name.charAt(0).toUpperCase()}</span>
-                      <span className="share-user-copy">
-                        <strong>{user.name}</strong>
-                        <small>{user.email} · {roles.map((role) => shareRoleLabels[role].desc).join(", ")}</small>
-                      </span>
-                    </div>
+	                accessUsers.map(({ user, roles }) => (
+	                  <div key={user.id} className="share-access-item">
+	                    <div className="share-user-info">
+	                      <span className="share-avatar">{user.name.charAt(0).toUpperCase()}</span>
+	                      <span className="share-user-copy">
+	                        <strong>{user.name}</strong>
+	                        <small>{user.email} · {globalRoleLabels[user.role]} · Quyền trực tiếp</small>
+	                      </span>
+	                      <span className={`share-user-role-badge role-${user.role.toLowerCase()}`}>
+	                        {globalRoleLabels[user.role]}
+	                      </span>
+	                    </div>
 
                     <div className="share-role-checks">
                       {shareRoles.map((nextRole) => (
@@ -454,15 +461,18 @@ export function ShareAccessModal({
                 {inheritedAccessUsers.length === 0 ? (
                   <div className="share-empty-state">Không có quyền kế thừa từ dự án.</div>
                 ) : (
-                  inheritedAccessUsers.map(({ user, roles }) => (
-                    <div key={user.id} className="share-access-item inherited">
-                      <div className="share-user-info">
-                        <span className="share-avatar">{user.name.charAt(0).toUpperCase()}</span>
-                        <span className="share-user-copy">
-                          <strong>{user.name}</strong>
-                          <small>{user.email} · {roles.map((role) => shareRoleLabels[role].label).join(", ")}</small>
-                        </span>
-                      </div>
+	                  inheritedAccessUsers.map(({ user, roles }) => (
+	                    <div key={user.id} className="share-access-item inherited">
+	                      <div className="share-user-info">
+	                        <span className="share-avatar">{user.name.charAt(0).toUpperCase()}</span>
+	                        <span className="share-user-copy">
+	                          <strong>{user.name}</strong>
+	                          <small>{user.email} · {globalRoleLabels[user.role]} · Kế thừa từ project</small>
+	                        </span>
+	                        <span className={`share-user-role-badge role-${user.role.toLowerCase()}`}>
+	                          {globalRoleLabels[user.role]}
+	                        </span>
+	                      </div>
                       <div className="share-inherited-roles">
                         {roles.map((role) => (
                           <span key={role} className={`share-role-badge role-${role.toLowerCase()}`}>

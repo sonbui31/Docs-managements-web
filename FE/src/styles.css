@@ -2090,6 +2090,89 @@ button:active:not(:disabled) {
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
 }
 
+.document-type-filter-row {
+  position: relative;
+  padding: 0 10px 8px;
+}
+
+.document-type-filter-trigger {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 11px;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.document-type-filter-trigger:hover,
+.document-type-filter-trigger:focus-visible {
+  border-color: #c7d2fe;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.08);
+  outline: none;
+}
+
+.document-type-filter-trigger svg {
+  color: #64748b;
+  transition: transform 0.16s ease;
+}
+
+.document-type-filter-trigger svg.rotate {
+  transform: rotate(180deg);
+}
+
+.document-type-filter-menu {
+  position: absolute;
+  top: calc(100% - 2px);
+  left: 10px;
+  right: 10px;
+  z-index: 999;
+  display: grid;
+  gap: 2px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 11px;
+  background: #ffffff;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.14);
+}
+
+.document-type-filter-menu button {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #334155;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.document-type-filter-menu button:hover {
+  background: #f8fafc;
+}
+
+.document-type-filter-menu button.selected {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
 /* Document List - Card Rows with Left Accent Indicator */
 .document-table {
   flex: 1;
@@ -2110,6 +2193,9 @@ button:active:not(:disabled) {
   padding: 32px 16px;
   color: #94a3b8;
   text-align: center;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
 }
 
 .document-empty-state p {
@@ -2501,6 +2587,7 @@ button:active:not(:disabled) {
   max-width: 960px;
   margin: 0 auto;
   width: 100%;
+  overflow-x: auto;
 }
 
 .html-document.font-sm {
@@ -3350,16 +3437,16 @@ button:active:not(:disabled) {
 
 .html-document img.document-raster-image {
   display: block;
-  width: auto !important;
-  max-width: min(100%, var(--image-natural-width, 760px)) !important;
+  width: var(--image-natural-width, auto) !important;
+  max-width: none !important;
   max-height: 76vh;
   height: auto !important;
   object-fit: contain;
   margin: 18px auto;
-  image-rendering: -webkit-optimize-contrast;
-  filter: contrast(1.18) saturate(0.92);
-  transform: translateZ(0);
-  backface-visibility: hidden;
+  image-rendering: auto;
+  filter: none;
+  transform: none;
+  backface-visibility: visible;
 }
 
 .html-document img.document-diagram-image {
@@ -3367,18 +3454,21 @@ button:active:not(:disabled) {
 }
 
 .html-document img.document-diagram-landscape {
-  width: auto !important;
-  max-width: min(100%, var(--image-natural-width, 720px)) !important;
+  width: var(--image-natural-width, auto) !important;
+  max-width: none !important;
 }
 
 .html-document img.imported-doc-image {
   display: block;
-  width: auto !important;
-  max-width: min(100%, 760px) !important;
+  width: var(--image-natural-width, auto) !important;
+  max-width: none !important;
   max-height: 76vh;
   height: auto !important;
   object-fit: contain;
   margin: 18px auto;
+  image-rendering: auto;
+  filter: none;
+  transform: none;
 }
 
 .html-document .pdf-document-render {
@@ -4017,7 +4107,7 @@ button:active:not(:disabled) {
   color: #0284c7;
 }
 
-/* Visual Mermaid Diagram Styling (Pure White Background, Crisp High Contrast Nodes & Borders) */
+/* Visual Mermaid Diagram Styling */
 .mermaid-container,
 .mermaid {
   background: #ffffff !important;
@@ -4201,179 +4291,6 @@ button:active:not(:disabled) {
   justify-content: space-between;
   flex-shrink: 0;
 }
-.badge.medium {
-  background: #fef3c7;
-  color: #d97706;
-}
-
-.badge.low {
-  background: #e0f2fe;
-  color: #0284c7;
-}
-
-/* Visual Mermaid Diagram Styling (Pure White Background, Crisp High Contrast Nodes & Borders) */
-.mermaid-container,
-.mermaid {
-  background: #ffffff !important;
-  border: 1px solid var(--border-medium) !important;
-  border-radius: 14px !important;
-  padding: 32px 28px !important;
-  margin: 28px -48px !important;
-  display: flex !important;
-  justify-content: center !important;
-  align-items: center !important;
-  overflow-x: auto !important;
-  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05), 0 2px 6px -1px rgba(0, 0, 0, 0.02) !important;
-  width: calc(100% + 96px) !important;
-  max-width: none !important;
-  text-indent: 0 !important;
-}
-
-.mermaid-container svg,
-.mermaid svg {
-  max-width: 100% !important;
-  min-width: min(880px, 100%) !important;
-  height: auto !important;
-  background-color: #ffffff !important;
-  font-family: var(--font-sans) !important;
-  overflow: visible !important;
-  shape-rendering: geometricPrecision !important;
-  text-rendering: geometricPrecision !important;
-  -webkit-font-smoothing: antialiased !important;
-  font-smooth: always !important;
-}
-
-/* Cluster Subgraph White Background & Clean Border */
-.mermaid-container .cluster rect,
-.mermaid svg .cluster rect {
-  fill: #ffffff !important;
-  stroke: #94a3b8 !important;
-  stroke-width: 2px !important;
-  rx: 8px !important;
-  ry: 8px !important;
-}
-
-.mermaid-container .cluster .label,
-.mermaid svg .cluster .label {
-  fill: #4f46e5 !important;
-  font-weight: 700 !important;
-}
-
-/* Nodes Styling - Crisp Modern Contrast */
-.mermaid-container .node rect,
-.mermaid-container .node circle,
-.mermaid-container .node polygon,
-.mermaid-container .node path,
-.mermaid svg .node rect,
-.mermaid svg .node circle,
-.mermaid svg .node polygon,
-.mermaid svg .node path {
-  fill: #f8fafc !important;
-  stroke: #312e81 !important;
-  stroke-width: 2.2px !important;
-  rx: 8px !important;
-  ry: 8px !important;
-}
-
-.mermaid-container .node .label,
-.mermaid svg .node .label {
-  fill: #0f172a !important;
-  font-weight: 700 !important;
-}
-
-/* Arrow Lines & Connections */
-.mermaid-container .edgePath .path,
-.mermaid svg .edgePath .path,
-.mermaid-container .transition,
-.mermaid svg .transition,
-.mermaid-container .flowchart-link,
-.mermaid svg .flowchart-link,
-.mermaid-container .edge-thickness-normal,
-.mermaid svg .edge-thickness-normal {
-  stroke: #111827 !important;
-  stroke-width: 2.6px !important;
-}
-
-.mermaid-container .marker,
-.mermaid svg .marker,
-.mermaid-container marker path,
-.mermaid svg marker path {
-  fill: #111827 !important;
-  stroke: #111827 !important;
-  stroke-width: 1.8px !important;
-}
-
-/* Edge Labels (Text on Arrow Lines) */
-.mermaid-container .edgeLabel rect,
-.mermaid svg .edgeLabel rect {
-  fill: transparent !important;
-  opacity: 0 !important;
-}
-
-.mermaid-container .edgeLabel span,
-.mermaid svg .edgeLabel span {
-  color: #111827 !important;
-  font-weight: 600 !important;
-  text-indent: 0 !important;
-  text-shadow:
-    -2px -2px 0 #ffffff,
-    2px -2px 0 #ffffff,
-    -2px 2px 0 #ffffff,
-    2px 2px 0 #ffffff,
-    0 0 3px #ffffff !important;
-}
-
-/* Reset all text-indent, margin, and text alignment for Mermaid SVG text labels & foreignObjects */
-.mermaid-container *,
-.mermaid * {
-  text-indent: 0 !important;
-  text-justify: auto !important;
-}
-
-.mermaid-container .nodeLabel,
-.mermaid-container .cluster-label,
-.mermaid-container .label,
-.mermaid svg .nodeLabel,
-.mermaid svg .cluster-label,
-.mermaid svg .label,
-.mermaid svg foreignObject,
-.mermaid svg foreignObject div,
-.mermaid svg foreignObject p,
-.mermaid svg foreignObject span,
-.mermaid-container p,
-.mermaid p,
-.mermaid-container div,
-.mermaid div {
-  text-indent: 0 !important;
-  text-align: center !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  line-height: 1.3 !important;
-  color: #0f172a !important;
-  font-weight: 700 !important;
-  text-shadow: 0 0 1px rgba(255, 255, 255, 0.9) !important;
-}
-
-.mermaid-error {
-  background: #fff7ed;
-  border: 1px solid #fdba74;
-  border-radius: 10px;
-  color: #9a3412;
-  margin: 22px 0;
-  padding: 16px;
-}
-
-.mermaid-error strong {
-  display: block;
-  margin-bottom: 10px;
-}
-
-.mermaid-error pre {
-  background: rgba(154, 52, 18, 0.08);
-  color: #7c2d12;
-  margin: 0;
-}
-
 /* Comments Panel - Full Height Flex Layout */
 .comments-panel {
   display: flex;
@@ -6394,8 +6311,9 @@ button:active:not(:disabled) {
   color: var(--text-muted);
 }
 
-.share-search-box focus-within {
+.share-search-box:focus-within {
   border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.08);
 }
 
 .share-search-box input {
@@ -6733,6 +6651,10 @@ button:active:not(:disabled) {
   gap: 10px;
   min-width: 180px;
   flex: 1;
+}
+
+.share-user-info .share-user-role-badge {
+  margin-left: auto;
 }
 
 .share-remove-btn {
@@ -11181,6 +11103,29 @@ button:active:not(:disabled) {
   text-align: center;
 }
 
+.comment-filter-strip button span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.comment-filter-strip button em {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 0.64rem;
+  font-style: normal;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+
 .comment-filter-strip button::after {
   content: "";
   position: absolute;
@@ -11200,6 +11145,11 @@ button:active:not(:disabled) {
 .comment-filter-strip button.active {
   color: #4f46e5;
   font-weight: 800;
+}
+
+.comment-filter-strip button.active em {
+  background: #eef2ff;
+  color: #4f46e5;
 }
 
 .comment-filter-strip button.active::after {
@@ -11412,6 +11362,34 @@ button:active:not(:disabled) {
   text-align: center;
   color: #64748b;
   font-size: 0.76rem;
+}
+
+.comment-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 20px 14px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #64748b;
+  text-align: center;
+}
+
+.comment-empty-state svg {
+  color: #94a3b8;
+}
+
+.comment-empty-state strong {
+  color: #334155;
+  font-size: 0.82rem;
+}
+
+.comment-empty-state span {
+  max-width: 220px;
+  color: #64748b;
+  font-size: 0.72rem;
+  line-height: 1.4;
 }
 
 .template-picker {
@@ -12806,6 +12784,7 @@ button:active:not(:disabled) {
 
 .exec-kpi-card {
   position: relative;
+  width: 100%;
   border: 1px solid #e2e8f0;
   border-radius: 16px;
   background: #ffffff;
@@ -12817,12 +12796,23 @@ button:active:not(:disabled) {
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
   box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.8);
   transition: box-shadow 0.25s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
-  cursor: default;
+  cursor: pointer;
+  text-align: left;
 }
 
 .exec-kpi-card:hover {
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.09);
   transform: translateY(-3px);
+}
+
+.exec-kpi-card:focus-visible {
+  outline: none;
+  border-color: rgba(79, 70, 229, 0.45);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12), 0 12px 28px rgba(15, 23, 42, 0.09);
+}
+
+.exec-kpi-card:active {
+  transform: translateY(-1px);
 }
 
 .exec-kpi-card::before {
