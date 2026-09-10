@@ -13700,6 +13700,311 @@ button:active:not(:disabled) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   EMPLOYEE DASHBOARD
+   ═══════════════════════════════════════════════════════════════ */
+
+.employee-dashboard {
+  --dash-emp-radius: 10px;
+}
+
+/* ── Ticket List ──────────────────────────────────────────────── */
+.dash-emp-ticket-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dash-emp-ticket-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--dash-emp-radius);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  text-align: left;
+  width: 100%;
+  font-family: var(--dash-font-body);
+}
+
+.dash-emp-ticket-row:hover {
+  background: rgba(37, 99, 235, 0.03);
+  border-color: rgba(37, 99, 235, 0.08);
+}
+
+.dash-emp-ticket-row.dash-emp-ticket-overdue {
+  background: rgba(239, 68, 68, 0.03);
+  border-color: rgba(239, 68, 68, 0.08);
+}
+
+.dash-emp-ticket-row.dash-emp-ticket-overdue:hover {
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.dash-emp-ticket-row.dash-emp-ticket-done {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.dash-emp-ticket-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.dash-emp-ticket-type {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
+.dash-emp-ticket-type[data-type="TASK"] { background: #dbeafe; color: #1e40af; }
+.dash-emp-ticket-type[data-type="BUG"] { background: #fee2e2; color: #b91c1c; }
+.dash-emp-ticket-type[data-type="REVIEW"] { background: #ede9fe; color: #6d28d9; }
+.dash-emp-ticket-type[data-type="CHANGE_REQUEST"] { background: #fef3c7; color: #92400e; }
+.dash-emp-ticket-type[data-type="QUESTION"] { background: #d1fae5; color: #065f46; }
+
+.dash-emp-ticket-title {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--dash-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.dash-emp-ticket-project {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--dash-text-muted);
+  background: rgba(0, 0, 0, 0.04);
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+
+.dash-emp-ticket-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.dash-emp-ticket-due {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--dash-text-muted);
+}
+
+.dash-emp-ticket-due.overdue {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.dash-emp-ticket-priority {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.dash-emp-ticket-priority[data-priority="LOW"] { color: #64748b; background: #f1f5f9; }
+.dash-emp-ticket-priority[data-priority="MEDIUM"] { color: #0369a1; background: #e0f2fe; }
+.dash-emp-ticket-priority[data-priority="HIGH"] { color: #c2410c; background: #fff7ed; }
+.dash-emp-ticket-priority[data-priority="CRITICAL"] { color: #fff; background: #dc2626; }
+
+.dash-emp-ticket-status {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--status-color, #64748b) 12%, transparent);
+  color: var(--status-color, #64748b);
+  white-space: nowrap;
+}
+
+/* ── Done Divider ──────────────────────────────────────────── */
+.dash-emp-done-divider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 14px 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #10b981;
+  letter-spacing: 0.01em;
+}
+
+.dash-emp-done-list .dash-emp-ticket-row {
+  cursor: default;
+}
+
+/* ── Project List ──────────────────────────────────────────── */
+.dash-emp-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dash-emp-project-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--dash-emp-radius);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  text-align: left;
+  width: 100%;
+  font-family: var(--dash-font-body);
+}
+
+.dash-emp-project-row:hover {
+  background: rgba(37, 99, 235, 0.03);
+  border-color: rgba(37, 99, 235, 0.08);
+}
+
+.dash-emp-project-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.dash-emp-project-code {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--dash-accent);
+  background: rgba(37, 99, 235, 0.06);
+  padding: 2px 8px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+
+.dash-emp-project-name {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--dash-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-emp-project-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.7rem;
+  color: var(--dash-text-muted);
+  flex-shrink: 0;
+}
+
+.dash-emp-project-arrow {
+  color: var(--dash-text-muted);
+  opacity: 0.4;
+  flex-shrink: 0;
+  transition: opacity 0.2s ease;
+}
+
+.dash-emp-project-row:hover .dash-emp-project-arrow {
+  opacity: 0.8;
+}
+
+/* ── Notification List ──────────────────────────────────────── */
+.dash-emp-notif-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dash-emp-notif-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--dash-emp-radius);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  text-align: left;
+  width: 100%;
+  font-family: var(--dash-font-body);
+}
+
+.dash-emp-notif-row:hover {
+  background: rgba(37, 99, 235, 0.03);
+}
+
+.dash-emp-notif-row.unread {
+  background: rgba(37, 99, 235, 0.04);
+}
+
+.dash-emp-notif-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 0;
+}
+
+.dash-emp-notif-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dash-emp-notif-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dash-emp-notif-msg {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--dash-text);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.dash-emp-notif-row.unread .dash-emp-notif-msg {
+  font-weight: 600;
+}
+
+.dash-emp-notif-time {
+  font-size: 0.68rem;
+  color: var(--dash-text-muted);
+}
+
+/* ═══════════════════════════════════════════════════════════════
    RESPONSIVE
    ═══════════════════════════════════════════════════════════════ */
 @media (max-width: 1200px) {

@@ -56,12 +56,16 @@ export function ShareAccessModal({
   const [query, setQuery] = useState("");
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [selectedRoles, setSelectedRoles] = useState<ProjectRole[]>(["VIEWER"]);
+  const [pendingNewAccess, setPendingNewAccess] = useState<Record<string, ProjectRole[]>>({});
+  const [pendingRoleChanges, setPendingRoleChanges] = useState<Record<string, ProjectRole[]>>({});
   const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
     setScope(initialScope);
     setSelectedUserIds([]);
+    setPendingNewAccess({});
+    setPendingRoleChanges({});
     setIsUserDropdownOpen(false);
     setQuery("");
     void loadUsers(initialScope);
@@ -91,15 +95,24 @@ export function ShareAccessModal({
 
   const accessUsers = useMemo(() => {
     if (!targetId) return [];
-    return users
+    const savedAccess = users
       .map((user) => {
         const permission = scope === "document"
           ? user.documents.find((item) => item.documentId === targetId)
           : user.projects.find((item) => item.projectId === targetId);
         return permission ? { user, role: permission.role, roles: permission.roles?.length ? permission.roles : [permission.role] } : null;
       })
-      .filter(Boolean) as Array<{ user: ManagedUser; role: ProjectRole; roles: ProjectRole[] }>;
-  }, [scope, targetId, users]);
+      .filter(Boolean) as Array<{ user: ManagedUser; role: ProjectRole; roles: ProjectRole[]; isPendingNew?: boolean }>;
+    const savedUserIds = new Set(savedAccess.map(({ user }) => user.id));
+    const pendingAccess = Object.entries(pendingNewAccess)
+      .map(([userId, roles]) => {
+        if (savedUserIds.has(userId)) return null;
+        const user = users.find((item) => item.id === userId);
+        return user ? { user, role: roles[0], roles, isPendingNew: true } : null;
+      })
+      .filter(Boolean) as Array<{ user: ManagedUser; role: ProjectRole; roles: ProjectRole[]; isPendingNew: true }>;
+    return [...savedAccess, ...pendingAccess];
+  }, [pendingNewAccess, scope, targetId, users]);
 
   const accessibleUserIds = useMemo(
     () => new Set(accessUsers.map(({ user }) => user.id)),
@@ -151,57 +164,62 @@ export function ShareAccessModal({
     return [...currentRoles, role];
   }
 
+  function draftRolesFor(userId: string, roles: ProjectRole[]) {
+    return pendingRoleChanges[userId] ?? roles;
+  }
+
+  function setDraftRoles(userId: string, savedRoles: ProjectRole[], nextRoles: ProjectRole[]) {
+    setPendingRoleChanges((prev) => {
+      const next = { ...prev };
+      if (sameRoles(savedRoles, nextRoles)) {
+        delete next[userId];
+      } else {
+        next[userId] = nextRoles;
+      }
+      return next;
+    });
+  }
+
+  function sameRoles(left: ProjectRole[], right: ProjectRole[]) {
+    if (left.length !== right.length) return false;
+    const rightSet = new Set(right);
+    return left.every((role) => rightSet.has(role));
+  }
+
   async function handleShare() {
     if (!targetId || selectedUserIds.length === 0) {
       onToast("warning", "Chưa chọn người nhận", "Hãy chọn ít nhất một người dùng để chia sẻ.");
       return;
     }
 
-    setSaving(true);
-    try {
-      await Promise.all(
-        selectedUserIds.map((userId) =>
-          scope === "document"
-            ? assignUserToDocument(userId, targetId, selectedRoles)
-            : assignUserToProject(userId, targetId, selectedRoles)
-        )
-      );
-      setSelectedUserIds([]);
-      await loadUsers();
-      await onAccessChanged?.(scope, targetId);
-      onToast(
-        "success",
-        "Đã chia sẻ quyền",
-        `Đã cấp quyền ${selectedRoles.map((role) => shareRoleLabels[role].label).join(", ")} cho ${selectedUserIds.length} người trên ${targetLabel}.`
-      );
-    } catch (error: any) {
-      onToast("error", "Chia sẻ thất bại", error?.message || "Vui lòng thử lại.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleChangeRoles(userId: string, roles: ProjectRole[]) {
-    if (!targetId) return;
-    setSaving(true);
-    try {
-      if (scope === "document") {
-        await assignUserToDocument(userId, targetId, roles);
-      } else {
-        await assignUserToProject(userId, targetId, roles);
-      }
-      await loadUsers();
-      await onAccessChanged?.(scope, targetId);
-      onToast("success", "Đã cập nhật quyền", `Quyền ${targetLabel} đã đổi thành ${roles.map((role) => shareRoleLabels[role].label).join(", ")}.`);
-    } catch (error: any) {
-      onToast("error", "Không đổi được quyền", error?.message || "Vui lòng thử lại.");
-    } finally {
-      setSaving(false);
-    }
+    const userCount = selectedUserIds.length;
+    setPendingNewAccess((prev) => {
+      const next = { ...prev };
+      selectedUserIds.forEach((userId) => {
+        next[userId] = selectedRoles;
+      });
+      return next;
+    });
+    setSelectedUserIds([]);
+    setIsUserDropdownOpen(false);
+    onToast(
+      "info",
+      "Đã thêm vào danh sách chờ",
+      `Bấm Xong để cấp quyền ${selectedRoles.map((role) => shareRoleLabels[role].label).join(", ")} cho ${userCount} người.`
+    );
   }
 
   async function handleRemove(userId: string) {
     if (!targetId) return;
+    if (pendingNewAccess[userId]) {
+      setPendingNewAccess((prev) => {
+        const next = { ...prev };
+        delete next[userId];
+        return next;
+      });
+      return;
+    }
+
     setSaving(true);
     try {
       if (scope === "document") {
@@ -209,6 +227,11 @@ export function ShareAccessModal({
       } else {
         await removeUserFromProject(userId, targetId);
       }
+      setPendingRoleChanges((prev) => {
+        const next = { ...prev };
+        delete next[userId];
+        return next;
+      });
       await loadUsers();
       await onAccessChanged?.(scope, targetId);
       onToast("info", "Đã gỡ quyền", `Người dùng đã được gỡ khỏi ${targetLabel}.`);
@@ -222,6 +245,41 @@ export function ShareAccessModal({
   async function handleCopyLink() {
     await navigator.clipboard.writeText(window.location.href);
     onToast("success", "Đã sao chép liên kết", "Bạn có thể gửi link này cho người đã được cấp quyền.");
+  }
+
+  async function handleDone() {
+    if (!targetId) {
+      onClose();
+      return;
+    }
+
+    const changedEntries = Object.entries(pendingRoleChanges) as Array<[string, ProjectRole[]]>;
+    const newEntries = Object.entries(pendingNewAccess) as Array<[string, ProjectRole[]]>;
+    if (changedEntries.length === 0 && newEntries.length === 0) {
+      onClose();
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await Promise.all(
+        [...newEntries, ...changedEntries].map(([userId, roles]) =>
+          scope === "document"
+            ? assignUserToDocument(userId, targetId, roles)
+            : assignUserToProject(userId, targetId, roles)
+        )
+      );
+      setPendingNewAccess({});
+      setPendingRoleChanges({});
+      await loadUsers();
+      await onAccessChanged?.(scope, targetId);
+      onToast("success", "Đã cập nhật quyền", `Đã lưu ${newEntries.length + changedEntries.length} thay đổi quyền trên ${targetLabel}.`);
+      onClose();
+    } catch (error: any) {
+      onToast("error", "Không lưu được quyền", error?.message || "Vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (!isOpen) return null;
@@ -251,6 +309,8 @@ export function ShareAccessModal({
               onClick={() => {
                 setScope("document");
                 setSelectedUserIds([]);
+                setPendingNewAccess({});
+                setPendingRoleChanges({});
                 void loadUsers("document");
               }}
               disabled={!documentId || documentId === "empty-document"}
@@ -264,6 +324,8 @@ export function ShareAccessModal({
               onClick={() => {
                 setScope("project");
                 setSelectedUserIds([]);
+                setPendingNewAccess({});
+                setPendingRoleChanges({});
                 void loadUsers("project");
               }}
               disabled={!projectId}
@@ -389,7 +451,7 @@ export function ShareAccessModal({
               disabled={saving || selectedUserIds.length === 0}
             >
               <Send size={15} />
-              <span>Chia sẻ cho {selectedUserIds.length || 0} người</span>
+              <span>Thêm {selectedUserIds.length || 0} người</span>
             </button>
           </div>
 
@@ -405,13 +467,17 @@ export function ShareAccessModal({
               {accessUsers.length === 0 ? (
                 <div className="share-empty-state">Chưa có quyền trực tiếp trên {targetLabel} này.</div>
               ) : (
-	                accessUsers.map(({ user, roles }) => (
-	                  <div key={user.id} className="share-access-item">
+	                accessUsers.map(({ user, roles, isPendingNew }) => {
+                    const draftRoles = isPendingNew ? roles : draftRolesFor(user.id, roles);
+                    const hasPendingChange = Boolean(isPendingNew || pendingRoleChanges[user.id]);
+
+                    return (
+	                  <div key={user.id} className={`share-access-item${hasPendingChange ? " pending" : ""}`}>
 	                    <div className="share-user-info">
 	                      <span className="share-avatar">{user.name.charAt(0).toUpperCase()}</span>
 	                      <span className="share-user-copy">
 	                        <strong>{user.name}</strong>
-	                        <small>{user.email} · {globalRoleLabels[user.role]} · Quyền trực tiếp</small>
+	                        <small>{user.email} · {globalRoleLabels[user.role]} · {hasPendingChange ? "Chờ lưu" : "Quyền trực tiếp"}</small>
 	                      </span>
 	                      <span className={`share-user-role-badge role-${user.role.toLowerCase()}`}>
 	                        {globalRoleLabels[user.role]}
@@ -423,12 +489,19 @@ export function ShareAccessModal({
                         <button
                           key={nextRole}
                           type="button"
-                          className={`share-role-check role-${nextRole.toLowerCase()} ${roles.includes(nextRole) ? "selected" : ""}`}
-                          onClick={() => void handleChangeRoles(user.id, toggleRole(roles, nextRole))}
-                          disabled={saving || (roles.length === 1 && roles.includes(nextRole))}
+                          className={`share-role-check role-${nextRole.toLowerCase()} ${draftRoles.includes(nextRole) ? "selected" : ""}`}
+                          onClick={() => {
+                            const nextRoles = toggleRole(draftRoles, nextRole);
+                            if (isPendingNew) {
+                              setPendingNewAccess((prev) => ({ ...prev, [user.id]: nextRoles }));
+                            } else {
+                              setDraftRoles(user.id, roles, nextRoles);
+                            }
+                          }}
+                          disabled={saving || (draftRoles.length === 1 && draftRoles.includes(nextRole))}
                           title={shareRoleLabels[nextRole].desc}
                         >
-                          {roles.includes(nextRole) && <Check size={12} />}
+                          {draftRoles.includes(nextRole) && <Check size={12} />}
                           <span>{shareRoleLabels[nextRole].label}</span>
                         </button>
                       ))}
@@ -444,7 +517,8 @@ export function ShareAccessModal({
                       <Trash2 size={15} />
                     </button>
                   </div>
-                ))
+                );
+                })
               )}
             </div>
           </div>
@@ -493,8 +567,8 @@ export function ShareAccessModal({
           <button className="btn-secondary share-copy-btn" type="button" onClick={() => void handleCopyLink()}>
             <Copy size={14} /> Sao chép liên kết
           </button>
-          <button className="btn-primary share-done-btn" type="button" onClick={onClose}>
-            Xong
+          <button className="btn-primary share-done-btn" type="button" onClick={() => void handleDone()} disabled={saving}>
+            {saving ? "Đang lưu..." : "Xong"}
           </button>
         </div>
       </div>

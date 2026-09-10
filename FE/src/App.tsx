@@ -6555,6 +6555,62 @@ function App() {
     };
   }
 
+
+  function employeeDashboardData() {
+    const totals = roleDashboard?.totals;
+    const dashboardItems = dashboardWorkItems.length > 0 ? dashboardWorkItems : workItems;
+    const userName = currentUser?.name?.trim().toLowerCase() ?? "";
+    const userEmail = currentUser?.email?.trim().toLowerCase() ?? "";
+
+    const myItems = dashboardItems.filter((item) => {
+      const assignees = workItemAssigneeNames(item);
+      return assignees.some((name) => name.trim().toLowerCase() === userName) ||
+        (item.assignee?.email && item.assignee.email.trim().toLowerCase() === userEmail);
+    });
+
+    const totalTickets = myItems.length;
+    const doneItems = myItems.filter((item) => item.status === "DONE");
+    const completionRate = totalTickets ? Math.round((doneItems.length / totalTickets) * 100) : 0;
+    const inProgressItems = myItems.filter((item) => item.status === "IN_PROGRESS" || item.status === "TODO");
+    const overdueItems = myItems.filter(isWorkItemOverdue);
+    const openItems = myItems.filter((item) => item.status !== "DONE");
+
+    const sortedItems = [...openItems].sort((a, b) => {
+      const aOverdue = isWorkItemOverdue(a) ? 1 : 0;
+      const bOverdue = isWorkItemOverdue(b) ? 1 : 0;
+      if (bOverdue !== aOverdue) return bOverdue - aOverdue;
+      const aPriority = WORK_ITEM_PRIORITY_RANK[a.priority] ?? 0;
+      const bPriority = WORK_ITEM_PRIORITY_RANK[b.priority] ?? 0;
+      if (bPriority !== aPriority) return bPriority - aPriority;
+      return (parseDashboardDate(b.updatedAt ?? b.createdAt)?.getTime() ?? 0) -
+        (parseDashboardDate(a.updatedAt ?? a.createdAt)?.getTime() ?? 0);
+    });
+
+    const recentDoneItems = [...doneItems]
+      .sort((a, b) =>
+        (parseDashboardDate(b.updatedAt ?? b.createdAt)?.getTime() ?? 0) -
+        (parseDashboardDate(a.updatedAt ?? a.createdAt)?.getTime() ?? 0)
+      )
+      .slice(0, 3);
+
+    const projectBreakdown = roleDashboard?.projectBreakdown ?? [];
+    const recentNotifications = (roleDashboard?.notifications ?? []).slice(0, 5);
+
+    return {
+      totalTickets,
+      doneCount: doneItems.length,
+      completionRate,
+      inProgressCount: inProgressItems.length,
+      overdueCount: overdueItems.length,
+      openItems: sortedItems,
+      recentDoneItems,
+      projectBreakdown,
+      recentNotifications,
+      totalDocuments: totals?.documents ?? documentsList.length,
+      openComments: totals?.openComments ?? 0,
+      unreadNotifications: totals?.unreadNotifications ?? 0
+    };
+  }
   function activityDashboardText(log: ActivityLog) {
     const metadata = log.metadata ?? {};
     const title = typeof metadata.title === "string" ? metadata.title : undefined;
@@ -7068,7 +7124,213 @@ function App() {
 
 
 
-        {activeTabNav === "dashboard" ? (
+                {activeTabNav === "dashboard" ? (
+          currentUser.role === "EMPLOYEE" ? (() => {
+            const empData = employeeDashboardData();
+            return (
+            <section className="role-dashboard-page employee-dashboard">
+              {/* Employee KPI Strip */}
+              <div className="dash-kpi-bento">
+                <div className="dash-kpi-hero dash-animate dash-delay-1">
+                  <div className="dash-ring-wrap">
+                    <svg viewBox="0 0 100 100">
+                      <circle className="dash-ring-bg" cx="50" cy="50" r="45" />
+                      <circle className="dash-ring-fill dash-ring-animated" cx="50" cy="50" r="45"
+                        strokeDasharray={2 * Math.PI * 45}
+                        strokeDashoffset={2 * Math.PI * 45 * (1 - empData.completionRate / 100)}
+                        style={{ "--ring-circumference": `${2 * Math.PI * 45}`, "--ring-target": `${2 * Math.PI * 45 * (1 - empData.completionRate / 100)}` } as React.CSSProperties}
+                      />
+                    </svg>
+                    <div className="dash-ring-label">
+                      <strong>{empData.completionRate}%</strong>
+                      <small>hoàn thành</small>
+                    </div>
+                  </div>
+                  <div className="dash-kpi-hero-info">
+                    <h3>Ticket của tôi</h3>
+                    <p>{empData.totalTickets} ticket được giao. {empData.doneCount} đã hoàn thành.</p>
+                    <div className="dash-kpi-hero-stats">
+                      <span><em>{empData.totalTickets - empData.doneCount}</em> đang mở</span>
+                      <span><em>{empData.doneCount}</em> done</span>
+                    </div>
+                  </div>
+                </div>
+                <div className={`dash-kpi-sm kpi-blue dash-animate dash-delay-2${empData.inProgressCount > 0 ? " kpi-active" : ""}`}>
+                  <div className="kpi-sm-icon"><Clock size={16} /></div>
+                  <strong>{empData.inProgressCount}</strong>
+                  <span className="kpi-sm-label">Đang làm</span>
+                  <span className="kpi-sm-note">TODO + In Progress</span>
+                </div>
+                <div className={`dash-kpi-sm kpi-rose dash-animate dash-delay-3${empData.overdueCount > 0 ? " kpi-active" : ""}`}>
+                  <div className="kpi-sm-icon"><AlertTriangle size={16} /></div>
+                  <strong>{empData.overdueCount}</strong>
+                  <span className="kpi-sm-label">Quá hạn</span>
+                  <span className="kpi-sm-note">Cần xử lý gấp</span>
+                </div>
+              </div>
+
+              {/* MY TICKETS LIST */}
+              <section className="dash-card dash-card-full dash-animate dash-delay-4">
+                <div className="dash-panel-header">
+                  <div>
+                    <span className="dash-label">Công việc</span>
+                    <h3>Ticket đang mở</h3>
+                  </div>
+                  <span className="dash-panel-badge">{empData.openItems.length} ticket</span>
+                </div>
+                <div className="dash-emp-ticket-list">
+                  {empData.openItems.length > 0 ? empData.openItems.map((item) => {
+                    const project = projectsList.find((p) => p.id === item.projectId);
+                    const statusCol = DEFAULT_WORKBOARD_COLUMNS.find((col) => col.key === item.status);
+                    const isOverdue = isWorkItemOverdue(item);
+                    const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+                    return (
+                      <button
+                        key={item.id}
+                        className={`dash-emp-ticket-row${isOverdue ? " dash-emp-ticket-overdue" : ""}`}
+                        type="button"
+                        title={`Mở workboard: ${project?.name ?? ""}`}
+                        onClick={() => {
+                          setWorkItems([]);
+                          setSelectedProjectId(item.projectId);
+                          const firstDoc = documentsList.find((doc) => doc.projectId === item.projectId);
+                          setSelectedDocumentId(firstDoc?.id ?? "empty-document");
+                          setActiveTabNav("review");
+                          void loadProjectWorkItems(item.projectId);
+                        }}
+                      >
+                        <div className="dash-emp-ticket-left">
+                          <span className="dash-emp-ticket-type" data-type={item.type}>{WORK_ITEM_TYPE_LABEL[item.type]}</span>
+                          <span className="dash-emp-ticket-title">{item.title || "Untitled"}</span>
+                          {project && <span className="dash-emp-ticket-project">{project.code}</span>}
+                        </div>
+                        <div className="dash-emp-ticket-right">
+                          {dueDate && (
+                            <span className={`dash-emp-ticket-due${isOverdue ? " overdue" : ""}`}>
+                              <Calendar size={12} />
+                              {dueDate.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" })}
+                            </span>
+                          )}
+                          <span className="dash-emp-ticket-priority" data-priority={item.priority}>
+                            {WORK_ITEM_PRIORITY_LABEL[item.priority]}
+                          </span>
+                          <span className="dash-emp-ticket-status" style={{ "--status-color": statusCol?.color ?? "#64748b" } as React.CSSProperties}>
+                            {statusCol?.name ?? item.status}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  }) : (
+                    <div className="dash-empty">Không có ticket đang mở nào được giao cho bạn.</div>
+                  )}
+                </div>
+                {empData.recentDoneItems.length > 0 && (
+                  <>
+                    <div className="dash-emp-done-divider">
+                      <CheckCircle2 size={14} />
+                      <span>Hoàn thành gần đây</span>
+                    </div>
+                    <div className="dash-emp-ticket-list dash-emp-done-list">
+                      {empData.recentDoneItems.map((item) => {
+                        const project = projectsList.find((p) => p.id === item.projectId);
+                        return (
+                          <div key={item.id} className="dash-emp-ticket-row dash-emp-ticket-done">
+                            <div className="dash-emp-ticket-left">
+                              <span className="dash-emp-ticket-type" data-type={item.type}>{WORK_ITEM_TYPE_LABEL[item.type]}</span>
+                              <span className="dash-emp-ticket-title">{item.title || "Untitled"}</span>
+                              {project && <span className="dash-emp-ticket-project">{project.code}</span>}
+                            </div>
+                            <div className="dash-emp-ticket-right">
+                              <span className="dash-emp-ticket-status" style={{ "--status-color": "#10b981" } as React.CSSProperties}>Done</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </section>
+
+              {/* BOTTOM: Projects + Notifications */}
+              <div className="dash-main-grid">
+                <section className="dash-card dash-animate dash-delay-5">
+                  <div className="dash-panel-header">
+                    <div>
+                      <span className="dash-label">Dự án</span>
+                      <h3>Dự án của tôi</h3>
+                    </div>
+                    <span className="dash-panel-badge">{empData.projectBreakdown.length} dự án</span>
+                  </div>
+                  <div className="dash-emp-project-list">
+                    {empData.projectBreakdown.map((project) => (
+                      <button key={project.id} className="dash-emp-project-row" type="button"
+                        onClick={() => {
+                          setWorkItems([]);
+                          setSelectedProjectId(project.id);
+                          const firstDoc = documentsList.find((doc) => doc.projectId === project.id);
+                          setSelectedDocumentId(firstDoc?.id ?? "empty-document");
+                          setActiveTabNav("review");
+                          void loadProjectWorkItems(project.id);
+                        }}
+                      >
+                        <div className="dash-emp-project-info">
+                          <span className="dash-emp-project-code">{project.code}</span>
+                          <span className="dash-emp-project-name">{project.name}</span>
+                        </div>
+                        <div className="dash-emp-project-stats">
+                          <span>{project.documents} tài liệu</span>
+                          {project.openComments > 0 && <span className="dash-chip dash-chip-amber">{project.openComments} comment</span>}
+                        </div>
+                        <ChevronRight size={14} className="dash-emp-project-arrow" />
+                      </button>
+                    ))}
+                    {empData.projectBreakdown.length === 0 && (
+                      <div className="dash-empty">Bạn chưa được phân quyền vào dự án nào.</div>
+                    )}
+                  </div>
+                </section>
+
+                <section className="dash-card dash-animate dash-delay-6">
+                  <div className="dash-panel-header">
+                    <div>
+                      <span className="dash-label">Thông báo</span>
+                      <h3>Gần đây</h3>
+                    </div>
+                    {empData.unreadNotifications > 0 && (
+                      <span className="dash-panel-badge">{empData.unreadNotifications} chưa đọc</span>
+                    )}
+                  </div>
+                  <div className="dash-emp-notif-list">
+                    {empData.recentNotifications.map((notif) => (
+                      <button key={notif.id} className={`dash-emp-notif-row${!notif.readAt ? " unread" : ""}`} type="button"
+                        onClick={() => handleOpenNotification(notif)}
+                      >
+                        <div className={`dash-emp-notif-icon ${notificationIconClass(notif)}`}>
+                          {notificationIcon(notif)}
+                        </div>
+                        <div className="dash-emp-notif-content">
+                          <span className="dash-emp-notif-msg">{notif.message}</span>
+                          <span className="dash-emp-notif-time">
+                            {(() => {
+                              const d = new Date(notif.createdAt);
+                              const diff = Date.now() - d.getTime();
+                              if (diff < 3600000) return `${Math.max(1, Math.floor(diff / 60000))} phút trước`;
+                              if (diff < 86400000) return `${Math.floor(diff / 3600000)} giờ trước`;
+                              return `${Math.floor(diff / 86400000)} ngày trước`;
+                            })()}
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                    {empData.recentNotifications.length === 0 && (
+                      <div className="dash-empty">Chưa có thông báo nào.</div>
+                    )}
+                  </div>
+                </section>
+              </div>
+            </section>
+            );
+          })() : (
           <section className="role-dashboard-page executive-dashboard">
             {/* ═══ BENTO KPI STRIP ═══ */}
             <div className="dash-kpi-bento">
@@ -7222,8 +7484,9 @@ function App() {
               </section>
             </div>
 
-            {/* ═══ WORKLOAD ═══ */}
-              <section className="dash-card dash-card-full dash-animate dash-delay-8">
+            {/* ═══ WORKLOAD + PROJECT PROGRESS ═══ */}
+            <div className="dash-workload-grid">
+              <section className="dash-card dash-animate dash-delay-8">
                 <div className="dash-panel-header">
                   <div>
                     <span className="dash-label">Workload</span>
@@ -7327,6 +7590,54 @@ function App() {
                   {filteredWorkloadRows.length === 0 && <div className="dash-empty">Không tìm thấy người phù hợp.</div>}
                 </div>
               </section>
+
+              {/* ═══ PROJECT PROGRESS ═══ */}
+              <section className="dash-card dash-animate dash-delay-9">
+                <div className="dash-panel-header">
+                  <div>
+                    <span className="dash-label">Tiến độ</span>
+                    <h3>Theo dự án</h3>
+                  </div>
+                  <span className="dash-panel-badge">{executiveData.projectRows.length} dự án</span>
+                </div>
+                <div className="dash-proj-progress-list">
+                  {executiveData.projectRows.map((project) => (
+                    <button className="dash-proj-row" type="button" key={project.id} title={`Mở Workboard: ${project.name}`} onClick={() => {
+                      setWorkItems([]);
+                      setSelectedProjectId(project.id);
+                      const firstDoc = documentsList.find((doc) => doc.projectId === project.id);
+                      setSelectedDocumentId(firstDoc?.id ?? "empty-document");
+                      setActiveTabNav("review");
+                      void loadProjectWorkItems(project.id);
+                    }}>
+                      <div className="dash-proj-row-top">
+                        <div className="dash-proj-row-info">
+                          <span className="dash-proj-row-code">{project.code}</span>
+                          <span className="dash-proj-row-name">{project.name}</span>
+                        </div>
+                        <strong className="dash-proj-row-pct">{project.completionRate}%</strong>
+                      </div>
+                      <div className="dash-wl-bar-track">
+                        <div className="dash-wl-bar-fill" style={{ width: `${project.completionRate}%` }} />
+                      </div>
+                      <div className="dash-proj-row-stats">
+                        <span><em>{project.items}</em> Tổng</span>
+                        <span>·</span>
+                        <span><em>{project.doneItems}</em> Done</span>
+                      </div>
+                      <div className="dash-wl-chips">
+                        {project.backlogItems > 0 && <span className="dash-chip dash-chip-default"><em>{project.backlogItems}</em> Backlog</span>}
+                        {project.todoItems > 0 && <span className="dash-chip dash-chip-blue"><em>{project.todoItems}</em> Todo</span>}
+                        {project.inProgressItems > 0 && <span className="dash-chip dash-chip-amber"><em>{project.inProgressItems}</em> In Progress</span>}
+                        {project.reviewItems > 0 && <span className="dash-chip dash-chip-violet"><em>{project.reviewItems}</em> Review</span>}
+                        {project.doneItems > 0 && <span className="dash-chip dash-chip-emerald"><em>{project.doneItems}</em> Done</span>}
+                      </div>
+                    </button>
+                  ))}
+                  {executiveData.projectRows.length === 0 && <div className="dash-empty">Chưa có dự án nào.</div>}
+                </div>
+              </section>
+            </div>
 
             {/* ═══ BOTTOM ROW: Risk + Recent + Project Health ═══ */}
             <div className="dash-secondary-grid">
@@ -7440,6 +7751,7 @@ function App() {
               </section>
             </div>
           </section>
+          )
         ) : activeTabNav === "projects" ? (
 
           <section className="project-hub-page">
