@@ -36,6 +36,7 @@ import {
     ListChecks,
     Loader2,
     LogOut,
+    Menu,
     MessageSquarePlus,
     MessageSquareText,
     Minus,
@@ -63,6 +64,7 @@ import {
     Users,
     X
 } from "lucide-react";
+import { createPortal } from "react-dom";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
     acquireDocumentEditSession,
@@ -1018,6 +1020,7 @@ function App() {
   const [fontSize, setFontSize] = useState<"sm" | "md" | "lg">("md");
   const [isZenMode, setIsZenMode] = useState<boolean>(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
   function toggleSidebar() {
     setIsSidebarCollapsed((value) => !value);
@@ -1069,6 +1072,7 @@ function App() {
   const [workboardSortBy, setWorkboardSortBy] = useState<"BOARD_ORDER" | "UPDATED_DESC" | "DUE_ASC" | "PRIORITY_DESC">("BOARD_ORDER");
   const [workloadNameFilter, setWorkloadNameFilter] = useState<string>("");
   const [workloadCompletionFilter, setWorkloadCompletionFilter] = useState<"ALL" | "LOW" | "MID" | "DONE">("ALL");
+  const [workloadProjectFilter, setWorkloadProjectFilter] = useState<string>("ALL");
   const [isWorkboardConfigOpen, setIsWorkboardConfigOpen] = useState<boolean>(false);
   const [openFilterDropdown, setOpenFilterDropdown] = useState<string | null>(null);
   const [workboardColumnDrafts, setWorkboardColumnDrafts] = useState<WorkboardColumnDraft[]>([]);
@@ -1111,6 +1115,7 @@ function App() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [isNotificationMenuOpen, setIsNotificationMenuOpen] = useState<boolean>(false);
   const notificationCenterRef = useRef<HTMLDivElement>(null);
+  const notificationMenuRef = useRef<HTMLDivElement>(null);
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("all");
   const [documentTemplates, setDocumentTemplates] = useState<DocumentTemplate[]>([]);
   const [previewTemplate, setPreviewTemplate] = useState<DocumentTemplate | null>(null);
@@ -1304,15 +1309,19 @@ function App() {
 
   useEffect(() => {
     if (!currentUser) {
+      prefetchCache.clear();
       resetModalDraftsForAccountChange();
       setIsBackendConnected(false);
       setIsLoadingBackend(false);
       setProjectMembersByProject({});
+      setRoleDashboard(null);
+      setProjectDashboard(null);
       loadedDocumentProjectIdsRef.current.clear();
       loadedWorkItemProjectIdsRef.current.clear();
       return;
     }
 
+    prefetchCache.clear();
     resetModalDraftsForAccountChange();
     void loadWorkspaceFromBackend().then(() => {
       if (justLoggedInRef.current || shouldShowMyTasksToday()) {
@@ -1346,6 +1355,7 @@ function App() {
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (notificationCenterRef.current?.contains(target)) return;
+      if (notificationMenuRef.current?.contains(target)) return;
       setIsNotificationMenuOpen(false);
     };
 
@@ -1515,7 +1525,13 @@ function App() {
     const loadToken = ++workspaceLoadTokenRef.current;
     setIsLoadingBackend(true);
     try {
-      const backendProjects = await cachedFetch(cacheKey.projects, CACHE_TTL.projects, fetchProjects);
+      const [backendProjects, dashboard] = await Promise.all([
+        cachedFetch(cacheKey.projects, CACHE_TTL.projects, fetchProjects),
+        cachedFetch(cacheKey.roleDashboard, CACHE_TTL.roleDashboard, fetchRoleDashboard).catch((error) => {
+          console.error("Cannot load role dashboard:", error);
+          return null;
+        })
+      ]);
       if (workspaceLoadTokenRef.current !== loadToken) return;
       if (backendProjects.length === 0) {
         setProjectsList([]);
@@ -1532,33 +1548,29 @@ function App() {
       const nextProjectId = preferredProjectId ?? selectedProjectId;
       const selectedProjectExists = backendProjects.some((project) => project.id === nextProjectId);
       const finalProjectId = selectedProjectExists ? nextProjectId : backendProjects[0].id;
-      const [selectedProjectDocuments, selectedProjectWorkItems] = await Promise.all([
-        cachedFetch(cacheKey.projectDocuments(finalProjectId), CACHE_TTL.projectDocuments, () => fetchDocumentsByProject(finalProjectId)),
-        cachedFetch(cacheKey.projectWorkItems(finalProjectId), CACHE_TTL.projectWorkItems, () => fetchProjectWorkItems(finalProjectId)).catch((error) => {
-          console.error(`Cannot load work items for project ${finalProjectId}:`, error);
-          return [] as WorkItem[];
-        })
-      ]);
+      const { documents: workspaceDocuments, workItems: workspaceWorkItems } =
+        await loadWorkspaceDashboardSnapshot(backendProjects);
       if (workspaceLoadTokenRef.current !== loadToken) return;
+      const selectedProjectDocuments = workspaceDocuments.filter((document) => document.projectId === finalProjectId);
+      const selectedProjectWorkItems = workspaceWorkItems.filter((item) => item.projectId === finalProjectId);
       const hydratedWorkItems = applyPendingWorkItemMoves(selectedProjectWorkItems);
-      loadedDocumentProjectIdsRef.current = new Set([finalProjectId]);
-      loadedWorkItemProjectIdsRef.current = new Set([finalProjectId]);
-      const projectsWithSelectedCounts = applyProjectDocumentCounts(backendProjects, selectedProjectDocuments);
+      const dashboardItems = applyPendingWorkItemMoves(workspaceWorkItems);
+      const projectsWithDocumentCounts = applyProjectDocumentCounts(backendProjects, workspaceDocuments);
       const firstDocument =
         selectedProjectDocuments.find((document) => document.id === preferredDocumentId) ??
         selectedProjectDocuments[0];
 
-      setProjectsList(projectsWithSelectedCounts);
-      setDocumentsList(selectedProjectDocuments);
+      if (dashboard) setRoleDashboard(dashboard);
+      setProjectsList(projectsWithDocumentCounts);
+      setDocumentsList(workspaceDocuments);
       setDocumentCommentCounts(
-        Object.fromEntries(selectedProjectDocuments.map((document) => [document.id, document.openCommentsCount ?? 0]))
+        Object.fromEntries(workspaceDocuments.map((document) => [document.id, document.openCommentsCount ?? 0]))
       );
-      setDashboardWorkItems(hydratedWorkItems);
+      setDashboardWorkItems(dashboardItems);
       setWorkItems(hydratedWorkItems);
       setSelectedProjectId(finalProjectId);
       setSelectedDocumentId(firstDocument?.id ?? "empty-document");
       setIsBackendConnected(true);
-      void hydrateWorkspaceInBackground(backendProjects, finalProjectId, loadToken);
     } catch (error: any) {
       console.error("Cannot load backend workspace:", error);
       setIsBackendConnected(false);
@@ -1576,6 +1588,44 @@ function App() {
         setIsLoadingBackend(false);
       }
     }
+  }
+
+  async function loadWorkspaceDashboardSnapshot(projects: Project[], force = false) {
+    const [documentGroups, workItemGroups] = await Promise.all([
+      mapWithConcurrency(projects, 4, async (project) => {
+        try {
+          return await cachedFetch(
+            cacheKey.projectDocuments(project.id),
+            CACHE_TTL.projectDocuments,
+            () => fetchDocumentsByProject(project.id),
+            force
+          );
+        } catch (error) {
+          console.error(`Cannot load dashboard documents for project ${project.id}:`, error);
+          return [] as ProjectDocument[];
+        }
+      }),
+      mapWithConcurrency(projects, 3, async (project) => {
+        try {
+          return await cachedFetch(
+            cacheKey.projectWorkItems(project.id),
+            CACHE_TTL.projectWorkItems,
+            () => fetchProjectWorkItems(project.id),
+            force
+          );
+        } catch (error) {
+          console.error(`Cannot load dashboard work items for project ${project.id}:`, error);
+          return [] as WorkItem[];
+        }
+      })
+    ]);
+
+    loadedDocumentProjectIdsRef.current = new Set(projects.map((project) => project.id));
+    loadedWorkItemProjectIdsRef.current = new Set(projects.map((project) => project.id));
+    return {
+      documents: documentGroups.flat(),
+      workItems: workItemGroups.flat()
+    };
   }
 
   function applyProjectDocumentCounts(projects: Project[], documents: ProjectDocument[]) {
@@ -1942,7 +1992,11 @@ function App() {
   async function loadRoleDashboard() {
     setIsRefreshingDashboard(true);
     try {
-      setRoleDashboard(await cachedFetch(cacheKey.roleDashboard, CACHE_TTL.roleDashboard, fetchRoleDashboard));
+      const dashboard = await cachedFetch(cacheKey.roleDashboard, CACHE_TTL.roleDashboard, fetchRoleDashboard);
+      setRoleDashboard(dashboard);
+      if (dashboard.workItems) {
+        setDashboardWorkItems(applyPendingWorkItemMoves(dashboard.workItems));
+      }
     } catch (error) {
       console.error("Cannot load role dashboard:", error);
     } finally {
@@ -1958,7 +2012,12 @@ function App() {
     try {
       await Promise.all([
         cachedFetch(cacheKey.roleDashboard, CACHE_TTL.roleDashboard, fetchRoleDashboard, true)
-          .then((dashboard) => setRoleDashboard(dashboard))
+          .then((dashboard) => {
+            setRoleDashboard(dashboard);
+            if (dashboard.workItems) {
+              setDashboardWorkItems(applyPendingWorkItemMoves(dashboard.workItems));
+            }
+          })
           .catch((error) => console.error("Cannot load role dashboard:", error)),
         loadWorkspaceFromBackend(selectedProjectId, selectedDocumentId)
       ]);
@@ -3413,7 +3472,7 @@ function App() {
       return;
     }
 
-    const dashboardItems = dashboardWorkItems.length > 0 ? dashboardWorkItems : workItems;
+    const dashboardItems = dashboardWorkItemSource();
     const matches = dashboardItems.filter((item) => {
       const isDone = item.column?.isDone || item.status === "DONE";
       const isBlocked = item.column?.type === "BLOCKED" || item.status === "BLOCKED";
@@ -4691,6 +4750,7 @@ function App() {
     setWorkboardSortBy("BOARD_ORDER");
     setWorkloadNameFilter("");
     setWorkloadCompletionFilter("ALL");
+    setWorkloadProjectFilter("ALL");
     setProjectHubSearch("");
     setProjectHubSort("newest");
     setProjectHubFilter("all");
@@ -5574,21 +5634,32 @@ function App() {
           <Bell size={17} />
           {unreadCount > 0 && <span className="notification-badge">{unreadCount > 9 ? "9+" : unreadCount}</span>}
         </button>
-        {isNotificationMenuOpen && (
-          <div className="notification-menu">
+        {isNotificationMenuOpen && createPortal(
+          <div className="notification-menu" ref={notificationMenuRef}>
             <div className="notification-menu-header">
               <div>
                 <strong>Thông báo</strong>
                 <span>{unreadCount > 0 ? `${unreadCount} chưa đọc` : "Tất cả đã đọc"}</span>
               </div>
-              <button
-                className="notification-mark-all"
-                type="button"
-                disabled={unreadCount === 0}
-                onClick={() => void handleMarkAllNotificationsRead()}
-              >
-                <CheckCheck size={14} /> Đọc hết
-              </button>
+              <div className="notification-header-actions">
+                <button
+                  className="notification-mark-all"
+                  type="button"
+                  disabled={unreadCount === 0}
+                  onClick={() => void handleMarkAllNotificationsRead()}
+                >
+                  <CheckCheck size={14} /> Đọc hết
+                </button>
+                <button
+                  className="notification-close-btn"
+                  type="button"
+                  aria-label="Đóng thông báo"
+                  title="Đóng thông báo"
+                  onClick={() => setIsNotificationMenuOpen(false)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
             <div className="notification-filter-row">
               {notificationFilters.map((filter) => (
@@ -5629,7 +5700,8 @@ function App() {
                 ))
               )}
             </div>
-          </div>
+          </div>,
+          document.body
         )}
       </div>
     );
@@ -6778,10 +6850,14 @@ function App() {
     });
   }
 
+  function dashboardWorkItemSource() {
+    return roleDashboard?.workItems ? dashboardWorkItems : (dashboardWorkItems.length > 0 ? dashboardWorkItems : workItems);
+  }
+
   function executiveDashboardData() {
     const totals = roleDashboard?.totals;
     const roleProjectsById = new Map((roleDashboard?.projectBreakdown ?? []).map((project) => [project.id, project]));
-    const dashboardItems = dashboardWorkItems.length > 0 ? dashboardWorkItems : workItems;
+    const dashboardItems = dashboardWorkItemSource();
     const projects = projectsList.map((project) => {
       const roleProject = roleProjectsById.get(project.id);
       return {
@@ -6953,8 +7029,11 @@ function App() {
     }));
     const totalStatusBreakdown = statusBreakdown.reduce((total, item) => total + item.value, 0);
     const maxStatusBreakdown = Math.max(...statusBreakdown.map((item) => item.value), 1);
+    const filteredDashboardItems = workloadProjectFilter === "ALL"
+      ? dashboardItems
+      : dashboardItems.filter((item) => item.projectId === workloadProjectFilter);
     const workloadRows = Array.from(
-      dashboardItems.reduce((map, item) => {
+      filteredDashboardItems.reduce((map, item) => {
         const assignees = workItemAssigneeNames(item) || [];
         assignees.forEach((name) => {
           if (!name || name === "Chưa giao") return;
@@ -6994,7 +7073,6 @@ function App() {
         (second.open + second.risk) -
         (first.open + first.risk)
       )
-      .slice(0, 6);
     const maxWorkload = Math.max(...workloadRows.map((row) => row.open + row.done), 1);
     const criticalBugSeries = Array.from({ length: 7 }, (_, index) => {
       const date = new Date();
@@ -7053,7 +7131,7 @@ function App() {
 
   function employeeDashboardData() {
     const totals = roleDashboard?.totals;
-    const dashboardItems = dashboardWorkItems.length > 0 ? dashboardWorkItems : workItems;
+    const dashboardItems = dashboardWorkItemSource();
     const userName = currentUser?.name?.trim().toLowerCase() ?? "";
     const userEmail = currentUser?.email?.trim().toLowerCase() ?? "";
 
@@ -7173,7 +7251,7 @@ function App() {
   });
 
   return (
-    <main className={`${isZenMode ? "app-shell zen-mode" : "app-shell"} ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+    <main className={`${isZenMode ? "app-shell zen-mode" : "app-shell"} ${isSidebarCollapsed ? "sidebar-collapsed" : ""} ${isMobileMenuOpen ? "mobile-menu-open" : ""}`}>
 
       {/* Sidebar Navigation */}
       <aside
@@ -7215,6 +7293,15 @@ function App() {
             <strong>ProjectSpace</strong>
           </div>
           <button
+            className="mobile-sidebar-close"
+            type="button"
+            title="Đóng menu"
+            aria-label="Đóng menu"
+            onClick={() => setIsMobileMenuOpen(false)}
+          >
+            <X size={18} />
+          </button>
+          <button
             className="sidebar-toggle-btn"
             type="button"
             title={isSidebarCollapsed ? "Mở rộng menu" : "Thu gọn menu"}
@@ -7235,7 +7322,7 @@ function App() {
               type="button"
               title="Dashboard"
               data-tooltip="Dashboard"
-              onClick={() => setActiveTabNav("dashboard")}
+              onClick={() => { setActiveTabNav("dashboard"); setIsMobileMenuOpen(false); }}
             >
               <div className="nav-item-content">
                 <LayoutDashboard size={17} />
@@ -7248,7 +7335,7 @@ function App() {
               type="button"
               title="Dự án"
               data-tooltip="Dự án"
-              onClick={() => setActiveTabNav("projects")}
+              onClick={() => { setActiveTabNav("projects"); setIsMobileMenuOpen(false); }}
             >
               <div className="nav-item-content">
                 <FolderKanban size={17} />
@@ -7261,7 +7348,7 @@ function App() {
               type="button"
               title="Tài liệu"
               data-tooltip="Tài liệu"
-              onClick={() => setActiveTabNav("documents")}
+              onClick={() => { setActiveTabNav("documents"); setIsMobileMenuOpen(false); }}
             >
               <div className="nav-item-content">
                 <FileText size={17} />
@@ -7274,7 +7361,7 @@ function App() {
               type="button"
               title="Workboard"
               data-tooltip="Workboard"
-              onClick={() => setActiveTabNav("review")}
+              onClick={() => { setActiveTabNav("review"); setIsMobileMenuOpen(false); }}
             >
               <div className="nav-item-content">
                 <Kanban size={17} />
@@ -7288,7 +7375,7 @@ function App() {
                 type="button"
                 title="Quản trị user"
                 data-tooltip="Quản trị user"
-                onClick={() => setActiveTabNav("admin")}
+                onClick={() => { setActiveTabNav("admin"); setIsMobileMenuOpen(false); }}
               >
                 <div className="nav-item-content">
                   <Users size={17} />
@@ -7336,10 +7423,15 @@ function App() {
 
       </aside>
 
+      {isMobileMenuOpen && <div className="mobile-menu-backdrop" onClick={() => setIsMobileMenuOpen(false)} />}
+
       {/* Main Workspace */}
       <section className="workspace">
         {/* Compact Topbar Header */}
         <header className="topbar">
+          <button className="mobile-hamburger" type="button" aria-label="Mở menu" onClick={() => setIsMobileMenuOpen((open) => !open)}>
+            <Menu size={21} />
+          </button>
           <div className="topbar-title-area">
             <p className="eyebrow">
               {activeTabNav === "dashboard"
@@ -8017,14 +8109,49 @@ function App() {
                   <span className="dash-panel-badge">{filteredWorkloadRows.length}/{executiveData.workloadRows.length} người</span>
                 </div>
                 <div className="dash-workload-filters">
-                  <label className="dash-workload-search">
-                    <Search size={13} />
-                    <input
-                      value={workloadNameFilter}
-                      onChange={(e) => setWorkloadNameFilter(e.target.value)}
-                      placeholder="Lọc theo tên..."
-                    />
-                  </label>
+                  <div className="dash-workload-select">
+                    <button
+                      type="button"
+                      className="dash-workload-select-trigger"
+                      onClick={() => setOpenFilterDropdown(openFilterDropdown === "workloadProject" ? null : "workloadProject")}
+                    >
+                      <span>
+                        {workloadProjectFilter === "ALL"
+                          ? "Tất cả dự án"
+                          : projectsList.find((p) => p.id === workloadProjectFilter)?.name ?? "Dự án"}
+                      </span>
+                      <ChevronDown size={13} className={openFilterDropdown === "workloadProject" ? "rotate" : ""} />
+                    </button>
+                    {openFilterDropdown === "workloadProject" && (
+                      <>
+                        <div className="dash-workload-dropdown-scrim" onClick={() => setOpenFilterDropdown(null)} />
+                        <div className="dash-workload-dropdown">
+                          <button
+                            type="button"
+                            className={workloadProjectFilter === "ALL" ? "selected" : ""}
+                            onClick={() => { setWorkloadProjectFilter("ALL"); setOpenFilterDropdown(null); }}
+                          >
+                            <span>Tất cả dự án</span>
+                            {workloadProjectFilter === "ALL" && <CheckCheck size={14} />}
+                          </button>
+                          {projectsList.map((project) => {
+                            const isSelected = workloadProjectFilter === project.id;
+                            return (
+                              <button
+                                key={project.id}
+                                type="button"
+                                className={isSelected ? "selected" : ""}
+                                onClick={() => { setWorkloadProjectFilter(project.id); setOpenFilterDropdown(null); }}
+                              >
+                                <span>{project.code} – {project.name}</span>
+                                {isSelected && <CheckCheck size={14} />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
                   <div className="dash-workload-select">
                     <button
                       type="button"
@@ -8068,6 +8195,14 @@ function App() {
                       </>
                     )}
                   </div>
+                  <label className="dash-workload-search">
+                    <Search size={13} />
+                    <input
+                      value={workloadNameFilter}
+                      onChange={(e) => setWorkloadNameFilter(e.target.value)}
+                      placeholder="Lọc theo tên..."
+                    />
+                  </label>
                 </div>
                 <div className="dash-workload-list">
                   {filteredWorkloadRows.map((row) => {
@@ -8099,12 +8234,11 @@ function App() {
                           <div className="dash-wl-bar-fill" style={{ width: `${donePercent}%` }} />
                         </div>
                         <div className="dash-wl-chips">
-                          {row.backlog > 0 && <span className="dash-chip dash-chip-default"><em>{row.backlog}</em> Chờ</span>}
-                          {row.todo > 0 && <span className="dash-chip dash-chip-blue"><em>{row.todo}</em> Cần làm</span>}
-                          {row.inProgress > 0 && <span className="dash-chip dash-chip-amber"><em>{row.inProgress}</em> Đang làm</span>}
-                          {row.review > 0 && <span className="dash-chip dash-chip-blue"><em>{row.review}</em> Review</span>}
-                          {row.risk > 0 && <span className="dash-chip dash-chip-rose"><em>{row.risk}</em> Rủi ro</span>}
-                          {row.done > 0 && <span className="dash-chip dash-chip-emerald"><em>{row.done}</em> Xong</span>}
+                          <span className="dash-chip dash-chip-default"><em>{row.backlog}</em> Backlog</span>
+                          <span className="dash-chip dash-chip-blue"><em>{row.todo}</em> Todo</span>
+                          <span className="dash-chip dash-chip-amber"><em>{row.inProgress}</em> In Progress</span>
+                          <span className="dash-chip dash-chip-violet"><em>{row.review}</em> Review</span>
+                          <span className="dash-chip dash-chip-emerald"><em>{row.done}</em> Done</span>
                         </div>
                       </button>
                     );
