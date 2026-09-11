@@ -14,6 +14,19 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true
         }
       }
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes("node_modules")) return undefined;
+            if (id.includes("react") || id.includes("scheduler")) return "vendor-react";
+            if (id.includes("@tiptap") || id.includes("prosemirror")) return "vendor-editor";
+            if (id.includes("mermaid") || id.includes("cytoscape") || id.includes("dagre")) return "vendor-diagrams";
+            return undefined;
+          }
+        }
+      }
     }
   };
 });

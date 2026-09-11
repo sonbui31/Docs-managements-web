@@ -299,6 +299,7 @@ export type RoleDashboard = {
     projectName: string;
     _count?: { comments?: number; versions?: number };
   }>;
+  workItems?: WorkItem[];
   notifications: NotificationItem[];
   recentActivity: ActivityLog[];
   latestImportJob?: {

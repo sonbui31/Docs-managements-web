@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiConsumes, ApiTags } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { imageUploadOptions } from "../common/upload-options";
 import { CreateWorkItemDto } from "./dto/create-work-item.dto";
 import { CreateWorkItemCommentDto } from "./dto/create-work-item-comment.dto";
 import { UpdateWorkItemCommentDto } from "./dto/update-work-item-comment.dto";
@@ -57,7 +59,8 @@ export class WorkItemsController {
 
   @Post(":id/attachments")
   @ApiConsumes("multipart/form-data")
-  @UseInterceptors(FileInterceptor("file"))
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  @UseInterceptors(FileInterceptor("file", imageUploadOptions))
   uploadAttachment(@Param("id") id: string, @UploadedFile() file: Express.Multer.File, @CurrentUser() user: AuthenticatedUser) {
     return this.workItemsService.uploadAttachment(id, file, user);
   }

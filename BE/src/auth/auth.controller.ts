@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Post, Req, Res, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 import { Request, Response } from "express";
 import { REFRESH_COOKIE_NAME, readCookie } from "./auth.cookies";
 import { AuthService } from "./auth.service";
@@ -23,6 +24,7 @@ export class AuthController {
   }
 
   @Post("login")
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   async login(@Body() dto: LoginDto, @Req() request: Request, @Res({ passthrough: true }) response: Response) {
     const result = await this.authService.login(dto, this.meta(request));
     this.setRefreshCookie(response, result.refreshToken);
@@ -30,6 +32,7 @@ export class AuthController {
   }
 
   @Post("refresh")
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
   refresh(@Req() request: Request) {
     return this.authService.refresh(readCookie(request, REFRESH_COOKIE_NAME), this.meta(request));
   }
@@ -56,6 +59,7 @@ export class AuthController {
   }
 
   @Post("forgot-password")
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
   forgotPassword(@Body() dto: ForgotPasswordDto, @Req() request: Request) {
     return this.authService.forgotPassword(dto.email, this.meta(request));
   }

@@ -11,7 +11,10 @@ async function bootstrap() {
 
   app.setGlobalPrefix("api");
   app.enableVersioning({ type: VersioningType.URI });
-  app.enableCors({ origin: true, credentials: true });
+  app.enableCors({
+    origin: corsOrigin(config),
+    credentials: true
+  });
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalPipes(
     new ValidationPipe({
@@ -40,3 +43,17 @@ async function bootstrap() {
 }
 
 void bootstrap();
+
+function corsOrigin(config: ConfigService) {
+  const configuredOrigins = config.get<string>("CORS_ORIGIN");
+  if (configuredOrigins) {
+    return configuredOrigins
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean);
+  }
+
+  return config.get<string>("NODE_ENV") === "production"
+    ? false
+    : true;
+}

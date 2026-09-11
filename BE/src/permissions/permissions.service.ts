@@ -101,7 +101,7 @@ export class PermissionsService {
         }
       }
     ];
-    const scopedAccess = this.documentScopedAccessWhere(user, allowedRoles);
+    const scopedAccess = this.documentScopedAccessWhere(user);
     if (scopedAccess) directAccess.push(scopedAccess);
 
     return {
@@ -253,7 +253,7 @@ export class PermissionsService {
     return null;
   }
 
-  private documentScopedAccessWhere(user: AuthenticatedUser, allowedRoles: ProjectRole[]): Prisma.DocumentWhereInput | null {
+  private documentScopedAccessWhere(user: AuthenticatedUser): Prisma.DocumentWhereInput | null {
     if (!user.externalCompanyId) {
       return user.role === "ADMIN" ? {} : null;
     }

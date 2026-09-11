@@ -106,6 +106,7 @@ function messageForCode(code = "REQUEST_FAILED", serverMessage?: string) {
     USER_NOT_FOUND: "Không tìm thấy người dùng.",
     USER_EMAIL_EXISTS: "Email này đã tồn tại.",
     FILE_REQUIRED: "Vui lòng chọn file trước khi tải lên.",
+    FILE_TOO_LARGE: "File quá lớn. Vui lòng chọn file nhỏ hơn.",
     FILE_TYPE_UNSUPPORTED: "Định dạng file chưa được hỗ trợ.",
     IMPORT_PARSE_FAILED: "Không đọc được nội dung file. Vui lòng kiểm tra định dạng hoặc thử file khác.",
     MEDIA_NOT_FOUND: "Không tìm thấy file media.",
