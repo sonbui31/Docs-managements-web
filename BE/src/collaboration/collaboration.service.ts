@@ -12,6 +12,7 @@ import { CreateTemplateDto } from "./dto/create-template.dto";
 import { CreateTraceLinkDto } from "./dto/create-trace-link.dto";
 
 type DiffLine = { type: "same" | "added" | "removed"; text: string };
+const dashboardProjectRoles: ProjectRole[] = ["VIEWER", "REVIEWER", "EDITOR", "MANAGER"];
 
 @Injectable()
 export class CollaborationService {
@@ -55,6 +56,7 @@ export class CollaborationService {
       myOpenComments,
       notifications,
       recentActivity,
+      workItems,
       tags,
       traces,
       tagsByProject,
@@ -90,6 +92,11 @@ export class CollaborationService {
         include: { actor: { select: { name: true, email: true } } },
         orderBy: { createdAt: "desc" },
         take: 12
+      }),
+      this.prisma.workItem.findMany({
+        where: this.dashboardWorkItemWhere(user, projectIds),
+        include: this.workItemIncludeRelations(),
+        orderBy: [{ status: "asc" }, { priority: "desc" }, { updatedAt: "desc" }]
       }),
       this.prisma.requirementTag.count({ where: { documentId: { in: documentIds } } }),
       this.prisma.traceLink.count({
@@ -187,6 +194,7 @@ export class CollaborationService {
         updatedAt: project.updatedAt
       })),
       recentDocuments: documents.slice(0, 8),
+      workItems,
       notifications,
       recentActivity,
       latestImportJob
@@ -895,5 +903,63 @@ export class CollaborationService {
     } catch {
       return false;
     }
+  }
+
+  private workItemIncludeRelations() {
+    return {
+      document: { select: { id: true, title: true, type: true, currentVersion: true } },
+      column: true,
+      sourceComment: { select: { id: true, blockId: true, selectedText: true, content: true, status: true } },
+      assignee: { select: { id: true, name: true, email: true } },
+      assignees: {
+        include: { user: { select: { id: true, name: true, email: true } } },
+        orderBy: { createdAt: "asc" }
+      },
+      checklistItems: { orderBy: { position: "asc" } },
+      labels: {
+        include: { label: true },
+        orderBy: { createdAt: "asc" }
+      },
+      blockingLinks: {
+        include: { blockerItem: { select: { id: true, title: true, status: true } } },
+        orderBy: { createdAt: "asc" }
+      },
+      createdBy: { select: { id: true, name: true, email: true } }
+    } satisfies Prisma.WorkItemInclude;
+  }
+
+  private dashboardWorkItemWhere(user: AuthenticatedUser, projectIds: string[]): Prisma.WorkItemWhereInput {
+    const projectScope = { projectId: { in: projectIds } };
+    if (user.externalRole === "sadmin" || user.role === "ADMIN" || user.role === "MANAGER") {
+      return projectScope;
+    }
+
+    return {
+      AND: [
+        projectScope,
+        {
+          OR: [
+            {
+              project: {
+                members: {
+                  some: {
+                    userId: user.id,
+                    OR: [
+                      { role: { in: dashboardProjectRoles } },
+                      { roles: { hasSome: dashboardProjectRoles } }
+                    ]
+                  }
+                }
+              }
+            },
+            { document: this.permissions.documentVisibilityWhere(user, undefined, ["VIEWER"]) },
+            { assigneeId: user.id },
+            { assignees: { some: { userId: user.id } } },
+            { createdById: user.id },
+            { createdByEmail: user.email }
+          ]
+        }
+      ]
+    };
   }
 }

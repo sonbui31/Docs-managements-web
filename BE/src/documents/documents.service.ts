@@ -639,8 +639,8 @@ export class DocumentsService {
       ...this.storedRoles(projectMembership),
       ...this.storedRoles(documentPermission),
       ...this.scopedRolesFor(user, {
-        externalCompanyId: document.externalCompanyId ?? document.project.externalCompanyId,
-        externalDepartmentId: document.externalDepartmentId ?? document.project.externalDepartmentId
+        externalCompanyId: document.externalCompanyId ?? document.project?.externalCompanyId ?? null,
+        externalDepartmentId: document.externalDepartmentId ?? document.project?.externalDepartmentId ?? null
       })
     ]);
   }
