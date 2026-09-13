@@ -41,6 +41,7 @@ import {
     MessageSquareText,
     Minus,
     MoreVertical,
+    Moon,
     PanelLeftClose,
     PanelLeftOpen,
     PanelRightClose,
@@ -55,6 +56,7 @@ import {
     Share2,
     ShieldCheck,
     SlidersHorizontal,
+    Sun,
     Tags,
     Trash2,
     UploadCloud,
@@ -192,6 +194,9 @@ function getDocumentTypeShortLabel(type: string) {
 
 type MermaidRenderer = typeof import("mermaid").default;
 type NotificationFilter = "all" | "unread" | "mention" | "ticket" | "document" | "project";
+type AppTheme = "light" | "dark";
+type ReadingTheme = "paper" | "soft" | "dark";
+type ReadingWidth = "narrow" | "normal" | "wide";
 type ProjectCollaborationData = { dashboard: ProjectDashboard; traces: TraceLink[]; activity: ActivityLog[] };
 type DocumentCollaborationData = { diff: VersionDiff; tagResult: { saved: RequirementTag[]; inferred: RequirementTag[] } };
 
@@ -223,38 +228,69 @@ const cacheKey = {
   templates: "templates"
 } as const;
 
+const READING_PREFERENCES_KEY = "ba_docs_reading_preferences";
+const APP_THEME_KEY = "ba_docs_app_theme";
+
+function getInitialAppTheme(): AppTheme {
+  try {
+    const stored = localStorage.getItem(APP_THEME_KEY);
+    if (stored === "light" || stored === "dark") return stored;
+  } catch {
+    return "light";
+  }
+  return "light";
+}
+
+function loadReadingPreferences() {
+  try {
+    const raw = localStorage.getItem(READING_PREFERENCES_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as Partial<{
+      fontSize: "sm" | "md" | "lg";
+      theme: ReadingTheme;
+      width: ReadingWidth;
+      showToc: boolean;
+    }>;
+  } catch {
+    return {};
+  }
+}
+
 const mermaidConfig = {
   startOnLoad: false,
   theme: "base",
   securityLevel: "loose",
-  fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+  htmlLabels: false,
+  fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
   themeVariables: {
     primaryColor: "#ffffff",
     primaryTextColor: "#0f172a",
-    primaryBorderColor: "#111827",
-    lineColor: "#111827",
+    primaryBorderColor: "#1e293b",
+    lineColor: "#1e293b",
     secondaryColor: "#f8fafc",
     tertiaryColor: "#f1f5f9",
-    nodeBorder: "#111827",
+    nodeBorder: "#1e293b",
     clusterBkg: "#ffffff",
     clusterBorder: "#94a3b8",
-    defaultLinkColor: "#111827",
+    defaultLinkColor: "#1e293b",
     titleColor: "#0f172a",
-    edgeLabelBackground: "transparent",
+    edgeLabelBackground: "#ffffff",
     nodeTextColor: "#0f172a",
-    fontSize: "18px"
+    fontSize: "13.5px"
   },
   flowchart: {
-    htmlLabels: true,
-    nodeSpacing: 54,
-    rankSpacing: 64,
-    padding: 28,
-    curve: "linear"
+    htmlLabels: false,
+    useMaxWidth: true,
+    nodeSpacing: 38,
+    rankSpacing: 42,
+    padding: 16,
+    curve: "basis"
   },
   state: {
-    nodeSpacing: 54,
-    rankSpacing: 64,
-    padding: 28
+    useMaxWidth: true,
+    nodeSpacing: 38,
+    rankSpacing: 42,
+    padding: 16
   }
 } as const;
 
@@ -957,6 +993,7 @@ function workItemLabelNames(item: WorkItem) {
 
 function App() {
   // Authentication State
+  const [appTheme, setAppTheme] = useState<AppTheme>(() => getInitialAppTheme());
   const [currentUser, setCurrentUser] = useState<User | null>(() => getStoredUser());
   const currentUserOwnerName = currentUser?.name?.trim() || currentUser?.email?.trim() || "";
 
@@ -976,6 +1013,9 @@ function App() {
   // Interactive Table of Contents (Outline) State
   const [tocItems, setTocItems] = useState<TocItem[]>([]);
   const [activeTocId, setActiveTocId] = useState<string>("");
+  const [zoomModalImage, setZoomModalImage] = useState<{ src: string; alt?: string } | null>(null);
+  const [diagramZoomScale, setDiagramZoomScale] = useState<number>(1);
+  const [isDiagramHighContrast, setIsDiagramHighContrast] = useState<boolean>(false);
   const [isTocPopoverOpen, setIsTocPopoverOpen] = useState<boolean>(false);
 
   // Grouped Actions Dropdown State
@@ -1015,15 +1055,53 @@ function App() {
   const [showMetrics, setShowMetrics] = useState<boolean>(false);
 
   // Layout View Controls for Maximum Reading Focus
+  const initialReadingPreferences = useMemo(() => loadReadingPreferences(), []);
   const [showLibraryPanel, setShowLibraryPanel] = useState<boolean>(true);
   const [showCommentsPanel, setShowCommentsPanel] = useState<boolean>(true);
-  const [fontSize, setFontSize] = useState<"sm" | "md" | "lg">("md");
+  const [fontSize, setFontSize] = useState<"sm" | "md" | "lg">(initialReadingPreferences.fontSize ?? "md");
+  const [readingTheme, setReadingTheme] = useState<ReadingTheme>(initialReadingPreferences.theme ?? "paper");
+  const [readingWidth, setReadingWidth] = useState<ReadingWidth>(initialReadingPreferences.width ?? "normal");
+  const [showFocusToc, setShowFocusToc] = useState<boolean>(initialReadingPreferences.showToc ?? true);
   const [isZenMode, setIsZenMode] = useState<boolean>(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = appTheme;
+    document.documentElement.style.colorScheme = appTheme;
+    localStorage.setItem(APP_THEME_KEY, appTheme);
+  }, [appTheme]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      READING_PREFERENCES_KEY,
+      JSON.stringify({
+        fontSize,
+        theme: readingTheme,
+        width: readingWidth,
+        showToc: showFocusToc
+      })
+    );
+  }, [fontSize, readingTheme, readingWidth, showFocusToc]);
+
   function toggleSidebar() {
     setIsSidebarCollapsed((value) => !value);
+  }
+
+  function renderThemeToggle() {
+    const isDark = appTheme === "dark";
+    return (
+      <button
+        className="theme-toggle-btn"
+        type="button"
+        aria-label={isDark ? "Chuyển sang giao diện sáng" : "Chuyển sang giao diện tối"}
+        title={isDark ? "Chuyển sang giao diện sáng" : "Chuyển sang giao diện tối"}
+        onClick={() => setAppTheme(isDark ? "light" : "dark")}
+      >
+        {isDark ? <Sun size={15} /> : <Moon size={15} />}
+        <span>{isDark ? "Sáng" : "Tối"}</span>
+      </button>
+    );
   }
 
   // Interactive Block selection
@@ -6419,11 +6497,87 @@ function App() {
       .then((mermaid) => {
         targetList.forEach(({ container, code }, index) => {
           const id = `mermaid-svg-${Date.now()}-${index}-${Math.floor(Math.random() * 10000)}`;
+          const trimmedCode = code.trim();
+          let diagramType = "generic";
+          if (/^sequenceDiagram\b/i.test(trimmedCode)) {
+            diagramType = "sequence";
+          } else if (/^(?:stateDiagram|stateDiagram-v2)\b/i.test(trimmedCode)) {
+            diagramType = "state";
+          } else if (/^(?:classDiagram|erDiagram)\b/i.test(trimmedCode)) {
+            diagramType = "class-er";
+          } else if (/^(?:flowchart|graph)\s+(?:LR|RL)\b/i.test(trimmedCode)) {
+            diagramType = "flowchart-horizontal";
+          } else if (/^(?:flowchart|graph)\s+(?:TD|TB|BT)\b/i.test(trimmedCode)) {
+            diagramType = "flowchart-vertical";
+          } else if (/^(?:gantt|timeline|gitGraph|journey|quadrantChart)\b/i.test(trimmedCode)) {
+            diagramType = "timeline";
+          } else if (/^pie\b/i.test(trimmedCode)) {
+            diagramType = "pie";
+          }
+
           void mermaid
             .render(id, code)
             .then(({ svg }) => {
               container.innerHTML = svg;
-              container.className = "mermaid-container";
+              container.className = `mermaid-container mermaid-type-${diagramType}`;
+              container.setAttribute("data-diagram-type", diagramType);
+              const svgEl = container.querySelector("svg");
+              if (svgEl) {
+                const viewBox = svgEl.getAttribute("viewBox");
+                if (viewBox) {
+                  const parts = viewBox.split(/[\s,]+/).map(Number);
+                  if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
+                    const vbWidth = parts[2];
+                    const vbHeight = parts[3];
+
+                    // Profile-based sizing tailored to each diagram category:
+                    // Sequence diagrams: need wide width (1040px) so actors and message text are fully readable.
+                    // State diagrams: need comfortable vertical room (580px) and width (680px) for uncrowded state labels.
+                    // Flowcharts: horizontal (1000px) vs vertical (720px)
+                    const profiles: Record<string, { maxW: number; maxH: number; minDesiredW?: number; scaleUpFactor?: number }> = {
+                      sequence: { maxW: 1040, maxH: 700, minDesiredW: 880, scaleUpFactor: 1.0 },
+                      "flowchart-horizontal": { maxW: 1040, maxH: 680, minDesiredW: 880, scaleUpFactor: 1.35 },
+                      "flowchart-vertical": { maxW: 780, maxH: 650, minDesiredW: 580, scaleUpFactor: 1.15 },
+                      "class-er": { maxW: 1080, maxH: 720, minDesiredW: 880, scaleUpFactor: 1.25 },
+                      timeline: { maxW: 1100, maxH: 600, minDesiredW: 900, scaleUpFactor: 1.2 },
+                      state: { maxW: 720, maxH: 600, minDesiredW: 360, scaleUpFactor: 1.1 },
+                      pie: { maxW: 500, maxH: 500, minDesiredW: 380, scaleUpFactor: 1.0 },
+                      generic: { maxW: 960, maxH: 640, minDesiredW: 720, scaleUpFactor: 1.15 }
+                    };
+
+                    const profile = profiles[diagramType] || profiles.generic;
+                    const aspect = vbWidth / vbHeight;
+
+                    // Ensure diagrams that Mermaid rendered compactly (like graph LR) are scaled to comfortable reading width
+                    let initialW = vbWidth;
+                    if (profile.scaleUpFactor && profile.scaleUpFactor > 1.0) {
+                      initialW = Math.max(vbWidth * profile.scaleUpFactor, profile.minDesiredW || vbWidth);
+                    } else if (profile.minDesiredW && vbWidth < profile.minDesiredW) {
+                      if (aspect >= 0.95) {
+                        initialW = profile.minDesiredW;
+                      }
+                    }
+
+                    let targetW = Math.min(initialW, profile.maxW);
+                    let targetH = targetW / aspect;
+
+                    // Proportional bounds checking against profile maxH & maxW
+                    if (targetH > profile.maxH) {
+                      targetH = profile.maxH;
+                      targetW = targetH * aspect;
+                    }
+                    if (targetW > profile.maxW) {
+                      targetW = profile.maxW;
+                      targetH = targetW / aspect;
+                    }
+
+                    svgEl.style.setProperty("max-width", `min(${Math.round(targetW)}px, 100%)`, "important");
+                    svgEl.style.setProperty("max-height", `${Math.round(targetH)}px`, "important");
+                    svgEl.style.setProperty("width", "100%", "important");
+                    svgEl.style.setProperty("height", "auto", "important");
+                  }
+                }
+              }
               container.removeAttribute("data-mermaid-pending");
               container.setAttribute("data-mermaid-done", "true");
             })
@@ -7195,6 +7349,15 @@ function App() {
   }
 
   // Compute grid layout class name
+  const readingShellClass = [
+    isZenMode ? "app-shell zen-mode focus-reading-mode" : "app-shell",
+    isSidebarCollapsed ? "sidebar-collapsed" : "",
+    isMobileMenuOpen ? "mobile-menu-open" : "",
+    `app-theme-${appTheme}`,
+    `reader-theme-${readingTheme}`,
+    `reader-width-${readingWidth}`
+  ].filter(Boolean).join(" ");
+
   const gridLayoutClass = useMemo(() => {
     let base = "work-grid";
     if (isZenMode) base += " zen-mode";
@@ -7251,7 +7414,7 @@ function App() {
   });
 
   return (
-    <main className={`${isZenMode ? "app-shell zen-mode" : "app-shell"} ${isSidebarCollapsed ? "sidebar-collapsed" : ""} ${isMobileMenuOpen ? "mobile-menu-open" : ""}`}>
+    <main className={readingShellClass}>
 
       {/* Sidebar Navigation */}
       <aside
@@ -7466,6 +7629,7 @@ function App() {
 
           {activeTabNav === "dashboard" && (
             <div className="topbar-actions">
+              {renderThemeToggle()}
               {renderNotificationCenter()}
               <button
                 className="exec-action secondary"
@@ -7488,6 +7652,7 @@ function App() {
 
           {activeTabNav === "projects" && (
             <div className="topbar-actions">
+              {renderThemeToggle()}
               {renderNotificationCenter()}
               <button
                 className="exec-action secondary"
@@ -7516,6 +7681,7 @@ function App() {
 
           {activeTabNav === "admin" && (
             <div className="topbar-actions">
+              {renderThemeToggle()}
               {renderNotificationCenter()}
               <button
                 className="exec-action secondary"
@@ -7542,6 +7708,7 @@ function App() {
 
           {activeTabNav === "review" && (
             <div className="topbar-actions">
+              {renderThemeToggle()}
               {renderNotificationCenter()}
               <CustomProjectSelect
                 projects={projectsList}
@@ -7592,6 +7759,7 @@ function App() {
 
           {activeTabNav !== "admin" && activeTabNav !== "dashboard" && activeTabNav !== "review" && activeTabNav !== "projects" && (
             <div className="topbar-actions">
+              {renderThemeToggle()}
               {renderNotificationCenter()}
               <label className="search-box">
                 <Search size={15} />
@@ -9042,7 +9210,7 @@ function App() {
           <section className={gridLayoutClass}>
             {/* Panel 1: Document Library (Collapsible) */}
             {/* Panel 1: Document Library (Collapsible) */}
-            {showLibraryPanel && (
+            {showLibraryPanel && !isZenMode && (
               <div className="panel library">
                 <div className="panel-header">
                   <div className="panel-title">
@@ -9254,7 +9422,7 @@ function App() {
               <div className="doc-toolbar">
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   {/* Quick Toggle if Left Library Panel is hidden */}
-                  {!showLibraryPanel && (
+                  {!showLibraryPanel && !isZenMode && (
                     <button
                       className="btn-secondary"
                       type="button"
@@ -9394,8 +9562,8 @@ function App() {
               {/* Reading Toolbar Controls */}
               <div className="reader-controls-bar">
                 <div className="reader-controls-group">
-                  <span style={{ fontSize: "0.74rem", fontWeight: 600, color: "var(--text-muted)" }}>Cỡ chữ:</span>
-                  <div style={{ display: "flex", gap: 3 }}>
+                  <span className="reader-control-label">Cỡ chữ</span>
+                  <div className="segmented-control" role="group" aria-label="Cỡ chữ tài liệu">
                     <button
                       className={fontSize === "sm" ? "font-size-btn active" : "font-size-btn"}
                       type="button"
@@ -9419,6 +9587,39 @@ function App() {
                     </button>
                   </div>
                 </div>
+                {isZenMode && (
+                  <div className="focus-reading-preferences" aria-label="Tùy chỉnh chế độ đọc">
+                    <div className="reader-controls-group">
+                      <span className="reader-control-label">Nền</span>
+                      <div className="segmented-control" role="group" aria-label="Giao diện đọc">
+                        {([
+                          ["paper", "Sáng"],
+                          ["soft", "Dịu"],
+                          ["dark", "Tối"]
+                        ] as Array<[ReadingTheme, string]>).map(([value, label]) => (
+                          <button
+                            key={value}
+                            className={readingTheme === value ? "font-size-btn active" : "font-size-btn"}
+                            type="button"
+                            onClick={() => setReadingTheme(value)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <button
+                      className={`btn-secondary focus-toc-toggle ${showFocusToc ? "active" : ""}`}
+                      type="button"
+                      onClick={() => setShowFocusToc((value) => !value)}
+                      disabled={tocItems.length === 0}
+                      title="Bật/tắt mục lục đọc"
+                    >
+                      <ListTree size={14} />
+                      <span>Mục lục</span>
+                    </button>
+                  </div>
+                )}
                 {selectedDocument.id !== "empty-document" && canEditSelectedDocumentContent && (
                   <button
                     className={`btn-secondary edit-content-btn ${isEditingDocumentContent ? "active" : ""}`}
@@ -9461,7 +9662,7 @@ function App() {
               )}
 
               {/* Floating Right Toggle for Team Discussion Panel when collapsed */}
-              {!showCommentsPanel && (
+              {!isZenMode && !showCommentsPanel && (
                 <button
                   className="floating-comments-toggle"
                   type="button"
@@ -9474,8 +9675,36 @@ function App() {
                 </button>
               )}
 
-              {/* Pure Document Reader View */}
-              <div className="doc-page">
+              {/* Pure Document Reader Body with Responsive TOC Sidebar */}
+              <div className="doc-viewer-body">
+                {isZenMode && showFocusToc && tocItems.length > 0 && !isEditingDocumentContent && (
+                  <nav className="focus-reading-toc" aria-label="Mục lục tài liệu">
+                    <div className="focus-reading-toc-header">
+                      <div className="focus-reading-toc-title">
+                        <ListTree size={14} />
+                        <span>Mục lục</span>
+                      </div>
+                      <button type="button" title="Ẩn mục lục" onClick={() => setShowFocusToc(false)}>
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <div className="focus-reading-toc-list">
+                      {tocItems.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={`focus-reading-toc-item level-${item.level} ${activeTocId === item.id ? "active" : ""}`}
+                          onClick={() => scrollToHeading(item)}
+                          title={item.text}
+                        >
+                          {item.text}
+                        </button>
+                      ))}
+                    </div>
+                  </nav>
+                )}
+
+                <div className="doc-page">
                 {isEditingDocumentContent && canEditSelectedDocumentContent ? (
                   <Suspense fallback={<div className="content-loading">Đang tải trình soạn thảo...</div>}>
                     <DocumentEditor
@@ -9496,8 +9725,18 @@ function App() {
                     <section
                       ref={documentContainerRef}
                       className={`html-document font-${fontSize}`}
+
                       onMouseUp={handleDocumentSelection}
                       onKeyUp={handleDocumentSelection}
+                      onClick={(e) => {
+                        const target = e.target as HTMLElement;
+                        const img = target.closest("img");
+                        if (img && !img.classList.contains("pdf-page-bg")) {
+                          setZoomModalImage({ src: img.src, alt: img.alt || "Sơ đồ chi tiết" });
+                          setDiagramZoomScale(1);
+                          setIsDiagramHighContrast(false);
+                        }
+                      }}
                       dangerouslySetInnerHTML={{
                         __html: selectedDocument.contentHtml || DEFAULT_DOC_CONTENT
                       }}
@@ -9581,10 +9820,12 @@ function App() {
                     )}
                   </>
                 )}
+                </div>
               </div>
             </article>
 
             {/* Panel 3: Dynamic Comments & Line Review Panel (Collapsible) */}
+            {!isZenMode && (
             <aside className="panel comments-panel" aria-hidden={!showCommentsPanel}>
               <div className="panel-header">
                 <div className="panel-title">
@@ -9806,6 +10047,7 @@ function App() {
                 </div>
               </>
             </aside>
+            )}
           </section>
         )}
       </section>
