@@ -1941,6 +1941,14 @@ button:active:not(:disabled) {
   align-items: start;
 }
 
+.focus-reading-mode.focus-library-open .work-grid.zen-mode {
+  --library-column: minmax(280px, 286px);
+  --document-column: minmax(0, 1fr);
+  grid-template-columns: var(--library-column) var(--document-column) 0px !important;
+  gap: 14px !important;
+  align-items: stretch;
+}
+
 .work-grid.zen-mode.hide-library {
   --library-column: 0px;
 }
@@ -2749,9 +2757,65 @@ button:active:not(:disabled) {
   background: var(--reading-page-bg, #f8fafc);
 }
 
-.focus-reading-mode .library,
 .focus-reading-mode .comments-panel {
   display: none !important;
+}
+
+.focus-reading-mode .library {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: calc(100vh - 12px) !important;
+  max-height: calc(100vh - 12px) !important;
+  border-radius: 14px;
+  border: 1px solid var(--reading-border, var(--border-subtle));
+  background: color-mix(in srgb, var(--reading-surface-bg, #ffffff) 96%, transparent);
+  box-shadow: 0 10px 32px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(18px) saturate(1.15);
+  overflow: hidden;
+  animation: focusLibraryDrawerIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.focus-reading-mode.focus-library-open .doc-toolbar,
+.focus-reading-mode.focus-library-open .reader-controls-bar,
+.focus-reading-mode.focus-library-open .doc-viewer-body {
+  margin-left: 0;
+  width: 100%;
+  transition: margin-left 0.22s cubic-bezier(0.16, 1, 0.3, 1), width 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.focus-reading-mode .doc-toolbar,
+.focus-reading-mode .reader-controls-bar,
+.focus-reading-mode .doc-viewer-body {
+  transition: margin-left 0.22s cubic-bezier(0.16, 1, 0.3, 1), width 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.focus-reading-mode.reader-theme-dark .library {
+  box-shadow: 0 24px 76px rgba(0, 0, 0, 0.48);
+}
+
+.focus-library-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 81;
+  background: transparent;
+  cursor: default;
+}
+
+.focus-reading-mode.reader-theme-dark .focus-library-backdrop {
+  background: transparent;
+}
+
+@keyframes focusLibraryDrawerIn {
+  from {
+    opacity: 0;
+    transform: translateX(-16px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
 }
 
 .focus-reading-mode .doc-toolbar {
@@ -2808,6 +2872,17 @@ button:active:not(:disabled) {
 
 .focus-reading-mode .font-size-btn.active {
   color: #ffffff;
+}
+
+.focus-library-toggle {
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.focus-library-toggle.active {
+  background: var(--accent-primary) !important;
+  border-color: var(--accent-primary) !important;
+  color: #ffffff !important;
 }
 
 .focus-reading-mode .btn-secondary {
@@ -22986,6 +23061,21 @@ select option:checked {
 
 /* Focus reading mode refinements */
 @media (max-width: 900px) {
+  .focus-reading-mode.focus-library-open .doc-toolbar,
+  .focus-reading-mode.focus-library-open .reader-controls-bar,
+  .focus-reading-mode.focus-library-open .doc-viewer-body {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .focus-library-backdrop {
+    background: rgba(15, 23, 42, 0.18);
+  }
+
+  .focus-reading-mode.reader-theme-dark .focus-library-backdrop {
+    background: rgba(3, 7, 18, 0.42);
+  }
+
   .focus-reading-toc {
     width: 240px;
     min-width: 240px;
@@ -23675,6 +23765,75 @@ html[data-theme="dark"] .status-pill .status-dot {
   background: currentColor !important;
 }
 
+/* ── Workboard Badges Dark Mode ── */
+html[data-theme="dark"] .workitem-type,
+html[data-theme="dark"] .workitem-priority {
+  border-width: 1px !important;
+  border-style: solid !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+}
+
+html[data-theme="dark"] .workitem-type.type-task {
+  background: rgba(59, 130, 246, 0.2) !important;
+  color: #93c5fd !important;
+  border-color: rgba(96, 165, 250, 0.4) !important;
+}
+
+html[data-theme="dark"] .workitem-type.type-bug {
+  background: rgba(239, 68, 68, 0.22) !important;
+  color: #fca5a5 !important;
+  border-color: rgba(248, 113, 113, 0.42) !important;
+}
+
+html[data-theme="dark"] .workitem-type.type-review {
+  background: rgba(139, 92, 246, 0.22) !important;
+  color: #d8b4fe !important;
+  border-color: rgba(167, 139, 250, 0.42) !important;
+}
+
+html[data-theme="dark"] .workitem-type.type-change_request {
+  background: rgba(245, 158, 11, 0.22) !important;
+  color: #fde047 !important;
+  border-color: rgba(251, 191, 36, 0.42) !important;
+}
+
+html[data-theme="dark"] .workitem-type.type-question {
+  background: rgba(16, 185, 129, 0.2) !important;
+  color: #6ee7b7 !important;
+  border-color: rgba(52, 211, 153, 0.4) !important;
+}
+
+/* Priority Badges in Dark Mode */
+html[data-theme="dark"] .workitem-priority {
+  background: rgba(148, 163, 184, 0.16) !important;
+  color: #cbd5e1 !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+html[data-theme="dark"] .workitem-priority.priority-low {
+  background: rgba(148, 163, 184, 0.16) !important;
+  color: #94a3b8 !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+html[data-theme="dark"] .workitem-priority.priority-medium {
+  background: rgba(14, 165, 233, 0.2) !important;
+  color: #7dd3fc !important;
+  border-color: rgba(56, 189, 248, 0.38) !important;
+}
+
+html[data-theme="dark"] .workitem-priority.priority-high {
+  background: rgba(245, 158, 11, 0.22) !important;
+  color: #fde047 !important;
+  border-color: rgba(251, 191, 36, 0.42) !important;
+}
+
+html[data-theme="dark"] .workitem-priority.priority-critical {
+  background: rgba(244, 63, 94, 0.24) !important;
+  color: #fda4af !important;
+  border-color: rgba(251, 113, 133, 0.48) !important;
+}
+
 html[data-theme="dark"] .admin-users-table td.col-user {
   min-width: 280px;
 }
@@ -23788,7 +23947,7 @@ html[data-theme="dark"] .exec-project-row-v2:hover *,
 html[data-theme="dark"] .exec-item-row:hover *,
 html[data-theme="dark"] .exec-compact-list button:hover *,
 html[data-theme="dark"] .exec-feed-row:hover *,
-html[data-theme="dark"] .workboard-card:hover *,
+html[data-theme="dark"] .workboard-card:hover *:not(.workboard-card-badges):not(.workboard-card-badges *):not(.workitem-type):not(.workitem-priority),
 html[data-theme="dark"] .project-hub-card:hover *,
 html[data-theme="dark"] .admin-users-table tr.user-row:hover * {
   color: inherit;
@@ -23808,11 +23967,76 @@ html[data-theme="dark"] .exec-item-row:hover p,
 html[data-theme="dark"] .exec-item-row:hover small,
 html[data-theme="dark"] .workboard-card:hover p,
 html[data-theme="dark"] .workboard-card:hover small,
+html[data-theme="dark"] .workboard-card:hover .workboard-card-main > span,
 html[data-theme="dark"] .project-hub-card:hover p,
 html[data-theme="dark"] .project-hub-card:hover small,
 html[data-theme="dark"] .admin-users-table tr.user-row:hover .user-email,
 html[data-theme="dark"] .admin-users-table tr.user-row:hover .no-assignments-text {
   color: var(--text-secondary) !important;
+}
+
+/* Ensure badges on card hover maintain their contrast & colors */
+html[data-theme="dark"] .workboard-card:hover .workitem-type,
+html[data-theme="dark"] .workboard-card:hover .workitem-priority {
+  filter: brightness(1.08) saturate(1.05);
+}
+
+html[data-theme="dark"] .workboard-card:hover .workitem-type.type-task {
+  color: #93c5fd !important;
+  background: rgba(59, 130, 246, 0.28) !important;
+  border-color: rgba(96, 165, 250, 0.5) !important;
+}
+
+html[data-theme="dark"] .workboard-card:hover .workitem-type.type-bug {
+  color: #fca5a5 !important;
+  background: rgba(239, 68, 68, 0.3) !important;
+  border-color: rgba(248, 113, 113, 0.52) !important;
+}
+
+html[data-theme="dark"] .workboard-card:hover .workitem-type.type-review {
+  color: #d8b4fe !important;
+  background: rgba(139, 92, 246, 0.3) !important;
+  border-color: rgba(167, 139, 250, 0.52) !important;
+}
+
+html[data-theme="dark"] .workboard-card:hover .workitem-type.type-change_request {
+  color: #fde047 !important;
+  background: rgba(245, 158, 11, 0.3) !important;
+  border-color: rgba(251, 191, 36, 0.52) !important;
+}
+
+html[data-theme="dark"] .workboard-card:hover .workitem-type.type-question {
+  color: #6ee7b7 !important;
+  background: rgba(16, 185, 129, 0.28) !important;
+  border-color: rgba(52, 211, 153, 0.5) !important;
+}
+
+html[data-theme="dark"] .workboard-card:hover .workitem-priority {
+  color: #cbd5e1 !important;
+  background: rgba(148, 163, 184, 0.24) !important;
+}
+
+html[data-theme="dark"] .workboard-card:hover .workitem-priority.priority-low {
+  color: #94a3b8 !important;
+  background: rgba(148, 163, 184, 0.24) !important;
+}
+
+html[data-theme="dark"] .workboard-card:hover .workitem-priority.priority-medium {
+  color: #7dd3fc !important;
+  background: rgba(14, 165, 233, 0.26) !important;
+  border-color: rgba(56, 189, 248, 0.48) !important;
+}
+
+html[data-theme="dark"] .workboard-card:hover .workitem-priority.priority-high {
+  color: #fde047 !important;
+  background: rgba(245, 158, 11, 0.3) !important;
+  border-color: rgba(251, 191, 36, 0.52) !important;
+}
+
+html[data-theme="dark"] .workboard-card:hover .workitem-priority.priority-critical {
+  color: #fda4af !important;
+  background: rgba(244, 63, 94, 0.32) !important;
+  border-color: rgba(251, 113, 133, 0.58) !important;
 }
 
 html[data-theme="dark"] .dash-workload-dropdown button:hover,
@@ -24047,3 +24271,229 @@ html[data-theme="dark"] .doc-table tbody tr:nth-child(even) {
 .diagram-zoom-modal-image.high-contrast {
   filter: contrast(1.3) brightness(0.95);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   DARK MODE ENHANCEMENTS: MERMAID, EDITOR, DASHBOARD & COMMENTS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* 1. Mermaid Diagrams & Vectors in Dark Mode */
+html[data-theme="dark"] .mermaid-container,
+html[data-theme="dark"] .mermaid,
+.focus-reading-mode.reader-theme-dark .mermaid-container {
+  background: #182033 !important;
+  border-color: #26354d !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45) !important;
+}
+
+html[data-theme="dark"] .mermaid-container svg text,
+html[data-theme="dark"] .mermaid svg text,
+.focus-reading-mode.reader-theme-dark .mermaid-container svg text {
+  fill: #eef4ff !important;
+  color: #eef4ff !important;
+}
+
+html[data-theme="dark"] .mermaid-container .cluster rect,
+.focus-reading-mode.reader-theme-dark .mermaid-container .cluster rect {
+  fill: #111827 !important;
+  stroke: #334155 !important;
+}
+
+html[data-theme="dark"] .mermaid-container .node rect,
+html[data-theme="dark"] .mermaid-container .node circle,
+html[data-theme="dark"] .mermaid-container .node polygon,
+html[data-theme="dark"] .mermaid-container .node path,
+.focus-reading-mode.reader-theme-dark .mermaid-container .node rect,
+.focus-reading-mode.reader-theme-dark .mermaid-container .node circle,
+.focus-reading-mode.reader-theme-dark .mermaid-container .node polygon,
+.focus-reading-mode.reader-theme-dark .mermaid-container .node path {
+  fill: #1f2a3d !important;
+  stroke: #475569 !important;
+}
+
+html[data-theme="dark"] .mermaid-container .edgePath .path,
+html[data-theme="dark"] .mermaid-container .flowchart-link,
+html[data-theme="dark"] .mermaid-container .transition,
+.focus-reading-mode.reader-theme-dark .mermaid-container .edgePath .path,
+.focus-reading-mode.reader-theme-dark .mermaid-container .flowchart-link,
+.focus-reading-mode.reader-theme-dark .mermaid-container .transition {
+  stroke: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .mermaid-container marker path,
+.focus-reading-mode.reader-theme-dark .mermaid-container marker path {
+  fill: #94a3b8 !important;
+  stroke: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .mermaid-container .edgeLabel,
+html[data-theme="dark"] .mermaid-container .edgeLabel rect,
+.focus-reading-mode.reader-theme-dark .mermaid-container .edgeLabel,
+.focus-reading-mode.reader-theme-dark .mermaid-container .edgeLabel rect {
+  background: #182033 !important;
+  fill: #182033 !important;
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .mermaid-container .edgeLabel text,
+.focus-reading-mode.reader-theme-dark .mermaid-container .edgeLabel text {
+  fill: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .mermaid-container .actor,
+.focus-reading-mode.reader-theme-dark .mermaid-container .actor {
+  fill: #1f2a3d !important;
+  stroke: #475569 !important;
+}
+
+html[data-theme="dark"] .mermaid-container text.actor > tspan,
+.focus-reading-mode.reader-theme-dark .mermaid-container text.actor > tspan {
+  fill: #eef4ff !important;
+}
+
+html[data-theme="dark"] .mermaid-container .messageLine0,
+html[data-theme="dark"] .mermaid-container .messageLine1,
+.focus-reading-mode.reader-theme-dark .mermaid-container .messageLine0,
+.focus-reading-mode.reader-theme-dark .mermaid-container .messageLine1 {
+  stroke: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .mermaid-container .messageText,
+.focus-reading-mode.reader-theme-dark .mermaid-container .messageText {
+  fill: #eef4ff !important;
+  stroke: none !important;
+}
+
+/* 2. Document Editor Toolbar, Tool Groups & Popovers in Dark Mode */
+html[data-theme="dark"] .document-editor-toolbar {
+  background: rgba(24, 32, 51, 0.95) !important;
+  border-color: #26354d !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+  color: #eef4ff !important;
+}
+
+html[data-theme="dark"] .editor-separator {
+  background: #26354d !important;
+}
+
+html[data-theme="dark"] .editor-tool-group {
+  background: rgba(31, 42, 61, 0.85) !important;
+  border-color: #26354d !important;
+}
+
+html[data-theme="dark"] .editor-tool-group button {
+  color: #c7d2e4 !important;
+}
+
+html[data-theme="dark"] .editor-tool-group button:hover {
+  background: #27364d !important;
+  color: #eef4ff !important;
+}
+
+html[data-theme="dark"] .editor-tool-group button.active {
+  background: rgba(124, 124, 246, 0.22) !important;
+  color: var(--accent-primary) !important;
+}
+
+html[data-theme="dark"] .editor-block-dropdown-btn {
+  color: #eef4ff !important;
+}
+
+html[data-theme="dark"] .editor-block-popover {
+  background: #182033 !important;
+  border-color: #26354d !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5) !important;
+}
+
+html[data-theme="dark"] .editor-block-option {
+  color: #c7d2e4 !important;
+}
+
+html[data-theme="dark"] .editor-block-option:hover {
+  background: #27364d !important;
+  color: #eef4ff !important;
+}
+
+html[data-theme="dark"] .editor-block-option.active {
+  background: rgba(124, 124, 246, 0.2) !important;
+  color: var(--accent-primary) !important;
+}
+
+html[data-theme="dark"] .editor-fontfamily-search,
+html[data-theme="dark"] .editor-fontsize-input {
+  background: #1f2a3d !important;
+  border-color: #26354d !important;
+  color: #eef4ff !important;
+}
+
+html[data-theme="dark"] .editor-color-popover {
+  background: #182033 !important;
+  border-color: #26354d !important;
+}
+
+html[data-theme="dark"] .editor-color-popover-label {
+  color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .editor-color-reset {
+  background: #1f2a3d !important;
+  border-color: #26354d !important;
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .editor-color-reset:hover {
+  background: #27364d !important;
+  color: #eef4ff !important;
+}
+
+html[data-theme="dark"] .document-edit-session-banner {
+  background: rgba(251, 191, 36, 0.12) !important;
+  border-color: rgba(251, 191, 36, 0.32) !important;
+  color: #fbbf24 !important;
+}
+
+html[data-theme="dark"] .tiptap.ProseMirror {
+  color: var(--text-primary) !important;
+  background: transparent !important;
+}
+
+/* 3. Dashboard UI Fixes */
+html[data-theme="dark"] .dash-list-icon {
+  background: #1f2a3d !important;
+  color: #94a3b8 !important;
+  border: 1px solid #26354d !important;
+}
+
+html[data-theme="dark"] .dash-wl-bar-track {
+  background: #1f2a3d !important;
+}
+
+/* 4. Comments Panel & Mention Fixes */
+html[data-theme="dark"] .comment-quote {
+  background: #1f2a3d !important;
+  color: #cbd5e1 !important;
+  border-left-color: var(--accent-primary) !important;
+}
+
+html[data-theme="dark"] .reply-composer {
+  background: #182033 !important;
+  border-color: #26354d !important;
+}
+
+html[data-theme="dark"] .document-mention-editor {
+  background: #1f2a3d !important;
+  border-color: #26354d !important;
+  color: #eef4ff !important;
+}
+
+html[data-theme="dark"] .reply-context-pill {
+  background: #1f2a3d !important;
+  color: #cbd5e1 !important;
+  border-color: #26354d !important;
+}
+
+/* 5. Diagram Zoom Lightbox Modal */
+html[data-theme="dark"] .diagram-zoom-modal-image-wrapper {
+  background: #182033 !important;
+  border: 1px solid #26354d !important;
+}
+
