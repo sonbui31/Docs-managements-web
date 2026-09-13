@@ -1007,12 +1007,13 @@ button:active:not(:disabled) {
 }
 
 .theme-toggle-btn {
+  width: 38px;
+  min-width: 38px;
   min-height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 0 12px;
+  padding: 0;
   border: 1px solid var(--border-medium);
   border-radius: 10px;
   background: var(--bg-panel);
@@ -25687,4 +25688,88 @@ html[data-theme="dark"] .project-hub-card:hover .text-indigo {
 
 html[data-theme="dark"] .project-hub-card:hover .project-workitem-count {
   color: #cbd5e1 !important;
+}
+
+/* ── Document Links, Underline & Inline Dark Text Color Overrides ── */
+.html-document a,
+.tiptap a {
+  color: var(--accent-primary);
+  text-decoration: underline;
+  text-decoration-color: rgba(79, 70, 229, 0.4);
+}
+
+.html-document a:hover,
+.tiptap a:hover {
+  color: var(--accent-primary-hover);
+}
+
+html[data-theme="dark"] .html-document a,
+html[data-theme="dark"] .tiptap a {
+  color: #818cf8 !important;
+  text-decoration: underline;
+  text-decoration-color: rgba(129, 140, 248, 0.6) !important;
+}
+
+html[data-theme="dark"] .html-document a:hover,
+html[data-theme="dark"] .tiptap a:hover {
+  color: #a5b4fc !important;
+  text-decoration-color: #a5b4fc !important;
+}
+
+html[data-theme="dark"] .html-document u,
+html[data-theme="dark"] .tiptap u,
+html[data-theme="dark"] .html-document ins,
+html[data-theme="dark"] .tiptap ins {
+  text-decoration: underline;
+  text-decoration-color: currentColor;
+}
+
+/* Invert/brighten dark text colors applied via inline styles in dark mode */
+html[data-theme="dark"] .html-document [style*="color:rgb(15, 23, 42)"],
+html[data-theme="dark"] .html-document [style*="color: rgb(15, 23, 42)"],
+html[data-theme="dark"] .html-document [style*="color:rgb(15,23,42)"],
+html[data-theme="dark"] .html-document [style*="color: #0f172a"],
+html[data-theme="dark"] .html-document [style*="color:#0f172a"],
+html[data-theme="dark"] .html-document [style*="color:rgb(30, 41, 59)"],
+html[data-theme="dark"] .html-document [style*="color: rgb(30, 41, 59)"],
+html[data-theme="dark"] .html-document [style*="color: #1e293b"],
+html[data-theme="dark"] .html-document [style*="color:#1e293b"],
+html[data-theme="dark"] .html-document [style*="color:rgb(51, 65, 85)"],
+html[data-theme="dark"] .html-document [style*="color: rgb(51, 65, 85)"],
+html[data-theme="dark"] .html-document [style*="color: #334155"],
+html[data-theme="dark"] .html-document [style*="color:#334155"],
+html[data-theme="dark"] .html-document [style*="color:rgb(71, 85, 105)"],
+html[data-theme="dark"] .html-document [style*="color: rgb(71, 85, 105)"],
+html[data-theme="dark"] .html-document [style*="color: #475569"],
+html[data-theme="dark"] .html-document [style*="color:#475569"],
+html[data-theme="dark"] .html-document [style*="color:rgb(0, 0, 0)"],
+html[data-theme="dark"] .html-document [style*="color: rgb(0, 0, 0)"],
+html[data-theme="dark"] .html-document [style*="color: #000000"],
+html[data-theme="dark"] .html-document [style*="color:#000000"],
+html[data-theme="dark"] .html-document [style*="color: black"],
+html[data-theme="dark"] .html-document [style*="color:black"],
+html[data-theme="dark"] .tiptap [style*="color:rgb(15, 23, 42)"],
+html[data-theme="dark"] .tiptap [style*="color: rgb(15, 23, 42)"],
+html[data-theme="dark"] .tiptap [style*="color:rgb(15,23,42)"],
+html[data-theme="dark"] .tiptap [style*="color: #0f172a"],
+html[data-theme="dark"] .tiptap [style*="color:#0f172a"],
+html[data-theme="dark"] .tiptap [style*="color:rgb(30, 41, 59)"],
+html[data-theme="dark"] .tiptap [style*="color: rgb(30, 41, 59)"],
+html[data-theme="dark"] .tiptap [style*="color: #1e293b"],
+html[data-theme="dark"] .tiptap [style*="color:#1e293b"],
+html[data-theme="dark"] .tiptap [style*="color:rgb(51, 65, 85)"],
+html[data-theme="dark"] .tiptap [style*="color: rgb(51, 65, 85)"],
+html[data-theme="dark"] .tiptap [style*="color: #334155"],
+html[data-theme="dark"] .tiptap [style*="color:#334155"],
+html[data-theme="dark"] .tiptap [style*="color:rgb(71, 85, 105)"],
+html[data-theme="dark"] .tiptap [style*="color: rgb(71, 85, 105)"],
+html[data-theme="dark"] .tiptap [style*="color: #475569"],
+html[data-theme="dark"] .tiptap [style*="color:#475569"],
+html[data-theme="dark"] .tiptap [style*="color:rgb(0, 0, 0)"],
+html[data-theme="dark"] .tiptap [style*="color: rgb(0, 0, 0)"],
+html[data-theme="dark"] .tiptap [style*="color: #000000"],
+html[data-theme="dark"] .tiptap [style*="color:#000000"],
+html[data-theme="dark"] .tiptap [style*="color: black"],
+html[data-theme="dark"] .tiptap [style*="color:black"] {
+  color: #f1f5f9 !important;
 }

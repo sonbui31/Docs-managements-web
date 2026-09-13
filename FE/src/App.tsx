@@ -1144,7 +1144,6 @@ function App() {
         onClick={toggleAppTheme}
       >
         {isDark ? <Sun size={15} /> : <Moon size={15} />}
-        <span>{isDark ? "Sáng" : "Tối"}</span>
       </button>
     );
   }

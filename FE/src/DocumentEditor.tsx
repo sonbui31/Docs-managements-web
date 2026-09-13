@@ -69,7 +69,7 @@ type DocumentEditorProps = {
   onUploadImage?: (file: File) => Promise<string>;
 };
 
-const TEXT_COLORS = ["#0f172a", "#475569", "#dc2626", "#d97706", "#059669", "#2563eb", "#7c3aed"];
+const TEXT_COLORS = ["#0f172a", "#475569", "#f8fafc", "#dc2626", "#d97706", "#059669", "#2563eb", "#7c3aed"];
 const HIGHLIGHT_COLORS = ["#fef3c7", "#fee2e2", "#dcfce7", "#dbeafe", "#ede9fe", "#f1f5f9"];
 const FONT_SIZES = ["12", "14", "16", "18", "20", "24", "28", "32"];
 const AUTO_SAVE_DELAY_MS = 400;
