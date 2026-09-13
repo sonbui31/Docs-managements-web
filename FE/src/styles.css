@@ -25352,3 +25352,43 @@ html[data-theme="dark"] .confirm-modal-icon {
   color: #fca5a5 !important;
   border: 1px solid rgba(239, 68, 68, 0.35) !important;
 }
+
+
+/* ── Document Row & Comment Badges Dark Mode Overrides ─────────── */
+html[data-theme="dark"] .doc-comments-badge {
+  background: rgba(249, 115, 22, 0.18) !important;
+  border: 1px solid rgba(251, 146, 60, 0.42) !important;
+  color: #fdba74 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25) !important;
+}
+
+html[data-theme="dark"] .document-row:hover .doc-comments-badge,
+html[data-theme="dark"] .document-row.selected .doc-comments-badge {
+  background: rgba(249, 115, 22, 0.28) !important;
+  border-color: rgba(251, 146, 60, 0.6) !important;
+  color: #fed7aa !important;
+}
+
+html[data-theme="dark"] .comment-status-badge.open {
+  background: rgba(99, 102, 241, 0.2) !important;
+  border: 1px solid rgba(129, 140, 248, 0.45) !important;
+  color: #c7d2fe !important;
+}
+
+html[data-theme="dark"] .comment-status-badge.resolved {
+  background: rgba(16, 185, 129, 0.18) !important;
+  border: 1px solid rgba(52, 211, 153, 0.42) !important;
+  color: #86efac !important;
+}
+
+html[data-theme="dark"] .req-tag {
+  background: rgba(148, 163, 184, 0.16) !important;
+  border: 1px solid rgba(148, 163, 184, 0.32) !important;
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .comment-card:hover .req-tag {
+  background: rgba(148, 163, 184, 0.22) !important;
+  border-color: rgba(148, 163, 184, 0.45) !important;
+  color: #f1f5f9 !important;
+}
