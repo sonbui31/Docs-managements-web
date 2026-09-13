@@ -1238,6 +1238,36 @@ function App() {
   const [isNotificationMenuOpen, setIsNotificationMenuOpen] = useState<boolean>(false);
   const notificationCenterRef = useRef<HTMLDivElement>(null);
   const notificationMenuRef = useRef<HTMLDivElement>(null);
+  const [notiPosition, setNotiPosition] = useState<{ top: number; left: number }>({ top: 72, left: 16 });
+
+  const updateNotiPosition = useCallback(() => {
+    if (!notificationCenterRef.current) return;
+    const rect = notificationCenterRef.current.getBoundingClientRect();
+    const menuWidth = Math.min(400, window.innerWidth - 32);
+    const bellCenter = rect.left + rect.width / 2;
+    let left = bellCenter - menuWidth / 2;
+    if (left + menuWidth > window.innerWidth - 16) {
+      left = window.innerWidth - menuWidth - 16;
+    }
+    if (left < 16) {
+      left = 16;
+    }
+    setNotiPosition({
+      top: Math.round(rect.bottom + 8),
+      left: Math.round(left)
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!isNotificationMenuOpen) return;
+    updateNotiPosition();
+    window.addEventListener("resize", updateNotiPosition);
+    window.addEventListener("scroll", updateNotiPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateNotiPosition);
+      window.removeEventListener("scroll", updateNotiPosition, true);
+    };
+  }, [isNotificationMenuOpen, updateNotiPosition]);
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("all");
   const [documentTemplates, setDocumentTemplates] = useState<DocumentTemplate[]>([]);
   const [previewTemplate, setPreviewTemplate] = useState<DocumentTemplate | null>(null);
@@ -5751,13 +5781,24 @@ function App() {
           className={`notification-bell ${unreadCount > 0 ? "has-unread" : ""}`}
           type="button"
           title="Thông báo"
-          onClick={() => setIsNotificationMenuOpen((open) => !open)}
+          onClick={() => {
+            updateNotiPosition();
+            setIsNotificationMenuOpen((open) => !open);
+          }}
         >
           <Bell size={17} />
           {unreadCount > 0 && <span className="notification-badge">{unreadCount > 9 ? "9+" : unreadCount}</span>}
         </button>
         {isNotificationMenuOpen && createPortal(
-          <div className="notification-menu" ref={notificationMenuRef}>
+          <div
+            className="notification-menu"
+            ref={notificationMenuRef}
+            style={{
+              top: `${notiPosition.top}px`,
+              left: `${notiPosition.left}px`,
+              right: "auto"
+            }}
+          >
             <div className="notification-menu-header">
               <div>
                 <strong>Thông báo</strong>
