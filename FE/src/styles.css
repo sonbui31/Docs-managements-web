@@ -22292,3 +22292,220 @@ select option:checked {
     min-width: 0 !important;
   }
 }
+
+/* Mobile admin user table polish */
+@media (max-width: 760px) {
+  .admin-content {
+    overflow: visible !important;
+  }
+
+  .admin-table-container {
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    overflow: visible !important;
+  }
+
+  .admin-users-table,
+  .admin-users-table thead,
+  .admin-users-table tbody,
+  .admin-users-table tr,
+  .admin-users-table th,
+  .admin-users-table td {
+    display: block !important;
+  }
+
+  .admin-users-table {
+    min-width: 0 !important;
+    width: 100% !important;
+    border-collapse: separate !important;
+    border-spacing: 0 !important;
+  }
+
+  .admin-users-table thead {
+    display: none !important;
+  }
+
+  .admin-users-table tbody {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+  }
+
+  .admin-users-table tr.user-row {
+    position: relative;
+    display: grid !important;
+    grid-template-columns: 40px minmax(0, 1fr) !important;
+    gap: 8px 10px !important;
+    width: 100% !important;
+    padding: 12px !important;
+    border: 1px solid rgba(226, 232, 240, 0.95) !important;
+    border-radius: 14px !important;
+    background: #ffffff !important;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05) !important;
+    overflow: hidden !important;
+  }
+
+  .admin-users-table tr.user-row.is-admin {
+    background: linear-gradient(135deg, #ffffff 0%, #fafafe 100%) !important;
+  }
+
+  .admin-users-table td {
+    width: auto !important;
+    padding: 0 !important;
+    border-bottom: 0 !important;
+    min-width: 0 !important;
+  }
+
+  .admin-users-table td.col-stt {
+    grid-column: 1;
+    grid-row: 1;
+    width: 34px !important;
+    height: 34px;
+    align-self: start;
+    display: grid !important;
+    place-items: center;
+    border-radius: 10px;
+    background: #f8fafc;
+    color: #64748b;
+    font-size: 0.78rem !important;
+    padding: 0 !important;
+  }
+
+  .admin-users-table td.col-user {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0 !important;
+  }
+
+  .admin-users-table td.col-role,
+  .admin-users-table td.col-status,
+  .admin-users-table td.col-permissions,
+  .admin-users-table td.col-actions {
+    grid-column: 1 / -1;
+  }
+
+  .admin-users-table td.col-role,
+  .admin-users-table td.col-status {
+    display: grid !important;
+    grid-template-columns: 92px minmax(0, 1fr) !important;
+    align-items: center !important;
+    gap: 10px !important;
+  }
+
+  .admin-users-table td.col-role::before,
+  .admin-users-table td.col-status::before,
+  .admin-users-table td.col-permissions::before,
+  .admin-users-table td.col-actions::before {
+    content: attr(data-label);
+    color: #64748b;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .admin-users-table td.col-permissions {
+    display: grid !important;
+    gap: 8px !important;
+  }
+
+  .admin-users-table td.col-actions {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding-top: 2px !important;
+  }
+
+  .admin-users-table td.col-actions::before {
+    display: inline-flex;
+  }
+
+  .admin-users-table .user-profile {
+    width: 100% !important;
+    min-width: 0 !important;
+    gap: 10px !important;
+  }
+
+  .admin-users-table .user-avatar-circle {
+    width: 38px !important;
+    height: 38px !important;
+    font-size: 0.95rem !important;
+  }
+
+  .admin-users-table .user-details,
+  .admin-users-table .user-name-row {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .admin-users-table .user-name-row {
+    gap: 6px !important;
+    flex-wrap: wrap !important;
+  }
+
+  .admin-users-table .user-name,
+  .admin-users-table .user-email {
+    max-width: 100% !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  .col-role .custom-form-select-wrapper,
+  .col-status .custom-form-select-wrapper,
+  .col-role .form-select-trigger,
+  .col-status .form-select-trigger {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .permissions-chip-container {
+    max-width: 100% !important;
+    width: 100% !important;
+    gap: 6px !important;
+  }
+
+  .chip-tag {
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .chip-code {
+    min-width: 0 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  .no-assignments-text {
+    display: block !important;
+    width: 100% !important;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: #f8fafc;
+  }
+
+  .action-buttons-group {
+    justify-content: flex-end !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .admin-users-table tr.user-row {
+    grid-template-columns: 34px minmax(0, 1fr) !important;
+    padding: 10px !important;
+  }
+
+  .admin-users-table td.col-role,
+  .admin-users-table td.col-status {
+    grid-template-columns: 82px minmax(0, 1fr) !important;
+  }
+
+  .admin-users-table .user-avatar-circle {
+    width: 34px !important;
+    height: 34px !important;
+    font-size: 0.86rem !important;
+  }
+}

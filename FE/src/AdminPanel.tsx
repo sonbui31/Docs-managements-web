@@ -819,10 +819,10 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                   return (
                     <tr key={user.id} className={`user-row ${isSystemAdmin ? "is-admin" : ""}`}>
                       {/* STT */}
-                      <td className="col-stt">{index + 1}</td>
+                      <td className="col-stt" data-label="STT">{index + 1}</td>
 
                       {/* User Info */}
-                      <td className="col-user">
+                      <td className="col-user" data-label="Người dùng">
                         <div className="user-profile">
                           <div className={`user-avatar-circle role-${user.role.toLowerCase()}`}>
                             {initial}
@@ -842,7 +842,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                       </td>
 
                       {/* System Role */}
-                      <td className="col-role">
+                      <td className="col-role" data-label="Vai trò">
                         <div className="custom-form-select-wrapper select-role-wrapper" style={{ position: "relative" }}>
                           <button
                             type="button"
@@ -881,7 +881,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                       </td>
 
                       {/* Status */}
-                      <td className="col-status">
+                      <td className="col-status" data-label="Trạng thái">
                         <div className="custom-form-select-wrapper select-status-wrapper" style={{ position: "relative" }}>
                           <button
                             type="button"
@@ -920,7 +920,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                       </td>
 
                       {/* Projects & Documents Assigned Chips */}
-                      <td className="col-permissions">
+                      <td className="col-permissions" data-label="Quyền truy cập">
                         <div className="permissions-chip-container">
                           {/* Projects chips */}
                           {user.projects.map((proj) => (
@@ -953,7 +953,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                       </td>
 
                       {/* Actions */}
-                      <td className="col-actions text-right">
+                      <td className="col-actions text-right" data-label="Thao tác">
                         <div className="action-buttons-group">
                           {canManageAccounts && (
                             <button
