@@ -23962,7 +23962,7 @@ html[data-theme="dark"] .exec-item-row:hover *,
 html[data-theme="dark"] .exec-compact-list button:hover *,
 html[data-theme="dark"] .exec-feed-row:hover *,
 html[data-theme="dark"] .workboard-card:hover *:not(.workboard-card-badges):not(.workboard-card-badges *):not(.workitem-type):not(.workitem-priority),
-html[data-theme="dark"] .project-hub-card:hover *,
+html[data-theme="dark"] .project-hub-card:hover *:not(.project-hub-card-code):not(.project-hub-card-code *):not(.code-tag):not(.active-pill):not(.active-dot):not(.hub-card-btn):not(.hub-card-btn *):not(.project-hub-card-metrics):not(.project-hub-card-metrics *):not(.text-amber):not(.text-emerald):not(.text-indigo),
 html[data-theme="dark"] .admin-users-table tr.user-row:hover * {
   color: inherit;
 }
@@ -25391,4 +25391,300 @@ html[data-theme="dark"] .comment-card:hover .req-tag {
   background: rgba(148, 163, 184, 0.22) !important;
   border-color: rgba(148, 163, 184, 0.45) !important;
   color: #f1f5f9 !important;
+}
+
+/* ── Admin Create User & Role Cards Dark Overrides ── */
+html[data-theme="dark"] .role-option-card {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-medium) !important;
+  color: var(--text-primary) !important;
+}
+
+html[data-theme="dark"] .role-option-card:hover {
+  background: #1e293b !important;
+  border-color: var(--border-subtle) !important;
+}
+
+html[data-theme="dark"] .role-option-card.selected {
+  background: rgba(99, 102, 241, 0.2) !important;
+  border-color: #818cf8 !important;
+  box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.3) !important;
+}
+
+html[data-theme="dark"] .role-option-card strong {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .role-option-card small {
+  color: var(--text-secondary) !important;
+}
+
+html[data-theme="dark"] .role-option-card.selected strong {
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .role-option-card.selected small {
+  color: #c7d2fe !important;
+}
+
+html[data-theme="dark"] .project-role-card {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-medium) !important;
+  color: var(--text-primary) !important;
+}
+
+html[data-theme="dark"] .project-role-card:hover {
+  background: #1e293b !important;
+  border-color: #818cf8 !important;
+}
+
+html[data-theme="dark"] .project-role-card.selected {
+  background: rgba(99, 102, 241, 0.2) !important;
+  border-color: #818cf8 !important;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.25) !important;
+}
+
+html[data-theme="dark"] .btn-admin-secondary {
+  background: #1e293b !important;
+  border-color: #334155 !important;
+  color: var(--text-primary) !important;
+}
+
+html[data-theme="dark"] .btn-admin-secondary:hover {
+  background: #243149 !important;
+  border-color: #475569 !important;
+  color: #ffffff !important;
+}
+
+/* ── Import Modal Dark Overrides ── */
+html[data-theme="dark"] .modal-header .icon-btn,
+html[data-theme="dark"] .modal-close-btn {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: var(--text-secondary) !important;
+}
+
+html[data-theme="dark"] .modal-header .icon-btn:hover,
+html[data-theme="dark"] .modal-close-btn:hover {
+  background: rgba(255, 255, 255, 0.14) !important;
+  border-color: rgba(255, 255, 255, 0.25) !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .import-mode-card {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-medium) !important;
+  color: var(--text-primary) !important;
+}
+
+html[data-theme="dark"] .import-mode-card:hover:not(:disabled) {
+  background: #1e293b !important;
+  border-color: #818cf8 !important;
+}
+
+html[data-theme="dark"] .import-mode-card.selected {
+  background: rgba(99, 102, 241, 0.2) !important;
+  border-color: #818cf8 !important;
+  box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.3) !important;
+}
+
+html[data-theme="dark"] .import-mode-card strong {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .import-mode-card small {
+  color: var(--text-secondary) !important;
+}
+
+html[data-theme="dark"] .import-mode-card.selected strong {
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .import-mode-card.selected small {
+  color: #c7d2fe !important;
+}
+
+/* ── Project Hub & KPI Dark Overrides ── */
+html[data-theme="dark"] .hub-hero-card {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+html[data-theme="dark"] .hero-primary .hub-hero-icon {
+  background: rgba(99, 102, 241, 0.2) !important;
+  color: #818cf8 !important;
+}
+
+html[data-theme="dark"] .hero-emerald .hub-hero-icon {
+  background: rgba(16, 185, 129, 0.2) !important;
+  color: #34d399 !important;
+}
+
+html[data-theme="dark"] .hero-amber .hub-hero-icon {
+  background: rgba(245, 158, 11, 0.2) !important;
+  color: #fbbf24 !important;
+}
+
+html[data-theme="dark"] .hero-indigo .hub-hero-icon {
+  background: rgba(168, 85, 247, 0.2) !important;
+  color: #c084fc !important;
+}
+
+html[data-theme="dark"] .hub-hero-label {
+  color: var(--text-secondary) !important;
+}
+
+html[data-theme="dark"] .hub-hero-value {
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .hub-hero-sub-pill {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: var(--text-secondary) !important;
+}
+
+html[data-theme="dark"] .project-hub-card {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+html[data-theme="dark"] .project-hub-card-code .code-tag {
+  background: rgba(99, 102, 241, 0.2) !important;
+  color: #a5b4fc !important;
+  border-color: rgba(99, 102, 241, 0.35) !important;
+}
+
+html[data-theme="dark"] .project-hub-card-code .active-pill {
+  background: rgba(16, 185, 129, 0.16) !important;
+  color: #34d399 !important;
+  border-color: rgba(16, 185, 129, 0.35) !important;
+}
+
+html[data-theme="dark"] .hub-card-btn {
+  background: #1e293b !important;
+  border-color: #334155 !important;
+  color: var(--text-secondary) !important;
+}
+
+html[data-theme="dark"] .hub-card-btn:hover {
+  background: #334155 !important;
+  border-color: #475569 !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .hub-card-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.2) !important;
+  border-color: rgba(239, 68, 68, 0.4) !important;
+  color: #f87171 !important;
+}
+
+html[data-theme="dark"] .project-hub-card-body h3 {
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .project-hub-unit {
+  color: var(--text-secondary) !important;
+}
+
+html[data-theme="dark"] .project-hub-card-metrics {
+  background: rgba(15, 23, 42, 0.6) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme="dark"] .hub-metric-item {
+  color: var(--text-secondary) !important;
+}
+
+html[data-theme="dark"] .hub-metric-item strong {
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .project-card-progress-box {
+  background: rgba(15, 23, 42, 0.6) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme="dark"] .progress-box-header {
+  color: var(--text-secondary) !important;
+}
+
+html[data-theme="dark"] .progress-box-header strong {
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .progress-bar-track {
+  background: #334155 !important;
+}
+
+html[data-theme="dark"] .bulk-action-bar {
+  background: rgba(30, 41, 59, 0.7) !important;
+  border-color: rgba(99, 102, 241, 0.3) !important;
+  color: var(--text-primary) !important;
+}
+
+html[data-theme="dark"] .bulk-select-all {
+  color: var(--text-primary) !important;
+}
+
+html[data-theme="dark"] .member-avatar-chip {
+  border-color: var(--bg-surface) !important;
+}
+
+html[data-theme="dark"] .member-avatar-chip.more {
+  background: #334155 !important;
+  color: #cbd5e1 !important;
+}
+
+/* Card Hover Protection */
+html[data-theme="dark"] .project-hub-card:hover .project-hub-card-metrics {
+  background: rgba(15, 23, 42, 0.75) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+html[data-theme="dark"] .project-hub-card:hover .code-tag {
+  background: rgba(99, 102, 241, 0.28) !important;
+  color: #c7d2fe !important;
+  border-color: rgba(99, 102, 241, 0.5) !important;
+}
+
+html[data-theme="dark"] .project-hub-card:hover .active-pill {
+  background: rgba(16, 185, 129, 0.22) !important;
+  color: #6ee7b7 !important;
+  border-color: rgba(16, 185, 129, 0.5) !important;
+}
+
+html[data-theme="dark"] .project-hub-card:hover .hub-card-btn {
+  background: #1e293b !important;
+  border-color: #334155 !important;
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .project-hub-card:hover .hub-card-btn:hover {
+  background: #334155 !important;
+  border-color: #64748b !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .project-hub-card:hover .hub-metric-item {
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .project-hub-card:hover .hub-metric-item strong {
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .project-hub-card:hover .text-amber {
+  color: #fbbf24 !important;
+}
+
+html[data-theme="dark"] .project-hub-card:hover .text-emerald {
+  color: #34d399 !important;
+}
+
+html[data-theme="dark"] .project-hub-card:hover .text-indigo {
+  color: #818cf8 !important;
+}
+
+html[data-theme="dark"] .project-hub-card:hover .project-workitem-count {
+  color: #cbd5e1 !important;
 }
