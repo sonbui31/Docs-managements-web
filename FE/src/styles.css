@@ -2798,6 +2798,7 @@ button:active:not(:disabled) {
   position: fixed;
   inset: 0;
   z-index: 81;
+  display: none;
   background: transparent;
   cursor: default;
 }
@@ -23061,6 +23062,18 @@ select option:checked {
 
 /* Focus reading mode refinements */
 @media (max-width: 900px) {
+  .focus-reading-mode .library {
+    position: fixed;
+    top: 12px;
+    bottom: 12px;
+    left: 12px;
+    z-index: 82;
+    width: min(330px, calc(100vw - 24px));
+    height: auto !important;
+    max-height: none !important;
+    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
+  }
+
   .focus-reading-mode.focus-library-open .doc-toolbar,
   .focus-reading-mode.focus-library-open .reader-controls-bar,
   .focus-reading-mode.focus-library-open .doc-viewer-body {
@@ -23069,6 +23082,7 @@ select option:checked {
   }
 
   .focus-library-backdrop {
+    display: block;
     background: rgba(15, 23, 42, 0.18);
   }
 
@@ -24497,3 +24511,844 @@ html[data-theme="dark"] .diagram-zoom-modal-image-wrapper {
   border: 1px solid #26354d !important;
 }
 
+
+
+/* ═══════════════════════════════════════════════════════════════
+   COMPREHENSIVE DARK MODE POPUPS & MODALS OVERHAUL
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 1. All Modal Containers ────────────────────────────────── */
+html[data-theme="dark"] .modal-content,
+html[data-theme="dark"] .modal-card,
+html[data-theme="dark"] .admin-modal-card,
+html[data-theme="dark"] .share-modal-content,
+html[data-theme="dark"] .workitem-modal-content,
+html[data-theme="dark"] .workitem-detail-modal,
+html[data-theme="dark"] .workboard-config-modal,
+html[data-theme="dark"] .template-preview-modal,
+html[data-theme="dark"] .import-modal-content,
+html[data-theme="dark"] .document-edit-modal,
+html[data-theme="dark"] .create-doc-modal,
+html[data-theme="dark"] .export-modal-content,
+html[data-theme="dark"] .version-modal-content,
+html[data-theme="dark"] .publish-version-modal-content,
+html[data-theme="dark"] .my-tasks-popup {
+  background: #1a2333 !important;
+  border: 1px solid #334155 !important;
+  color: var(--text-primary) !important;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
+}
+
+/* ── 2. Modal Headers, Bodies & Footers ─────────────────────── */
+html[data-theme="dark"] .modal-header,
+html[data-theme="dark"] .share-modal-header,
+html[data-theme="dark"] .admin-modal-header,
+html[data-theme="dark"] .workitem-modal-content .modal-header {
+  background: #1e293b !important;
+  border-bottom: 1px solid #334155 !important;
+  color: var(--text-primary) !important;
+}
+
+html[data-theme="dark"] .modal-body,
+html[data-theme="dark"] .share-modal-body,
+html[data-theme="dark"] .workitem-modal-content .modal-body,
+html[data-theme="dark"] .workboard-config-modal .modal-body,
+html[data-theme="dark"] .template-preview-body,
+html[data-theme="dark"] .publish-version-body,
+html[data-theme="dark"] .my-tasks-body {
+  background: #162032 !important;
+  color: var(--text-primary) !important;
+}
+
+html[data-theme="dark"] .modal-footer,
+html[data-theme="dark"] .modal-actions,
+html[data-theme="dark"] .share-modal-footer,
+html[data-theme="dark"] .workitem-modal-content .modal-footer,
+html[data-theme="dark"] .workboard-config-modal .modal-footer,
+html[data-theme="dark"] .document-edit-modal .modal-footer {
+  background: #1e293b !important;
+  border-top: 1px solid #334155 !important;
+}
+
+html[data-theme="dark"] .workitem-modal-content .modal-header-badge,
+html[data-theme="dark"] .modal-header-badge {
+  background: rgba(124, 124, 246, 0.16) !important;
+  border: 1px solid rgba(124, 124, 246, 0.35) !important;
+  color: var(--accent-primary) !important;
+}
+
+html[data-theme="dark"] .workitem-modal-content .modal-header-badge.type-task {
+  background: rgba(59, 130, 246, 0.2) !important;
+  border-color: rgba(96, 165, 250, 0.4) !important;
+  color: #93c5fd !important;
+}
+
+html[data-theme="dark"] .workitem-modal-content .modal-header-badge.type-bug {
+  background: rgba(239, 68, 68, 0.22) !important;
+  border-color: rgba(248, 113, 113, 0.42) !important;
+  color: #fca5a5 !important;
+}
+
+html[data-theme="dark"] .workitem-modal-content .modal-header-badge.type-review {
+  background: rgba(139, 92, 246, 0.22) !important;
+  border-color: rgba(167, 139, 250, 0.42) !important;
+  color: #d8b4fe !important;
+}
+
+html[data-theme="dark"] .workitem-modal-content .modal-header-badge.type-change_request {
+  background: rgba(245, 158, 11, 0.22) !important;
+  border-color: rgba(251, 191, 36, 0.42) !important;
+  color: #fde047 !important;
+}
+
+html[data-theme="dark"] .workitem-modal-content .modal-header-badge.type-question {
+  background: rgba(16, 185, 129, 0.2) !important;
+  border-color: rgba(52, 211, 153, 0.4) !important;
+  color: #6ee7b7 !important;
+}
+
+html[data-theme="dark"] .modal-close-btn,
+html[data-theme="dark"] .share-close-btn,
+html[data-theme="dark"] .modal-header-actions .icon-btn {
+  background: #243149 !important;
+  border: 1px solid #334155 !important;
+  color: var(--text-secondary) !important;
+}
+
+html[data-theme="dark"] .modal-close-btn:hover,
+html[data-theme="dark"] .share-close-btn:hover,
+html[data-theme="dark"] .modal-header-actions .icon-btn:hover {
+  background: #334155 !important;
+  color: #ffffff !important;
+  border-color: #475569 !important;
+}
+
+/* ── 3. WorkItem Detail Modal Internals ──────────────────────── */
+html[data-theme="dark"] .summary-card {
+  background: #1e293b !important;
+  border-color: #334155 !important;
+}
+
+html[data-theme="dark"] .summary-card:hover {
+  background: #243149 !important;
+  border-color: #475569 !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25) !important;
+}
+
+html[data-theme="dark"] .summary-label {
+  color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .summary-value {
+  color: #f8fafc !important;
+}
+
+html[data-theme="dark"] .summary-card.priority-critical {
+  background: rgba(244, 63, 94, 0.16) !important;
+  border-color: rgba(251, 113, 133, 0.35) !important;
+}
+
+html[data-theme="dark"] .summary-card.priority-high {
+  background: rgba(245, 158, 11, 0.16) !important;
+  border-color: rgba(251, 191, 36, 0.35) !important;
+}
+
+html[data-theme="dark"] .summary-card.priority-medium {
+  background: rgba(14, 165, 233, 0.16) !important;
+  border-color: rgba(56, 189, 248, 0.35) !important;
+}
+
+html[data-theme="dark"] .summary-card.priority-low {
+  background: rgba(148, 163, 184, 0.14) !important;
+  border-color: rgba(148, 163, 184, 0.25) !important;
+}
+
+html[data-theme="dark"] .workitem-detail-block label,
+html[data-theme="dark"] .workitem-detail-block .block-label {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .description-content {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .workitem-source-note {
+  background: rgba(99, 102, 241, 0.14) !important;
+  border: 1px solid rgba(129, 140, 248, 0.32) !important;
+}
+
+html[data-theme="dark"] .workitem-source-note span {
+  color: #a5b4fc !important;
+}
+
+html[data-theme="dark"] .workitem-source-note strong {
+  color: #c7d2fe !important;
+}
+
+html[data-theme="dark"] .workitem-label-chip {
+  background: rgba(99, 102, 241, 0.18) !important;
+  border: 1px solid rgba(129, 140, 248, 0.35) !important;
+  color: #c7d2fe !important;
+}
+
+html[data-theme="dark"] .workitem-checklist-row {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  color: #e2e8f0 !important;
+}
+
+html[data-theme="dark"] .workitem-checklist-row.done {
+  background: rgba(15, 23, 42, 0.45) !important;
+  color: #64748b !important;
+}
+
+html[data-theme="dark"] .workitem-attachment-preview {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .workitem-attachment-preview:hover {
+  border-color: #6366f1 !important;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35) !important;
+}
+
+html[data-theme="dark"] .empty-collab-state {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .activity-count-badge {
+  background: rgba(99, 102, 241, 0.18) !important;
+  border: 1px solid rgba(129, 140, 248, 0.35) !important;
+  color: #a5b4fc !important;
+}
+
+html[data-theme="dark"] .btn-toggle-activity {
+  background: #243149 !important;
+  border: 1px solid #334155 !important;
+  color: #a5b4fc !important;
+}
+
+html[data-theme="dark"] .btn-toggle-activity:hover {
+  background: #334155 !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .workitem-activity-list {
+  background: #162032 !important;
+  border: 1px solid #334155 !important;
+}
+
+html[data-theme="dark"] .workitem-activity-row {
+  background: #1e293b !important;
+  border: 1px solid #243149 !important;
+}
+
+html[data-theme="dark"] .workitem-activity-row strong {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .workitem-activity-row small {
+  color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .activity-detail-text {
+  background: #243149 !important;
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .workitem-comments-section {
+  border-top-color: #334155 !important;
+}
+
+html[data-theme="dark"] .workitem-comments-section h4 {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .workitem-comments-section p {
+  color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .workitem-mention-editor {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .workitem-mention-editor:focus {
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25) !important;
+}
+
+html[data-theme="dark"] .workitem-mention-editor:empty::before {
+  color: #64748b !important;
+}
+
+html[data-theme="dark"] .workitem-mention-pill {
+  background: rgba(99, 102, 241, 0.22) !important;
+  border: 1px solid rgba(129, 140, 248, 0.4) !important;
+  color: #c7d2fe !important;
+}
+
+html[data-theme="dark"] .workitem-comment-card {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+}
+
+html[data-theme="dark"] .workitem-comment-card:hover {
+  border-color: #475569 !important;
+}
+
+/* ── 4. Workboard Config Modal ───────────────────────────────── */
+html[data-theme="dark"] .wbcfg-card {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+}
+
+html[data-theme="dark"] .wbcfg-card:hover {
+  border-color: #475569 !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24) !important;
+}
+
+html[data-theme="dark"] .wbcfg-card-header {
+  border-bottom: 1px solid #243149 !important;
+}
+
+html[data-theme="dark"] .wbcfg-order-num {
+  background: #243149 !important;
+  color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .wbcfg-card-title {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .wbcfg-card-body {
+  border-color: #243149 !important;
+}
+
+html[data-theme="dark"] .wbcfg-field>label {
+  color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .wbcfg-pill {
+  background: #243149 !important;
+  border: 1px solid #334155 !important;
+  color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .wbcfg-pill.active {
+  background: rgba(99, 102, 241, 0.2) !important;
+  border-color: rgba(129, 140, 248, 0.42) !important;
+  color: #c7d2fe !important;
+}
+
+html[data-theme="dark"] .wbcfg-move-btn {
+  background: #243149 !important;
+  border: 1px solid #334155 !important;
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .wbcfg-move-btn:hover:not(:disabled) {
+  background: #334155 !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .wbcfg-delete-btn {
+  background: rgba(239, 68, 68, 0.12) !important;
+  color: #fca5a5 !important;
+  border: 1px solid rgba(239, 68, 68, 0.3) !important;
+}
+
+html[data-theme="dark"] .wbcfg-delete-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.24) !important;
+  color: #f87171 !important;
+}
+
+html[data-theme="dark"] .wbcfg-add-btn {
+  background: rgba(99, 102, 241, 0.1) !important;
+  border: 1.5px dashed rgba(129, 140, 248, 0.38) !important;
+  color: #a5b4fc !important;
+}
+
+html[data-theme="dark"] .wbcfg-add-btn:hover {
+  background: rgba(99, 102, 241, 0.18) !important;
+  border-color: rgba(129, 140, 248, 0.55) !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .wbcfg-confirm-card {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+}
+
+html[data-theme="dark"] .wbcfg-confirm-card h4 {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .wbcfg-confirm-card p {
+  color: #94a3b8 !important;
+}
+
+/* ── 5. Notification Menu & Dropdowns ────────────────────────── */
+html[data-theme="dark"] .notification-menu {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.55) !important;
+}
+
+html[data-theme="dark"] .notification-menu-header {
+  background: #1e293b !important;
+  border-bottom: 1px solid #334155 !important;
+}
+
+html[data-theme="dark"] .notification-filter-row {
+  background: #162032 !important;
+  border-bottom: 1px solid #243149 !important;
+}
+
+html[data-theme="dark"] .notification-filter-row button {
+  background: #243149 !important;
+  border: 1px solid #334155 !important;
+  color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .notification-filter-row button:hover,
+html[data-theme="dark"] .notification-filter-row button.active {
+  background: rgba(99, 102, 241, 0.22) !important;
+  border-color: rgba(129, 140, 248, 0.45) !important;
+  color: #c7d2fe !important;
+}
+
+html[data-theme="dark"] .notification-filter-row button span {
+  background: #1e293b !important;
+  color: inherit !important;
+}
+
+html[data-theme="dark"] .notification-menu-item {
+  background: #1e293b !important;
+  border-bottom: 1px solid #243149 !important;
+  color: var(--text-primary) !important;
+}
+
+html[data-theme="dark"] .notification-menu-item:hover {
+  background: #243149 !important;
+}
+
+html[data-theme="dark"] .notification-menu-item.unread {
+  background: #1f2a3f !important;
+  border-left: 3px solid #6366f1 !important;
+}
+
+html[data-theme="dark"] .notification-menu-item.unread:hover {
+  background: #283750 !important;
+}
+
+html[data-theme="dark"] .notification-menu-content strong {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .notification-menu-content small {
+  color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .notification-menu-content em {
+  color: #64748b !important;
+}
+
+html[data-theme="dark"] .noti-item-icon {
+  background: #243149 !important;
+  border: 1px solid #334155 !important;
+}
+
+html[data-theme="dark"] .noti-icon-indigo {
+  background: rgba(99, 102, 241, 0.18) !important;
+  color: #a5b4fc !important;
+  border-color: rgba(129, 140, 248, 0.35) !important;
+}
+
+html[data-theme="dark"] .noti-icon-blue {
+  background: rgba(59, 130, 246, 0.18) !important;
+  color: #93c5fd !important;
+  border-color: rgba(96, 165, 250, 0.35) !important;
+}
+
+html[data-theme="dark"] .noti-icon-amber {
+  background: rgba(245, 158, 11, 0.18) !important;
+  color: #fde047 !important;
+  border-color: rgba(251, 191, 36, 0.35) !important;
+}
+
+html[data-theme="dark"] .noti-icon-emerald {
+  background: rgba(16, 185, 129, 0.18) !important;
+  color: #6ee7b7 !important;
+  border-color: rgba(52, 211, 153, 0.35) !important;
+}
+
+html[data-theme="dark"] .noti-icon-rose {
+  background: rgba(244, 63, 94, 0.18) !important;
+  color: #fda4af !important;
+  border-color: rgba(251, 113, 133, 0.35) !important;
+}
+
+html[data-theme="dark"] .notification-mark-all {
+  color: #818cf8 !important;
+  background: rgba(99, 102, 241, 0.14) !important;
+  border: 1px solid rgba(129, 140, 248, 0.3) !important;
+}
+
+html[data-theme="dark"] .notification-mark-all:hover {
+  background: rgba(99, 102, 241, 0.24) !important;
+  color: #ffffff !important;
+}
+
+/* ── 6. Dropdown Menus, Mentions, Tooltips & Pickers ─────────── */
+html[data-theme="dark"] .custom-header-select-menu,
+html[data-theme="dark"] .custom-select-dropdown-menu,
+html[data-theme="dark"] .custom-form-select-menu,
+html[data-theme="dark"] .custom-select-menu,
+html[data-theme="dark"] .workitem-assignee-menu {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5) !important;
+}
+
+html[data-theme="dark"] .dropdown-search-header {
+  background: #162032 !important;
+  border-bottom: 1px solid #334155 !important;
+}
+
+html[data-theme="dark"] .dropdown-search-header input {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .dropdown-option-row,
+html[data-theme="dark"] .dropdown-option-item,
+html[data-theme="dark"] .custom-select-option {
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .dropdown-option-row:hover,
+html[data-theme="dark"] .dropdown-option-item:hover,
+html[data-theme="dark"] .custom-select-option:hover {
+  background: #243149 !important;
+  color: #f8fafc !important;
+}
+
+html[data-theme="dark"] .dropdown-option-row.selected,
+html[data-theme="dark"] .dropdown-option-item.selected,
+html[data-theme="dark"] .custom-select-option.selected {
+  background: rgba(99, 102, 241, 0.2) !important;
+  color: #c7d2fe !important;
+}
+
+html[data-theme="dark"] .option-code-pill {
+  background: #243149 !important;
+  border: 1px solid #334155 !important;
+  color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .dropdown-option-row.selected .option-code-pill {
+  background: rgba(99, 102, 241, 0.32) !important;
+  border-color: rgba(129, 140, 248, 0.5) !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .workitem-mention-menu,
+html[data-theme="dark"] .document-mention-menu {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5) !important;
+}
+
+html[data-theme="dark"] .workitem-mention-menu button:hover,
+html[data-theme="dark"] .document-mention-menu button:hover {
+  background: #243149 !important;
+}
+
+html[data-theme="dark"] .workitem-mention-menu strong,
+html[data-theme="dark"] .document-mention-menu strong {
+  color: #c7d2fe !important;
+}
+
+html[data-theme="dark"] .workitem-mention-menu small,
+html[data-theme="dark"] .document-mention-menu small {
+  color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .datepicker-popup {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5) !important;
+}
+
+html[data-theme="dark"] .dp-month-label {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .dp-nav-btn {
+  background: #243149 !important;
+  border: 1px solid #334155 !important;
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .dp-nav-btn:hover {
+  background: #334155 !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .datepicker-day-names span {
+  color: #64748b !important;
+}
+
+html[data-theme="dark"] .dp-day {
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .dp-day:hover {
+  background: #243149 !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .dp-day.outside {
+  color: #475569 !important;
+}
+
+html[data-theme="dark"] .dp-day.outside:hover {
+  background: #1e293b !important;
+  color: #64748b !important;
+}
+
+html[data-theme="dark"] .dp-day.today {
+  background: rgba(99, 102, 241, 0.18) !important;
+  border: 1.5px solid rgba(129, 140, 248, 0.45) !important;
+  color: #c7d2fe !important;
+}
+
+html[data-theme="dark"] .datepicker-footer {
+  border-top: 1px solid #334155 !important;
+}
+
+html[data-theme="dark"] .dp-footer-btn {
+  color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .dp-footer-btn:hover {
+  color: #c7d2fe !important;
+}
+
+html[data-theme="dark"] .comment-menu-dropdown {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45) !important;
+}
+
+html[data-theme="dark"] .comment-menu-item {
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .comment-menu-item:hover {
+  background: #243149 !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="dark"] .comment-menu-item.danger {
+  color: #fca5a5 !important;
+}
+
+html[data-theme="dark"] .comment-menu-item.danger:hover {
+  background: rgba(239, 68, 68, 0.18) !important;
+  color: #f87171 !important;
+}
+
+html[data-theme="dark"] .members-tooltip-popup {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  color: #cbd5e1 !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45) !important;
+}
+
+html[data-theme="dark"] .my-tasks-item {
+  border-bottom: 1px solid #243149 !important;
+  color: #cbd5e1 !important;
+}
+
+html[data-theme="dark"] .my-tasks-item:hover {
+  background: #243149 !important;
+}
+
+html[data-theme="dark"] .my-tasks-item.expired,
+html[data-theme="dark"] .my-tasks-item.overdue {
+  background: rgba(239, 68, 68, 0.15) !important;
+  border-left: 3px solid #ef4444 !important;
+}
+
+html[data-theme="dark"] .my-tasks-item.due-soon {
+  background: rgba(245, 158, 11, 0.15) !important;
+  border-left: 3px solid #f59e0b !important;
+}
+
+
+/* ── 7. Additional Popup Details (Select Option Code, Board Config Card Header, Attachments Box, Assignee Menu) ── */
+html[data-theme="dark"] .select-option-code {
+  background: rgba(99, 102, 241, 0.22) !important;
+  color: #c7d2fe !important;
+  border: 1px solid rgba(129, 140, 248, 0.4) !important;
+}
+
+html[data-theme="dark"] .custom-select-option.selected .select-option-code {
+  background: rgba(99, 102, 241, 0.38) !important;
+  color: #ffffff !important;
+  border-color: rgba(129, 140, 248, 0.6) !important;
+}
+
+html[data-theme="dark"] .wbcfg-card-header {
+  background: #243149 !important;
+  border-bottom: 1px solid #334155 !important;
+}
+
+html[data-theme="dark"] .wbcfg-card {
+  background: #1a2333 !important;
+  border: 1px solid #334155 !important;
+}
+
+html[data-theme="dark"] .wbcfg-card-title {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .wbcfg-field .form-input,
+html[data-theme="dark"] .wbcfg-field .form-select {
+  background: #243149 !important;
+  border-color: #334155 !important;
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .workitem-attachments-box {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+}
+
+html[data-theme="dark"] .workitem-assignee-summary {
+  background: #243149 !important;
+  border: 1px solid #334155 !important;
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .workitem-assignee-summary:hover,
+html[data-theme="dark"] .workitem-assignee-summary:focus {
+  background: #283750 !important;
+  border-color: #6366f1 !important;
+}
+
+html[data-theme="dark"] .workitem-assignee-summary span {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .workitem-assignee-menu {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5) !important;
+}
+
+html[data-theme="dark"] .workitem-assignee-option {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .workitem-assignee-option:hover {
+  background: #243149 !important;
+}
+
+html[data-theme="dark"] .workitem-assignee-option strong {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .workitem-assignee-option small {
+  color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] .workitem-upload-btn {
+  background: rgba(99, 102, 241, 0.16) !important;
+  border: 1px solid rgba(129, 140, 248, 0.35) !important;
+  color: #a5b4fc !important;
+}
+
+html[data-theme="dark"] .workitem-upload-btn:hover {
+  background: rgba(99, 102, 241, 0.28) !important;
+  border-color: rgba(129, 140, 248, 0.55) !important;
+  color: #ffffff !important;
+}
+
+/* ── Template Cards in Create Doc Modal ── */
+html[data-theme="dark"] .template-card {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  color: var(--text-primary) !important;
+}
+
+html[data-theme="dark"] .template-card:hover,
+html[data-theme="dark"] .template-card:focus-within {
+  background: #243149 !important;
+  border-color: #475569 !important;
+}
+
+html[data-theme="dark"] .template-card-main {
+  color: var(--text-primary) !important;
+}
+
+html[data-theme="dark"] .template-card-title {
+  color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .template-card-actions {
+  border-top-color: #334155 !important;
+}
+
+html[data-theme="dark"] .template-card-action {
+  background: #243149 !important;
+  border-color: #334155 !important;
+  color: var(--text-secondary) !important;
+}
+
+html[data-theme="dark"] .template-card-action:hover {
+  background: #334155 !important;
+  color: #ffffff !important;
+}
+
+/* ── Share Modal Dark Overrides ── */
+html[data-theme="dark"] .share-invite-box {
+  background: #162032 !important;
+  border: 1px solid #334155 !important;
+}
+
+html[data-theme="dark"] .share-dropdown-menu {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5) !important;
+}
+
+html[data-theme="dark"] .share-user-chip {
+  background: rgba(99, 102, 241, 0.2) !important;
+  border: 1px solid rgba(129, 140, 248, 0.4) !important;
+  color: #c7d2fe !important;
+}
+
+html[data-theme="dark"] .share-user-card {
+  background: #1e293b !important;
+  border-color: #334155 !important;
+}
+
+html[data-theme="dark"] .share-user-card:hover {
+  background: #243149 !important;
+}
+
+html[data-theme="dark"] .confirm-modal-icon {
+  background: rgba(239, 68, 68, 0.16) !important;
+  color: #fca5a5 !important;
+  border: 1px solid rgba(239, 68, 68, 0.35) !important;
+}
