@@ -8991,7 +8991,9 @@ function App() {
                           <span className={isHighRisk ? "dash-risk-dot high" : "dash-risk-dot"} />
                           <div>
                             <span className="dash-list-name">{displayWorkItemTitle(item)}</span>
-                            <span className="dash-list-sub">{project?.code ?? "Project"}</span>
+                            {(project?.code?.trim() || project?.name?.slice(0, 4).toUpperCase()) && (
+                              <span className="dash-list-sub">{project?.code?.trim() || project?.name?.slice(0, 4).toUpperCase()}</span>
+                            )}
                           </div>
                         </div>
                         <div className="dash-list-row-right">
@@ -9025,7 +9027,9 @@ function App() {
                           <span className="dash-list-icon">{workItemTypeIcon(item.type)}</span>
                           <div>
                             <span className="dash-list-name">{displayWorkItemTitle(item)}</span>
-                            <span className="dash-list-sub">{project?.code ?? "Project"}</span>
+                            {(project?.code?.trim() || project?.name?.slice(0, 4).toUpperCase()) && (
+                              <span className="dash-list-sub">{project?.code?.trim() || project?.name?.slice(0, 4).toUpperCase()}</span>
+                            )}
                           </div>
                         </div>
                         <div className="dash-list-row-right">
@@ -9056,7 +9060,7 @@ function App() {
                     .map((project) => (
                       <button className="dash-list-row" type="button" key={project.id} onClick={() => { setSelectedProjectId(project.id); setActiveTabNav("review"); }}>
                         <div className="dash-list-row-left">
-                          <span className="dash-list-idx">{project.code?.slice(0, 3) ?? "#"}</span>
+                          <span className="dash-list-idx">{(project.code?.trim() ? project.code.slice(0, 3) : project.name?.slice(0, 3).toUpperCase()) || "#"}</span>
                           <span className="dash-list-name">{project.name}</span>
                         </div>
                         <div className="dash-list-row-right">
