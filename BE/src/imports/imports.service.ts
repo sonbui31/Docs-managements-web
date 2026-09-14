@@ -75,6 +75,7 @@ export class ImportsService {
             projectId: dto.projectId,
             title: dto.title ?? this.titleFromFileName(normalizedFile.originalname),
             type: dto.type ?? this.typeFromFileName(normalizedFile.originalname),
+            language: dto.language,
             htmlContent,
             sourceType: "imported",
             sourceFileName: normalizedFile.originalname
@@ -125,7 +126,7 @@ export class ImportsService {
     await this.permissions.assertDocumentRole(user, documentId, ["EDITOR", "MANAGER"]);
     const existingDocument = await this.prisma.document.findUnique({
       where: { id: documentId },
-      select: { id: true, projectId: true, title: true, type: true, currentVersion: true }
+      select: { id: true, projectId: true, title: true, type: true, language: true, currentVersion: true }
     });
     if (!existingDocument) throw new NotFoundException("Document not found");
     if (existingDocument.projectId !== dto.projectId) {
@@ -135,6 +136,7 @@ export class ImportsService {
     const nextVersion = this.nextVersion(existingDocument.currentVersion);
     const title = dto.title?.trim() || existingDocument.title;
     const type = dto.type?.trim() || existingDocument.type;
+    const language = dto.language?.trim().toLowerCase() || existingDocument.language;
 
     return this.prisma.$transaction(async (tx) => {
       const updatedDocument = await tx.document.update({
@@ -142,6 +144,7 @@ export class ImportsService {
         data: {
           title,
           type,
+          language,
           currentVersion: nextVersion,
           htmlContent,
           sourceType: "imported",
@@ -157,12 +160,14 @@ export class ImportsService {
         create: {
           documentId,
           version: nextVersion,
+          language,
           htmlContent,
           changeNote: `Re-imported from ${file.originalname}`,
           createdBy: user.name || user.email
         },
         update: {
           htmlContent,
+          language,
           changeNote: `Re-imported from ${file.originalname}`,
           createdBy: user.name || user.email
         }

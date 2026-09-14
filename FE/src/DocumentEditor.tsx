@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Heading from "@tiptap/extension-heading";
@@ -232,6 +233,7 @@ export function DocumentEditor({
   onHeadingsChange,
   onUploadImage
 }: DocumentEditorProps) {
+  const { t } = useTranslation();
   const [isDirty, setIsDirty] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [imageUploadError, setImageUploadError] = useState<string | null>(null);
@@ -980,7 +982,7 @@ export function DocumentEditor({
       {isLinkDialogOpen && (
         <div className="editor-confirm-overlay" onClick={() => setIsLinkDialogOpen(false)}>
           <div className="editor-confirm-dialog editor-input-dialog" onClick={(event) => event.stopPropagation()}>
-            <h3 className="editor-confirm-title">Chèn liên kết</h3>
+            <h3 className="editor-confirm-title">{t("editor.insertLink", "Chèn liên kết")}</h3>
             <input
               className="editor-dialog-input"
               value={linkUrl}
@@ -992,8 +994,8 @@ export function DocumentEditor({
               }}
             />
             <div className="editor-confirm-actions">
-              <button type="button" className="editor-confirm-cancel" onClick={() => setIsLinkDialogOpen(false)}>Hủy</button>
-              <button type="button" className="editor-confirm-btn editor-confirm-btn--primary" onClick={submitLink}>Áp dụng</button>
+              <button type="button" className="editor-confirm-cancel" onClick={() => setIsLinkDialogOpen(false)}>{t("common.cancel", "Hủy")}</button>
+              <button type="button" className="editor-confirm-btn editor-confirm-btn--primary" onClick={submitLink}>{t("common.apply", "Áp dụng")}</button>
             </div>
           </div>
         </div>
@@ -1002,7 +1004,7 @@ export function DocumentEditor({
       {isImageDialogOpen && (
         <div className="editor-confirm-overlay" onClick={() => setIsImageDialogOpen(false)}>
           <div className="editor-confirm-dialog editor-input-dialog" onClick={(event) => event.stopPropagation()}>
-            <h3 className="editor-confirm-title">Chèn ảnh bằng URL</h3>
+            <h3 className="editor-confirm-title">{t("editor.insertImageUrl", "Chèn ảnh bằng URL")}</h3>
             <input
               className="editor-dialog-input"
               value={imageUrl}
@@ -1014,8 +1016,8 @@ export function DocumentEditor({
               }}
             />
             <div className="editor-confirm-actions">
-              <button type="button" className="editor-confirm-cancel" onClick={() => setIsImageDialogOpen(false)}>Hủy</button>
-              <button type="button" className="editor-confirm-btn editor-confirm-btn--primary" onClick={submitImageUrl}>Chèn ảnh</button>
+              <button type="button" className="editor-confirm-cancel" onClick={() => setIsImageDialogOpen(false)}>{t("common.cancel", "Hủy")}</button>
+              <button type="button" className="editor-confirm-btn editor-confirm-btn--primary" onClick={submitImageUrl}>{t("editor.insertImage", "Chèn ảnh")}</button>
             </div>
           </div>
         </div>

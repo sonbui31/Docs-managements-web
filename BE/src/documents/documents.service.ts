@@ -5,9 +5,12 @@ import { AuthenticatedUser } from "../auth/auth.types";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { AutoTranslateDto } from "./dto/auto-translate.dto";
+import { CreateDocumentTranslationDto } from "./dto/create-document-translation.dto";
 import { CreateDocumentDto } from "./dto/create-document.dto";
 import { PublishDocumentVersionDto } from "./dto/publish-document-version.dto";
 import { TransferDocumentOwnerDto } from "./dto/transfer-document-owner.dto";
+import { UpdateDocumentTranslationDto } from "./dto/update-document-translation.dto";
 import { UpdateDocumentDto } from "./dto/update-document.dto";
 
 const documentRoleRank: Record<ProjectRole, number> = {
@@ -18,6 +21,11 @@ const documentRoleRank: Record<ProjectRole, number> = {
 };
 
 const EDIT_SESSION_TIMEOUT_MS = 2 * 60 * 1000;
+
+function normalizeLanguage(language?: string | null) {
+  const normalized = language?.trim().toLowerCase();
+  return normalized || "vi";
+}
 
 @Injectable()
 export class DocumentsService {
@@ -150,6 +158,7 @@ export class DocumentsService {
         where: { id },
         data: {
           currentVersion: nextVersion,
+          language: version.language,
           htmlContent: version.htmlContent
         },
         include: { _count: { select: { comments: { where: { status: "OPEN", parentId: null } }, versions: true } } }
@@ -159,6 +168,7 @@ export class DocumentsService {
         data: {
           documentId: id,
           version: nextVersion,
+          language: version.language,
           htmlContent: version.htmlContent,
           changeNote: `Restored from ${version.version}`,
           createdBy: user.name || user.email
@@ -200,6 +210,7 @@ export class DocumentsService {
         projectId: true,
         title: true,
         currentVersion: true,
+        language: true,
         htmlContent: true,
         sourceType: true,
         editingSession: true
@@ -229,10 +240,19 @@ export class DocumentsService {
         data: {
           documentId: id,
           version: nextVersion,
+          language: document.language,
           htmlContent: document.htmlContent,
           changeNote,
           createdBy: user.name || user.email
         }
+      });
+
+      await tx.documentTranslation.updateMany({
+        where: {
+          documentId: id,
+          language: { not: document.language }
+        },
+        data: { status: "OUTDATED" }
       });
 
       await tx.auditLog.create({
@@ -284,6 +304,7 @@ export class DocumentsService {
           projectId: dto.projectId,
           title: dto.title,
           type: dto.type,
+          language: normalizeLanguage(dto.language),
           htmlContent: cleanHtml,
           sourceType: dto.sourceType ?? "manual",
           sourceFileName: dto.sourceFileName,
@@ -299,6 +320,7 @@ export class DocumentsService {
         data: {
           documentId: document.id,
           version: document.currentVersion,
+          language: document.language,
           htmlContent: cleanHtml,
           changeNote: "Initial version",
           createdBy: user.name || user.email
@@ -332,6 +354,7 @@ export class DocumentsService {
         projectId: true,
         title: true,
         currentVersion: true,
+        language: true,
         sourceType: true,
         updatedAt: true,
         editingSession: true
@@ -357,11 +380,22 @@ export class DocumentsService {
         data: {
           title: dto.title?.trim(),
           type: dto.type?.trim(),
+          language: dto.language ? normalizeLanguage(dto.language) : undefined,
           status: dto.status,
           htmlContent: cleanHtml
         },
         include: { _count: { select: { comments: { where: { status: "OPEN", parentId: null } }, versions: true } } }
       });
+
+      if (hasContentUpdate || dto.language) {
+        await tx.documentTranslation.updateMany({
+          where: {
+            documentId: id,
+            language: { not: updatedDocument.language }
+          },
+          data: { status: "OUTDATED" }
+        });
+      }
 
       await tx.auditLog.create({
         data: {
@@ -396,6 +430,123 @@ export class DocumentsService {
       effectiveRole: await this.effectiveRoleForDocument(id, updatedDocument.projectId, user),
       editingSession: null
     };
+  }
+
+  async listTranslations(id: string, user: AuthenticatedUser) {
+    await this.permissions.assertDocumentRole(user, id, ["VIEWER"]);
+    await this.ensureDocumentExists(id);
+
+    return this.prisma.documentTranslation.findMany({
+      where: { documentId: id },
+      orderBy: [{ language: "asc" }, { updatedAt: "desc" }]
+    });
+  }
+
+  async findTranslation(id: string, language: string, user: AuthenticatedUser) {
+    await this.permissions.assertDocumentRole(user, id, ["VIEWER"]);
+    const translation = await this.prisma.documentTranslation.findUnique({
+      where: { documentId_language: { documentId: id, language: normalizeLanguage(language) } }
+    });
+    if (!translation) {
+      throw new NotFoundException("Document translation not found");
+    }
+    return translation;
+  }
+
+  async createTranslation(id: string, dto: CreateDocumentTranslationDto, user: AuthenticatedUser) {
+    await this.permissions.assertDocumentRole(user, id, ["EDITOR", "MANAGER"]);
+    const document = await this.prisma.document.findUnique({
+      where: { id },
+      select: { id: true, projectId: true, title: true, currentVersion: true, language: true }
+    });
+    if (!document) throw new NotFoundException("Document not found");
+
+    const language = normalizeLanguage(dto.language);
+    if (language === document.language) {
+      throw new BadRequestException("Ngôn ngữ bản dịch phải khác ngôn ngữ gốc của tài liệu.");
+    }
+
+    const cleanHtml = this.cleanHtml(dto.htmlContent);
+    const translation = await this.prisma.documentTranslation.create({
+      data: {
+        documentId: id,
+        language,
+        title: dto.title.trim(),
+        htmlContent: cleanHtml,
+        sourceVersion: dto.sourceVersion?.trim() || document.currentVersion,
+        status: dto.status ?? "DRAFT",
+        createdBy: user.name || user.email
+      }
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorId: user.id,
+        action: "DOCUMENT_TRANSLATION_CREATED",
+        entityType: "Document",
+        entityId: id,
+        metadata: { projectId: document.projectId, title: document.title, language }
+      }
+    });
+
+    return translation;
+  }
+
+  async updateTranslation(id: string, language: string, dto: UpdateDocumentTranslationDto, user: AuthenticatedUser) {
+    await this.permissions.assertDocumentRole(user, id, ["EDITOR", "MANAGER"]);
+    await this.ensureDocumentExists(id);
+
+    const normalizedLanguage = normalizeLanguage(language);
+    const existing = await this.prisma.documentTranslation.findUnique({
+      where: { documentId_language: { documentId: id, language: normalizedLanguage } }
+    });
+    if (!existing) throw new NotFoundException("Document translation not found");
+
+    const translation = await this.prisma.documentTranslation.update({
+      where: { documentId_language: { documentId: id, language: normalizedLanguage } },
+      data: {
+        title: dto.title?.trim(),
+        htmlContent: typeof dto.htmlContent === "string" ? this.cleanHtml(dto.htmlContent) : undefined,
+        sourceVersion: dto.sourceVersion?.trim(),
+        status: dto.status
+      }
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorId: user.id,
+        action: "DOCUMENT_TRANSLATION_UPDATED",
+        entityType: "Document",
+        entityId: id,
+        metadata: { language: normalizedLanguage, status: translation.status }
+      }
+    });
+
+    return translation;
+  }
+
+  async deleteTranslation(id: string, language: string, user: AuthenticatedUser) {
+    await this.permissions.assertDocumentRole(user, id, ["EDITOR", "MANAGER"]);
+    await this.ensureDocumentExists(id);
+
+    const normalizedLanguage = normalizeLanguage(language);
+    await this.prisma.documentTranslation.delete({
+      where: { documentId_language: { documentId: id, language: normalizedLanguage } }
+    }).catch(() => {
+      throw new NotFoundException("Document translation not found");
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorId: user.id,
+        action: "DOCUMENT_TRANSLATION_DELETED",
+        entityType: "Document",
+        entityId: id,
+        metadata: { language: normalizedLanguage }
+      }
+    });
+
+    return { ok: true };
   }
 
   async acquireEditSession(id: string, user: AuthenticatedUser) {
@@ -547,6 +698,17 @@ export class DocumentsService {
       await tx.document.delete({ where: { id } });
     });
     return { ok: true };
+  }
+
+  private async ensureDocumentExists(id: string) {
+    const document = await this.prisma.document.findUnique({
+      where: { id },
+      select: { id: true }
+    });
+    if (!document) {
+      throw new NotFoundException("Document not found");
+    }
+    return document;
   }
 
   private cleanHtml(html: string) {
@@ -780,5 +942,141 @@ export class DocumentsService {
         updatedAt: document.updatedAt
       });
     }
+  }
+
+  async autoTranslate(dto: AutoTranslateDto) {
+    const fromLang = dto.fromLang || "vi";
+    const toLang = dto.toLang || "en";
+    let translatedText = dto.text;
+    let translatedHtml = dto.htmlContent;
+
+    if (dto.text) {
+      translatedText = await this.translateSingleTextBE(dto.text, fromLang, toLang);
+    }
+    if (dto.htmlContent) {
+      translatedHtml = await this.translateHtmlContentBE(dto.htmlContent, fromLang, toLang);
+    }
+
+    return {
+      translatedText,
+      translatedHtml
+    };
+  }
+
+  private async translateSingleTextBE(text: string, fromLang: string = "vi", toLang: string = "en"): Promise<string> {
+    if (!text || !text.trim()) return text;
+    const trimmed = text.trim();
+
+    const dictMap: Record<string, string> = {
+      "Bối cảnh": "Background / Context",
+      "Người dùng thao tác": "User actions",
+      "Kết quả mong đợi": "Expected result",
+      "Điều kiện nghiệm thu": "Acceptance Criteria",
+      "Mở rộng quản lý học sinh": "Expanded student management",
+      "Mở rộng quản lý giáo viên": "Expanded teacher management",
+      "Sổ liên lạc, nhật ký chăm sóc, điểm thi.": "Contact books, care logs, test scores.",
+      "Bắt buộc": "Required",
+      "Bắt buộc/Nên có": "Required/Nice to have",
+      "Giới thiệu": "Introduction",
+      "Mục đích": "Purpose",
+      "Phạm vi": "Scope",
+      "Mô tả": "Description",
+      "Ưu tiên": "Priority",
+      "Trạng thái": "Status"
+    };
+
+    if (fromLang !== "en" && toLang === "en" && dictMap[trimmed]) {
+      return dictMap[trimmed];
+    }
+
+    // Google Translate dict-chrome-ex client
+    try {
+      const sl = fromLang === "auto" ? "auto" : fromLang;
+      const tl = toLang === "zh" ? "zh-CN" : toLang;
+      const url = `https://translate.googleapis.com/translate_a/single?client=dict-chrome-ex&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(trimmed)}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = (await res.json()) as any;
+        if (Array.isArray(data) && Array.isArray(data[0])) {
+          const translated = data[0]
+            .map((item: any) => item[0])
+            .filter(Boolean)
+            .join("");
+          if (translated && translated.trim() && translated.trim() !== trimmed) {
+            return translated;
+          }
+        }
+      }
+    } catch (err) {}
+
+    // Fallback: Google Translate gtx client
+    try {
+      const sl = fromLang === "auto" ? "auto" : fromLang;
+      const tl = toLang === "zh" ? "zh-CN" : toLang;
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(trimmed)}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = (await res.json()) as any;
+        if (Array.isArray(data) && Array.isArray(data[0])) {
+          const translated = data[0]
+            .map((item: any) => item[0])
+            .filter(Boolean)
+            .join("");
+          if (translated && translated.trim()) return translated;
+        }
+      }
+    } catch (err) {}
+
+    // Fallback: MyMemory Translation API
+    try {
+      const sl = fromLang === "auto" ? "vi" : fromLang;
+      const tl = toLang === "zh" ? "zh-CN" : toLang;
+      const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(trimmed)}&langpair=${sl}|${tl}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = (await res.json()) as any;
+        if (data?.responseData?.translatedText && data.responseData.translatedText.trim() !== trimmed) {
+          return data.responseData.translatedText;
+        }
+        if (data?.matches && data.matches.length > 0) {
+          const best = data.matches.find(
+            (m: any) => m.translation && m.translation.toLowerCase() !== trimmed.toLowerCase()
+          );
+          if (best?.translation) return best.translation;
+        }
+      }
+    } catch (err) {}
+
+    return text;
+  }
+
+  private async translateHtmlContentBE(htmlContent: string, fromLang: string = "vi", toLang: string = "en"): Promise<string> {
+    if (!htmlContent || !htmlContent.trim()) return htmlContent;
+
+    const matches: Array<{ full: string; text: string }> = [];
+    const regex = />([^<]+)</g;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(htmlContent)) !== null) {
+      const text = match[1];
+      if (text && text.trim().length > 0) {
+        matches.push({ full: match[0], text });
+      }
+    }
+
+    let translatedHtml = htmlContent;
+    const CONCURRENCY = 5;
+    for (let i = 0; i < matches.length; i += CONCURRENCY) {
+      const chunk = matches.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (m) => {
+          const translatedText = await this.translateSingleTextBE(m.text, fromLang, toLang);
+          if (translatedText && translatedText !== m.text) {
+            translatedHtml = translatedHtml.replace(m.full, `>${translatedText}<`);
+          }
+        })
+      );
+    }
+
+    return translatedHtml;
   }
 }

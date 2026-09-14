@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, Copy, FileText, FolderKanban, Search, Send, ShieldCheck, Trash2, X } from "lucide-react";
 import {
   assignUserToDocument,
@@ -24,18 +25,18 @@ type ShareAccessModalProps = {
   onToast: (type: "success" | "info" | "warning" | "error", title: string, message: string) => void;
 };
 
-const shareRoleLabels: Record<ProjectRole, { label: string; desc: string }> = {
-  VIEWER: { label: "Xem", desc: "Chỉ xem" },
-  REVIEWER: { label: "Bình luận", desc: "Xem và bình luận" },
-  EDITOR: { label: "Sửa", desc: "Chỉnh sửa nội dung" },
-  MANAGER: { label: "Quản lý", desc: "Quản lý và chia sẻ" }
+const shareRoleLabels: Record<ProjectRole, { labelKey: string; descKey: string }> = {
+  VIEWER: { labelKey: "roles.VIEWER", descKey: "share.viewerDesc" },
+  REVIEWER: { labelKey: "roles.REVIEWER", descKey: "share.reviewerDesc" },
+  EDITOR: { labelKey: "roles.EDITOR", descKey: "share.editorDesc" },
+  MANAGER: { labelKey: "roles.MANAGER", descKey: "share.managerDesc" }
 };
 
 const shareRoles = Object.keys(shareRoleLabels) as ProjectRole[];
 const globalRoleLabels: Record<ManagedUser["role"], string> = {
-  ADMIN: "Admin",
-  MANAGER: "Manager",
-  EMPLOYEE: "Nhân viên"
+  ADMIN: "common.admin",
+  MANAGER: "common.manager",
+  EMPLOYEE: "common.employee"
 };
 
 export function ShareAccessModal({
@@ -49,6 +50,7 @@ export function ShareAccessModal({
   onAccessChanged,
   onToast
 }: ShareAccessModalProps) {
+  const { t } = useTranslation();
   const [scope, setScope] = useState<ShareScope>(initialScope);
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(false);
@@ -82,7 +84,7 @@ export function ShareAccessModal({
     try {
       setUsers(await fetchShareUsers(nextScope, nextTargetId));
     } catch (error: any) {
-      onToast("error", "Không tải được danh sách người dùng", error?.message || "Vui lòng thử lại.");
+      onToast("error", "Error loading users", error?.message || "Please try again.");
       setUsers([]);
     } finally {
       setLoading(false);
@@ -91,7 +93,7 @@ export function ShareAccessModal({
 
   const targetId = scope === "document" ? documentId : projectId;
   const targetTitle = scope === "document" ? documentTitle : projectTitle;
-  const targetLabel = scope === "document" ? "tài liệu" : "dự án";
+  const targetLabel = scope === "document" ? t("share.thisDocumentTarget") : t("share.thisProjectTarget");
 
   const accessUsers = useMemo(() => {
     if (!targetId) return [];
@@ -137,10 +139,10 @@ export function ShareAccessModal({
       .filter((user) => !accessibleUserIds.has(user.id))
       .filter((user) => {
         if (!normalizedQuery) return true;
-        return `${user.name} ${user.email} ${user.role} ${globalRoleLabels[user.role]}`.toLowerCase().includes(normalizedQuery);
+        return `${user.name} ${user.email} ${user.role} ${t(globalRoleLabels[user.role] as any)}`.toLowerCase().includes(normalizedQuery);
       })
       .slice(0, 20);
-  }, [accessibleUserIds, query, users]);
+  }, [accessibleUserIds, query, t, users]);
 
   const selectedUsers = useMemo(
     () => users.filter((user) => selectedUserIds.includes(user.id)),
@@ -188,7 +190,7 @@ export function ShareAccessModal({
 
   async function handleShare() {
     if (!targetId || selectedUserIds.length === 0) {
-      onToast("warning", "Chưa chọn người nhận", "Hãy chọn ít nhất một người dùng để chia sẻ.");
+      onToast("warning", "No user selected", "Please select at least one user to share.");
       return;
     }
 
@@ -204,8 +206,8 @@ export function ShareAccessModal({
     setIsUserDropdownOpen(false);
     onToast(
       "info",
-      "Đã thêm vào danh sách chờ",
-      `Bấm Xong để cấp quyền ${selectedRoles.map((role) => shareRoleLabels[role].label).join(", ")} cho ${userCount} người.`
+      "Added to pending list",
+      `Click Done to grant ${selectedRoles.map((role) => t(shareRoleLabels[role].labelKey as any)).join(", ")} permissions to ${userCount} users.`
     );
   }
 
@@ -234,9 +236,9 @@ export function ShareAccessModal({
       });
       await loadUsers();
       await onAccessChanged?.(scope, targetId);
-      onToast("info", "Đã gỡ quyền", `Người dùng đã được gỡ khỏi ${targetLabel}.`);
+      onToast("info", "Permission removed", `User access removed from ${targetLabel}.`);
     } catch (error: any) {
-      onToast("error", "Không gỡ được quyền", error?.message || "Vui lòng thử lại.");
+      onToast("error", "Cannot remove permission", error?.message || "Please try again.");
     } finally {
       setSaving(false);
     }
@@ -244,7 +246,7 @@ export function ShareAccessModal({
 
   async function handleCopyLink() {
     await navigator.clipboard.writeText(window.location.href);
-    onToast("success", "Đã sao chép liên kết", "Bạn có thể gửi link này cho người đã được cấp quyền.");
+    onToast("success", t("share.linkCopied"), "You can send this link to members with access.");
   }
 
   async function handleDone() {
@@ -273,10 +275,10 @@ export function ShareAccessModal({
       setPendingRoleChanges({});
       await loadUsers();
       await onAccessChanged?.(scope, targetId);
-      onToast("success", "Đã cập nhật quyền", `Đã lưu ${newEntries.length + changedEntries.length} thay đổi quyền trên ${targetLabel}.`);
+      onToast("success", "Permissions updated", `Saved ${newEntries.length + changedEntries.length} permission changes for ${targetLabel}.`);
       onClose();
     } catch (error: any) {
-      onToast("error", "Không lưu được quyền", error?.message || "Vui lòng thử lại.");
+      onToast("error", "Cannot save permissions", error?.message || "Please try again.");
     } finally {
       setSaving(false);
     }
@@ -291,11 +293,11 @@ export function ShareAccessModal({
         <div className="share-modal-header">
           <div className="share-modal-title-area">
             <span className="share-modal-badge">
-              <ShieldCheck size={13} /> Chia sẻ quyền truy cập
+              <ShieldCheck size={13} /> {t("share.title")}
             </span>
-            <h3>Chia sẻ "{targetTitle}"</h3>
+            <h3>{scope === "document" ? t("share.shareDocument") : t("share.shareProject")} - "{targetTitle}"</h3>
           </div>
-          <button className="share-close-btn" type="button" onClick={onClose} title="Đóng">
+          <button className="share-close-btn" type="button" onClick={onClose} title={t("common.close")}>
             <X size={18} />
           </button>
         </div>
@@ -316,7 +318,7 @@ export function ShareAccessModal({
               disabled={!documentId || documentId === "empty-document"}
             >
               <FileText size={15} />
-              <span>Tài liệu này</span>
+              <span>{t("share.thisDocument")}</span>
             </button>
             <button
               type="button"
@@ -331,7 +333,7 @@ export function ShareAccessModal({
               disabled={!projectId}
             >
               <FolderKanban size={15} />
-              <span>Toàn dự án</span>
+              <span>{t("share.allProject")}</span>
             </button>
           </div>
         </div>
@@ -340,7 +342,7 @@ export function ShareAccessModal({
         <div className="share-modal-body">
           {/* Invite Card */}
           <div className="share-invite-box">
-            <label className="share-box-label">Thêm người dùng mới vào {targetLabel}</label>
+            <label className="share-box-label">{t("share.addUsersTo", { target: targetLabel })}</label>
             
             <div className="share-search-row">
               <div className="share-user-dropdown">
@@ -351,8 +353,8 @@ export function ShareAccessModal({
                 >
                   <span className="share-trigger-text">
                     {selectedUsers.length
-                      ? `Đã chọn ${selectedUsers.length} người dùng`
-                      : "Chọn một hoặc nhiều người dùng..."}
+                      ? t("share.selectedUsersCount", { count: selectedUsers.length })
+                      : t("share.selectUsersPlaceholder")}
                   </span>
                   <ChevronDown size={16} className={`chevron-icon ${isUserDropdownOpen ? "open" : ""}`} />
                 </button>
@@ -364,7 +366,7 @@ export function ShareAccessModal({
                       <input
                         value={query}
                         onChange={(event) => setQuery(event.target.value)}
-                        placeholder="Tìm theo tên hoặc email..."
+                        placeholder={t("share.searchByNameEmail")}
                         autoFocus
                       />
                       {query && (
@@ -376,9 +378,9 @@ export function ShareAccessModal({
 
                     <div className="share-candidate-list dropdown-list">
                       {loading ? (
-                        <div className="share-empty-state">Đang tải người dùng...</div>
+                        <div className="share-empty-state">{t("share.loadingUsers")}</div>
                       ) : candidateUsers.length === 0 ? (
-                        <div className="share-empty-state">Không có người dùng phù hợp để thêm.</div>
+                        <div className="share-empty-state">{t("share.noCandidateUsers")}</div>
                       ) : (
                         candidateUsers.map((user) => {
                           const selected = selectedUserIds.includes(user.id);
@@ -395,7 +397,7 @@ export function ShareAccessModal({
                                 <small>{user.email}</small>
                               </span>
                               <span className={`share-user-role-badge role-${user.role.toLowerCase()}`}>
-                                {globalRoleLabels[user.role]}
+                                {t(globalRoleLabels[user.role] as any)}
                               </span>
                               <span className={`share-checkbox ${selected ? "checked" : ""}`}>
                                 {selected && <Check size={12} />}
@@ -417,7 +419,7 @@ export function ShareAccessModal({
                   <div key={user.id} className="share-user-chip">
                     <span className="chip-avatar">{user.name.charAt(0).toUpperCase()}</span>
                     <span className="chip-name">{user.name}</span>
-                    <button type="button" onClick={() => toggleSelectedUser(user.id)} title="Bỏ chọn">
+                    <button type="button" onClick={() => toggleSelectedUser(user.id)} title="Deselect">
                       <X size={12} />
                     </button>
                   </div>
@@ -427,7 +429,7 @@ export function ShareAccessModal({
 
             {/* Role selection for invite */}
             <div className="share-role-selection">
-              <span className="role-select-label">Gán vai trò:</span>
+              <span className="role-select-label">{t("share.assignRole")}</span>
               <div className="share-role-checks compact">
                 {shareRoles.map((role) => (
                   <button
@@ -435,10 +437,10 @@ export function ShareAccessModal({
                     type="button"
                     className={`share-role-check role-${role.toLowerCase()} ${selectedRoles.includes(role) ? "selected" : ""}`}
                     onClick={() => toggleSelectedRole(role)}
-                    title={shareRoleLabels[role].desc}
+                    title={t(shareRoleLabels[role].descKey as any)}
                   >
                     {selectedRoles.includes(role) && <Check size={12} />}
-                    <span>{shareRoleLabels[role].label}</span>
+                    <span>{t(shareRoleLabels[role].labelKey as any)}</span>
                   </button>
                 ))}
               </div>
@@ -451,7 +453,7 @@ export function ShareAccessModal({
               disabled={saving || selectedUserIds.length === 0}
             >
               <Send size={15} />
-              <span>Thêm {selectedUserIds.length || 0} người</span>
+              <span>{t("share.addPeople", { count: selectedUserIds.length || 0 })}</span>
             </button>
           </div>
 
@@ -459,13 +461,13 @@ export function ShareAccessModal({
           <div className="share-access-section">
             <div className="share-section-title">
               <ShieldCheck size={16} />
-              <span>Quyền trực tiếp trên {targetLabel}</span>
+              <span>{t("share.directAccessOn", { target: targetLabel })}</span>
               <span className="share-count-badge">{accessUsers.length}</span>
             </div>
 
             <div className="share-access-list">
               {accessUsers.length === 0 ? (
-                <div className="share-empty-state">Chưa có quyền trực tiếp trên {targetLabel} này.</div>
+                <div className="share-empty-state">{t("share.noDirectAccess", { target: targetLabel })}</div>
               ) : (
 	                accessUsers.map(({ user, roles, isPendingNew }) => {
                     const draftRoles = isPendingNew ? roles : draftRolesFor(user.id, roles);
@@ -477,10 +479,10 @@ export function ShareAccessModal({
 	                      <span className="share-avatar">{user.name.charAt(0).toUpperCase()}</span>
 	                      <span className="share-user-copy">
 	                        <strong>{user.name}</strong>
-	                        <small>{user.email} · {globalRoleLabels[user.role]} · {hasPendingChange ? "Chờ lưu" : "Quyền trực tiếp"}</small>
+	                        <small>{user.email} · {t(globalRoleLabels[user.role] as any)} · {hasPendingChange ? t("share.pendingSave") : t("share.directPermission")}</small>
 	                      </span>
 	                      <span className={`share-user-role-badge role-${user.role.toLowerCase()}`}>
-	                        {globalRoleLabels[user.role]}
+	                        {t(globalRoleLabels[user.role] as any)}
 	                      </span>
 	                    </div>
 
@@ -499,10 +501,10 @@ export function ShareAccessModal({
                             }
                           }}
                           disabled={saving || (draftRoles.length === 1 && draftRoles.includes(nextRole))}
-                          title={shareRoleLabels[nextRole].desc}
+                          title={t(shareRoleLabels[nextRole].descKey as any)}
                         >
                           {draftRoles.includes(nextRole) && <Check size={12} />}
-                          <span>{shareRoleLabels[nextRole].label}</span>
+                          <span>{t(shareRoleLabels[nextRole].labelKey as any)}</span>
                         </button>
                       ))}
                     </div>
@@ -510,7 +512,7 @@ export function ShareAccessModal({
                     <button
                       type="button"
                       className="share-remove-btn"
-                      title="Gỡ quyền truy cập"
+                      title={t("share.removeUser")}
                       onClick={() => void handleRemove(user.id)}
                       disabled={saving}
                     >
@@ -527,13 +529,13 @@ export function ShareAccessModal({
             <div className="share-access-section inherited">
               <div className="share-section-title">
                 <FolderKanban size={16} />
-                <span>Kế thừa từ dự án</span>
+                <span>{t("share.inheritedFromProject")}</span>
                 <span className="share-count-badge">{inheritedAccessUsers.length}</span>
               </div>
 
               <div className="share-access-list">
                 {inheritedAccessUsers.length === 0 ? (
-                  <div className="share-empty-state">Không có quyền kế thừa từ dự án.</div>
+                  <div className="share-empty-state">{t("share.noInheritedAccess")}</div>
                 ) : (
 	                  inheritedAccessUsers.map(({ user, roles }) => (
 	                    <div key={user.id} className="share-access-item inherited">
@@ -541,16 +543,16 @@ export function ShareAccessModal({
 	                        <span className="share-avatar">{user.name.charAt(0).toUpperCase()}</span>
 	                        <span className="share-user-copy">
 	                          <strong>{user.name}</strong>
-	                          <small>{user.email} · {globalRoleLabels[user.role]} · Kế thừa từ project</small>
+	                          <small>{user.email} · {t(globalRoleLabels[user.role] as any)} · {t("share.inheritedFromProjectSub")}</small>
 	                        </span>
 	                        <span className={`share-user-role-badge role-${user.role.toLowerCase()}`}>
-	                          {globalRoleLabels[user.role]}
+	                          {t(globalRoleLabels[user.role] as any)}
 	                        </span>
 	                      </div>
                       <div className="share-inherited-roles">
                         {roles.map((role) => (
                           <span key={role} className={`share-role-badge role-${role.toLowerCase()}`}>
-                            {shareRoleLabels[role].label}
+                            {t(shareRoleLabels[role].labelKey as any)}
                           </span>
                         ))}
                       </div>
@@ -565,10 +567,10 @@ export function ShareAccessModal({
         {/* Modal Footer */}
         <div className="share-modal-footer">
           <button className="btn-secondary share-copy-btn" type="button" onClick={() => void handleCopyLink()}>
-            <Copy size={14} /> Sao chép liên kết
+            <Copy size={14} /> {t("share.copyLink")}
           </button>
           <button className="btn-primary share-done-btn" type="button" onClick={() => void handleDone()} disabled={saving}>
-            {saving ? "Đang lưu..." : "Xong"}
+            {saving ? t("common.saving") : t("share.done")}
           </button>
         </div>
       </div>

@@ -3,9 +3,12 @@ import { ApiTags } from "@nestjs/swagger";
 import { AuthenticatedUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
+import { AutoTranslateDto } from "./dto/auto-translate.dto";
+import { CreateDocumentTranslationDto } from "./dto/create-document-translation.dto";
 import { CreateDocumentDto } from "./dto/create-document.dto";
 import { PublishDocumentVersionDto } from "./dto/publish-document-version.dto";
 import { TransferDocumentOwnerDto } from "./dto/transfer-document-owner.dto";
+import { UpdateDocumentTranslationDto } from "./dto/update-document-translation.dto";
 import { UpdateDocumentDto } from "./dto/update-document.dto";
 import { DocumentsService } from "./documents.service";
 
@@ -28,6 +31,53 @@ export class DocumentsController {
   @Get(":id/versions")
   versions(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.documentsService.versions(id, user);
+  }
+
+  @Get(":id/translations")
+  listTranslations(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.documentsService.listTranslations(id, user);
+  }
+
+  @Get(":id/translations/:language")
+  findTranslation(
+    @Param("id") id: string,
+    @Param("language") language: string,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.documentsService.findTranslation(id, language, user);
+  }
+
+  @Post(":id/translations")
+  createTranslation(
+    @Param("id") id: string,
+    @Body() dto: CreateDocumentTranslationDto,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.documentsService.createTranslation(id, dto, user);
+  }
+
+  @Patch(":id/translations/:language")
+  updateTranslation(
+    @Param("id") id: string,
+    @Param("language") language: string,
+    @Body() dto: UpdateDocumentTranslationDto,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.documentsService.updateTranslation(id, language, dto, user);
+  }
+
+  @Delete(":id/translations/:language")
+  deleteTranslation(
+    @Param("id") id: string,
+    @Param("language") language: string,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.documentsService.deleteTranslation(id, language, user);
+  }
+
+  @Post("auto-translate")
+  autoTranslate(@Body() dto: AutoTranslateDto) {
+    return this.documentsService.autoTranslate(dto);
   }
 
   @Post(":id/versions")

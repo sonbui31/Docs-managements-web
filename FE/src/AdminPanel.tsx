@@ -23,6 +23,7 @@ import {
     X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { getErrorMessage } from "./apiError";
 import {
     assignUsersToDocuments,
@@ -78,7 +79,7 @@ export function SearchableMultiSelect({
   items,
   selectedIds,
   onChange,
-  placeholder = "Tìm kiếm..."
+  placeholder
 }: {
   label: string;
   items: MultiSelectItem[];
@@ -86,6 +87,7 @@ export function SearchableMultiSelect({
   onChange: (ids: string[]) => void;
   placeholder?: string;
 }) {
+  const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -127,16 +129,18 @@ export function SearchableMultiSelect({
           {label} <span className="selection-count">{selectedIds.length}</span>
         </label>
         <div className="quick-select-actions">
-          <button type="button" onClick={() => onChange(items.map((i) => i.id))}>Tất cả</button>
+          <button type="button" onClick={() => onChange(items.map((i) => i.id))}>{t("admin.selectAll", "Tất cả")}</button>
           <span className="dot-divider">•</span>
-          <button type="button" onClick={() => onChange([])}>Bỏ chọn</button>
+          <button type="button" onClick={() => onChange([])}>{t("admin.deselectAll", "Bỏ chọn")}</button>
         </div>
       </div>
 
       <div className="dropdown-select-container" ref={containerRef}>
         <div className={`dropdown-trigger-box ${isOpen ? "active" : ""}`} onClick={() => setIsOpen(!isOpen)}>
           <span className="trigger-text">
-            {selectedIds.length === 0 ? placeholder : `Đã chọn ${selectedIds.length} mục trong danh sách`}
+            {selectedIds.length === 0
+              ? (placeholder || t("admin.typeToSearch", "Gõ để tìm kiếm..."))
+              : t("admin.selectedItemsCount", { count: selectedIds.length, defaultValue: `Đã chọn ${selectedIds.length} mục trong danh sách` })}
           </span>
           <ChevronDown size={16} className={`trigger-chevron ${isOpen ? "rotate" : ""}`} />
         </div>
@@ -147,7 +151,7 @@ export function SearchableMultiSelect({
               <Search size={14} className="search-icon" />
               <input
                 type="text"
-                placeholder="Gõ để tìm kiếm..."
+                placeholder={t("admin.typeToSearch", "Gõ để tìm kiếm...")}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 autoFocus
@@ -161,7 +165,7 @@ export function SearchableMultiSelect({
 
             <div className="dropdown-options-container">
               {filteredItems.length === 0 ? (
-                <div className="dropdown-no-results">Không tìm thấy kết quả phù hợp</div>
+                <div className="dropdown-no-results">{t("admin.noMatchingResults", "Không tìm thấy kết quả phù hợp")}</div>
               ) : (
                 filteredItems.map((item) => {
                   const isSelected = selectedIds.includes(item.id);
@@ -217,6 +221,7 @@ export function SearchableMultiSelect({
 }
 
 export function AdminPanel({ projects, documents, currentUser, onToast, triggerCreate, triggerRefresh }: Props) {
+  const { t } = useTranslation();
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(false);
   const canManageAccounts = currentUser.role === "ADMIN";
@@ -1168,21 +1173,21 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                   <UserPlus size={20} />
                 </div>
                 <div className="modal-header-text">
-                  <h3>Tạo Tài khoản Người dùng Mới</h3>
-                  <p>Khởi tạo tài khoản hệ thống cho thành viên hoặc quản lý</p>
+                  <h3>{t("admin.createUserModalTitle", "Tạo Tài khoản Người dùng Mới")}</h3>
+                  <p>{t("admin.createUserModalSub", "Khởi tạo tài khoản hệ thống cho thành viên hoặc quản lý")}</p>
                 </div>
               </div>
-              <button type="button" className="modal-close-btn" onClick={closeCreateUserModal} title="Đóng">
+              <button type="button" className="modal-close-btn" onClick={closeCreateUserModal} title={t("common.close", "Đóng")}>
                 <X size={18} />
               </button>
             </div>
 
             <div className="modal-body">
               <div className="form-group">
-                <label>Họ và Tên <span className="req">*</span></label>
+                <label>{t("admin.fullName", "Họ và Tên")} <span className="req">*</span></label>
                 <input
                   type="text"
-                  placeholder="Ví dụ: Nguyễn Văn A"
+                  placeholder={t("admin.fullNamePlaceholder", "Ví dụ: Nguyễn Văn A")}
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   autoFocus
@@ -1190,7 +1195,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
               </div>
 
               <div className="form-group">
-                <label>Email Đăng nhập <span className="req">*</span></label>
+                <label>{t("admin.loginEmail", "Email Đăng nhập")} <span className="req">*</span></label>
                 <input
                   type="email"
                   placeholder="name@company.com"
@@ -1201,15 +1206,15 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
 
               <div className="form-group">
                 <div className="label-with-action">
-                  <label>Mật khẩu Khởi tạo <span className="req">*</span></label>
+                  <label>{t("admin.initialPassword", "Mật khẩu Khởi tạo")} <span className="req">*</span></label>
                   <button type="button" className="btn-inline-text" onClick={generateRandomPassword}>
-                    <Key size={13} /> Tạo ngẫu nhiên
+                    <Key size={13} /> {t("admin.generateRandom", "Tạo ngẫu nhiên")}
                   </button>
                 </div>
                 <div className="password-input-wrapper">
                   <input
                     type={showPassword ? "text" : "password"}
-                    placeholder="Tối thiểu 6 ký tự"
+                    placeholder={t("admin.min6Chars", "Tối thiểu 6 ký tự")}
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                   />
@@ -1224,7 +1229,7 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
               </div>
 
               <div className="form-group">
-                <label>Vai trò Hệ thống</label>
+                <label>{t("admin.systemRole", "Vai trò Hệ thống")}</label>
                 <div className="role-cards-selector">
                   <label className={`role-option-card ${newRole === "EMPLOYEE" ? "selected" : ""}`}>
                     <input
@@ -1235,8 +1240,8 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                       onChange={() => setNewRole("EMPLOYEE")}
                     />
                     <div>
-                      <strong>Nhân viên (Employee)</strong>
-                      <small>Xem và thao tác trên các dự án/tài liệu được phân quyền</small>
+                      <strong>{t("admin.employeeRole", "Nhân viên (Employee)")}</strong>
+                      <small>{t("admin.employeeRoleDesc", "Xem và thao tác trên các dự án/tài liệu được phân quyền")}</small>
                     </div>
                   </label>
 
@@ -1249,8 +1254,8 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                       onChange={() => setNewRole("MANAGER")}
                     />
                     <div>
-                      <strong>Quản lý (Manager)</strong>
-                      <small>Quản lý nội dung, duyệt yêu cầu & gán quyền thành viên</small>
+                      <strong>{t("admin.managerRole", "Quản lý (Manager)")}</strong>
+                      <small>{t("admin.managerRoleDesc", "Quản lý nội dung, duyệt yêu cầu & gán quyền thành viên")}</small>
                     </div>
                   </label>
 
@@ -1263,8 +1268,8 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                       onChange={() => setNewRole("ADMIN")}
                     />
                     <div>
-                      <strong>Quản trị viên (Admin)</strong>
-                      <small>Toàn quyền cấu hình hệ thống, người dùng và phân quyền</small>
+                      <strong>{t("admin.adminRole", "Quản trị viên (Admin)")}</strong>
+                      <small>{t("admin.adminRoleDesc", "Toàn quyền cấu hình hệ thống, người dùng và phân quyền")}</small>
                     </div>
                   </label>
                 </div>
@@ -1273,10 +1278,10 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
 
             <div className="modal-footer">
               <button type="button" className="btn-admin-secondary" onClick={closeCreateUserModal}>
-                Hủy bỏ
+                {t("common.cancel", "Hủy bỏ")}
               </button>
               <button type="button" className="btn-admin-primary" onClick={() => void handleCreateUser()}>
-                <UserPlus size={16} /> Tạo tài khoản
+                <UserPlus size={16} /> {t("admin.createAccountBtn", "Tạo tài khoản")}
               </button>
             </div>
           </div>
@@ -1293,11 +1298,11 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                   <FolderKanban size={20} />
                 </div>
                 <div className="modal-header-text">
-                  <h3>Phân quyền Trực tiếp trên Dự án</h3>
-                  <p>Cấp quyền truy cập dự án cụ thể cho người dùng</p>
+                  <h3>{t("admin.assignProjectModalTitle", "Phân quyền Trực tiếp trên Dự án")}</h3>
+                  <p>{t("admin.assignProjectModalSub", "Cấp quyền truy cập dự án cụ thể cho người dùng")}</p>
                 </div>
               </div>
-              <button type="button" className="modal-close-btn" onClick={closeAssignProjectModal} title="Đóng">
+              <button type="button" className="modal-close-btn" onClick={closeAssignProjectModal} title={t("common.close", "Đóng")}>
                 <X size={18} />
               </button>
             </div>
@@ -1305,8 +1310,8 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
             <div className="modal-body">
               {/* User Searchable Dropdown */}
               <SearchableMultiSelect
-                label="Chọn Người dùng"
-                placeholder="Tìm kiếm người dùng theo tên, email..."
+                label={t("admin.selectUser", "Chọn Người dùng")}
+                placeholder={t("admin.searchUserPlaceholder", "Tìm kiếm người dùng theo tên, email...")}
                 items={userSelectItems}
                 selectedIds={assignUserIds}
                 onChange={setAssignUserIds}
@@ -1314,15 +1319,15 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
 
               {/* Project Searchable Dropdown */}
               <SearchableMultiSelect
-                label="Chọn Dự án"
-                placeholder="Tìm kiếm dự án theo tên, mã..."
+                label={t("admin.selectProject", "Chọn Dự án")}
+                placeholder={t("admin.searchProjectPlaceholder", "Tìm kiếm dự án theo tên, mã...")}
                 items={projectSelectItems}
                 selectedIds={assignProjectIds}
                 onChange={setAssignProjectIds}
               />
 
               <div className="form-group">
-                <label>Quyền hạn trên Dự án <span className="selection-count">{assignRoles.length}</span></label>
+                <label>{t("admin.projectPermissions", "Quyền hạn trên Dự án")} <span className="selection-count">{assignRoles.length}</span></label>
                 <div className="project-role-grid">
                   {(Object.keys(projectRoleLabels) as ProjectRole[]).map((rKey) => {
                     const isSelected = assignRoles.includes(rKey);
@@ -1352,10 +1357,10 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
 
             <div className="modal-footer">
               <button type="button" className="btn-admin-secondary" onClick={closeAssignProjectModal}>
-                Hủy bỏ
+                {t("common.cancel", "Hủy bỏ")}
               </button>
               <button type="button" className="btn-admin-primary" onClick={() => void handleAssignProject()}>
-                <Check size={16} /> Lưu phân quyền Dự án
+                <Check size={16} /> {t("admin.saveProjectPermissions", "Lưu phân quyền Dự án")}
               </button>
             </div>
           </div>
@@ -1372,11 +1377,11 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                   <FileText size={20} />
                 </div>
                 <div className="modal-header-text">
-                  <h3>Phân quyền Riêng biệt trên Tài liệu</h3>
-                  <p>Quyền tài liệu riêng có độ ưu tiên cao hơn quyền dự án chung</p>
+                  <h3>{t("admin.assignDocModalTitle", "Phân quyền Riêng biệt trên Tài liệu")}</h3>
+                  <p>{t("admin.assignDocModalSub", "Quyền tài liệu riêng có độ ưu tiên cao hơn quyền dự án chung")}</p>
                 </div>
               </div>
-              <button type="button" className="modal-close-btn" onClick={closeAssignDocumentModal} title="Đóng">
+              <button type="button" className="modal-close-btn" onClick={closeAssignDocumentModal} title={t("common.close", "Đóng")}>
                 <X size={18} />
               </button>
             </div>
@@ -1384,8 +1389,8 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
             <div className="modal-body">
               {/* User Searchable Dropdown */}
               <SearchableMultiSelect
-                label="Chọn Người dùng"
-                placeholder="Tìm kiếm người dùng theo tên, email..."
+                label={t("admin.selectUser", "Chọn Người dùng")}
+                placeholder={t("admin.searchUserPlaceholder", "Tìm kiếm người dùng theo tên, email...")}
                 items={userSelectItems}
                 selectedIds={assignDocUserIds}
                 onChange={setAssignDocUserIds}
@@ -1393,15 +1398,15 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
 
               {/* Document Searchable Dropdown */}
               <SearchableMultiSelect
-                label="Chọn Tài liệu"
-                placeholder="Tìm kiếm tài liệu theo tên, mã..."
+                label={t("admin.selectDoc", "Chọn Tài liệu")}
+                placeholder={t("admin.searchDocPlaceholder", "Tìm kiếm tài liệu theo tên, mã...")}
                 items={documentSelectItems}
                 selectedIds={assignDocIds}
                 onChange={setAssignDocIds}
               />
 
               <div className="form-group">
-                <label>Quyền hạn trên Tài liệu <span className="selection-count">{assignDocRoles.length}</span></label>
+                <label>{t("admin.docPermissions", "Quyền hạn trên Tài liệu")} <span className="selection-count">{assignDocRoles.length}</span></label>
                 <div className="project-role-grid">
                   {(Object.keys(projectRoleLabels) as ProjectRole[]).map((rKey) => {
                     const isSelected = assignDocRoles.includes(rKey);
@@ -1431,10 +1436,10 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
 
             <div className="modal-footer">
               <button type="button" className="btn-admin-secondary" onClick={closeAssignDocumentModal}>
-                Hủy bỏ
+                {t("common.cancel", "Hủy bỏ")}
               </button>
               <button type="button" className="btn-admin-primary" onClick={() => void handleAssignDocument()}>
-                <Check size={16} /> Lưu quyền Tài liệu
+                <Check size={16} /> {t("admin.saveDocPermissions", "Lưu quyền Tài liệu")}
               </button>
             </div>
           </div>
@@ -1451,34 +1456,38 @@ export function AdminPanel({ projects, documents, currentUser, onToast, triggerC
                   <ShieldAlert size={20} />
                 </div>
                 <div className="modal-header-text">
-                  <h3>Xác nhận Khóa / Vô hiệu hóa</h3>
-                  <p>Tài khoản người dùng sẽ bị vô hiệu hóa truy cập</p>
+                  <h3>{t("admin.confirmDisableTitle", "Xác nhận Khóa / Vô hiệu hóa")}</h3>
+                  <p>{t("admin.confirmDisableSub", "Tài khoản người dùng sẽ bị vô hiệu hóa truy cập")}</p>
                 </div>
               </div>
-              <button type="button" className="modal-close-btn" onClick={() => setDeletingUser(null)} title="Đóng">
+              <button type="button" className="modal-close-btn" onClick={() => setDeletingUser(null)} title={t("common.close", "Đóng")}>
                 <X size={18} />
               </button>
             </div>
 
             <div className="modal-body">
               <p className="confirm-text">
-                Bạn có chắc chắn muốn vô hiệu hóa tài khoản <strong>{deletingUser.name}</strong> ({deletingUser.email})?
+                {t("admin.confirmDisableMsg", {
+                  name: deletingUser.name,
+                  email: deletingUser.email,
+                  defaultValue: `Bạn có chắc chắn muốn vô hiệu hóa tài khoản ${deletingUser.name} (${deletingUser.email})?`
+                })}
               </p>
               <p className="confirm-subtext">
-                Tài khoản sẽ bị gỡ quyền đăng nhập nhưng dữ liệu lịch sử đóng góp vẫn được lưu trữ an toàn.
+                {t("admin.confirmDisableDesc", "Tài khoản sẽ bị gỡ quyền đăng nhập nhưng dữ liệu lịch sử đóng góp vẫn được lưu trữ an toàn.")}
               </p>
             </div>
 
             <div className="modal-footer">
               <button type="button" className="btn-admin-secondary" onClick={() => setDeletingUser(null)}>
-                Hủy bỏ
+                {t("common.cancel", "Hủy bỏ")}
               </button>
               <button
                 type="button"
                 className="btn-admin-danger"
                 onClick={() => void handleDeleteUser(deletingUser.id)}
               >
-                <Trash2 size={16} /> Đồng ý Vô hiệu hóa
+                <Trash2 size={16} /> {t("admin.confirmDisableBtn", "Đồng ý Vô hiệu hóa")}
               </button>
             </div>
           </div>

@@ -853,6 +853,194 @@ button:active:not(:disabled) {
   flex-shrink: 0;
 }
 
+/* ── System Config Popover (Settings Dropdown) ── */
+.system-config-container {
+  position: relative;
+  display: inline-flex;
+}
+
+.system-config-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 9px;
+  background: var(--bg-surface, #ffffff);
+  color: var(--text-secondary, #64748b);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.system-config-btn:hover,
+.system-config-btn.active {
+  background: var(--primary-light, #eef2ff);
+  border-color: var(--primary, #6366f1);
+  color: var(--primary, #4f46e5);
+}
+
+.system-config-popover {
+  position: fixed;
+  width: 216px;
+  border-radius: 12px;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  background: #ffffff;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.16), 0 4px 12px rgba(15, 23, 42, 0.08);
+  z-index: 9999;
+  overflow: hidden;
+  animation: noti-slide-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.system-config-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  background: linear-gradient(135deg, #f8faff 0%, #f1f5f9 100%);
+  border-bottom: 1px solid #eef2ff;
+  color: #0f172a;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.system-config-body {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.system-config-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  transition: background-color 0.15s ease;
+}
+
+.system-config-item:hover {
+  background: #f8fafc;
+}
+
+.system-config-item-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.system-config-action-btn {
+  height: 28px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #4f46e5;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.system-config-action-btn:hover {
+  background: #eef2ff;
+  border-color: #818cf8;
+}
+
+.system-config-divider {
+  height: 1px;
+  background: #eef2ff;
+  margin: 4px 0;
+}
+
+.system-config-logout-btn {
+  width: 100%;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #ef4444;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.system-config-logout-btn:hover {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+/* Dark Mode styles for System Config Popover */
+html[data-theme="dark"] .system-config-btn {
+  background: #1e293b;
+  border-color: #334155;
+  color: #94a3b8;
+}
+
+html[data-theme="dark"] .system-config-btn:hover,
+html[data-theme="dark"] .system-config-btn.active {
+  background: rgba(99, 102, 241, 0.2);
+  border-color: #6366f1;
+  color: #a5b4fc;
+}
+
+html[data-theme="dark"] .system-config-popover {
+  background: #0f172a;
+  border-color: #1e293b;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+html[data-theme="dark"] .system-config-header {
+  background: #1e293b;
+  border-bottom-color: #334155;
+  color: #f8fafc;
+}
+
+html[data-theme="dark"] .system-config-item:hover {
+  background: #1e293b;
+}
+
+html[data-theme="dark"] .system-config-item-info {
+  color: #cbd5e1;
+}
+
+html[data-theme="dark"] .system-config-action-btn {
+  background: #1e293b;
+  border-color: #334155;
+  color: #a5b4fc;
+}
+
+html[data-theme="dark"] .system-config-action-btn:hover {
+  background: #312e81;
+  border-color: #6366f1;
+}
+
+html[data-theme="dark"] .system-config-divider {
+  background: #1e293b;
+}
+
+html[data-theme="dark"] .system-config-logout-btn {
+  color: #f87171;
+}
+
+html[data-theme="dark"] .system-config-logout-btn:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+}
+
 .avatar {
   width: 32px;
   height: 32px;
@@ -1006,7 +1194,8 @@ button:active:not(:disabled) {
   gap: 10px;
 }
 
-.theme-toggle-btn {
+.theme-toggle-btn,
+.language-switcher-btn {
   width: 38px;
   min-width: 38px;
   min-height: 38px;
@@ -1023,14 +1212,24 @@ button:active:not(:disabled) {
   font-weight: 750;
 }
 
+.language-switcher-btn {
+  width: auto;
+  min-width: 58px;
+  gap: 6px;
+  padding: 0 10px;
+}
+
 .theme-toggle-btn:hover,
-.theme-toggle-btn:focus-visible {
+.theme-toggle-btn:focus-visible,
+.language-switcher-btn:hover,
+.language-switcher-btn:focus-visible {
   color: var(--accent-primary);
   border-color: var(--border-highlight);
   background: var(--bg-surface);
 }
 
-.theme-toggle-btn svg {
+.theme-toggle-btn svg,
+.language-switcher-btn svg {
   flex: 0 0 auto;
 }
 
@@ -1106,11 +1305,11 @@ button:active:not(:disabled) {
   box-shadow: 0 2px 6px rgba(225, 29, 72, 0.35);
 }
 
-/* ── Notification Dropdown Panel ────────── */
+/* ── Notification Dropdown Panel ── */
 .notification-menu {
   position: fixed;
   z-index: 120;
-  width: min(400px, calc(100vw - 32px));
+  width: min(450px, calc(100vw - 32px));
   border: 1px solid rgba(226, 232, 240, 0.8);
   border-radius: 16px;
   background: #ffffff;
@@ -1224,16 +1423,29 @@ button:active:not(:disabled) {
 .notification-filter-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: 5px;
+  padding: 8px 12px;
   border-bottom: 1px solid #eef2ff;
   background: #ffffff;
   overflow-x: auto;
-  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(203, 213, 225, 0.6) transparent;
 }
 
 .notification-filter-row::-webkit-scrollbar {
-  display: none;
+  height: 4px;
+}
+
+.notification-filter-row::-webkit-scrollbar-thumb {
+  background: rgba(203, 213, 225, 0.6);
+  border-radius: 999px;
+}
+
+.notification-filter-row::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .notification-filter-row button {
@@ -1245,10 +1457,11 @@ button:active:not(:disabled) {
   border-radius: 999px;
   background: #ffffff;
   color: #64748b;
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  padding: 0 10px;
+  flex-shrink: 0;
   white-space: nowrap;
+  padding: 0 9px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -4694,6 +4907,33 @@ button:active:not(:disabled) {
   max-width: 100% !important;
   box-sizing: border-box !important;
   text-indent: 0 !important;
+}
+
+.mermaid-container.mermaid-pending {
+  min-width: min(520px, 100%) !important;
+  min-height: 180px !important;
+  background:
+    linear-gradient(90deg, rgba(99, 102, 241, 0.06), rgba(14, 165, 233, 0.06)),
+    #ffffff !important;
+  color: var(--text-secondary) !important;
+}
+
+.mermaid-loading-card {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  color: var(--text-secondary) !important;
+  font-size: 0.9rem !important;
+  font-weight: 700 !important;
+}
+
+.mermaid-loading-spinner {
+  width: 18px !important;
+  height: 18px !important;
+  border-radius: 999px !important;
+  border: 2px solid rgba(79, 70, 229, 0.18) !important;
+  border-top-color: var(--accent-primary) !important;
+  animation: spin 0.7s linear infinite !important;
 }
 
 /* Category-based Presentation: Sequence, State, Flowcharts & ER */
@@ -13783,7 +14023,7 @@ button:active:not(:disabled) {
    ═══════════════════════════════════════════════════════════════ */
 .dash-main-grid {
   display: grid;
-  grid-template-columns: 7fr 5fr;
+  grid-template-columns: 1fr 1fr;
   gap: 16px;
 }
 
@@ -13925,6 +14165,14 @@ button:active:not(:disabled) {
   min-width: 0;
 }
 
+.dash-list-row-left > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
 .dash-list-icon {
   width: 32px;
   height: 32px;
@@ -13949,7 +14197,12 @@ button:active:not(:disabled) {
 .dash-list-row-left .dash-list-sub {
   font-size: 0.68rem;
   color: var(--dash-text-muted);
-  font-weight: 500;
+  font-weight: 600;
+  background: #f1f5f9;
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .dash-list-row-right {
@@ -13987,8 +14240,9 @@ button:active:not(:disabled) {
 }
 
 .dash-list-idx {
-  width: 22px;
+  min-width: 24px;
   height: 22px;
+  padding: 0 5px;
   border-radius: 6px;
   display: flex;
   align-items: center;
@@ -13999,6 +14253,7 @@ button:active:not(:disabled) {
   background: #f4f4f5;
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -14349,7 +14604,7 @@ button:active:not(:disabled) {
 .dash-workload-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 20px;
+  gap: 16px;
 }
 
 /* ── Project Progress Card ────────────────────────────────────── */
@@ -25770,4 +26025,80 @@ html[data-theme="dark"] .tiptap [style*="color:#000000"],
 html[data-theme="dark"] .tiptap [style*="color: black"],
 html[data-theme="dark"] .tiptap [style*="color:black"] {
   color: #f1f5f9 !important;
+}
+
+/* Document Content Translation UI */
+.doc-translation-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.translation-tab-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.translation-tab-pill:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-active);
+}
+
+.translation-tab-pill.active {
+  background: var(--primary-light, #e0e7ff);
+  color: var(--primary, #4f46e5);
+  border-color: var(--primary, #4f46e5);
+}
+
+.translation-tab-pill.add-btn {
+  border-style: dashed;
+  color: var(--primary, #4f46e5);
+}
+
+.translation-tab-pill .pill-badge {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #d97706;
+  font-weight: 700;
+}
+
+.doc-translation-warning-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  margin: 12px 0 16px;
+  background: #fffbe3;
+  border: 1px solid #fde047;
+  border-radius: 8px;
+  color: #854d0e;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+html[data-theme="dark"] .doc-translation-warning-banner {
+  background: #422006;
+  border-color: #a16207;
+  color: #fef08a;
+}
+
+html[data-theme="dark"] .translation-tab-pill.active {
+  background: #312e81;
+  color: #a5b4fc;
+  border-color: #6366f1;
 }

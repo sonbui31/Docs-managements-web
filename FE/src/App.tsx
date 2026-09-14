@@ -30,6 +30,7 @@ import {
     GitBranch,
     GripVertical,
     Kanban,
+    Languages,
     Layers,
     LayoutDashboard,
     ListTree,
@@ -53,6 +54,7 @@ import {
     RefreshCw,
     Search,
     Send,
+    Settings,
     Share2,
     ShieldCheck,
     SlidersHorizontal,
@@ -64,10 +66,13 @@ import {
     User as UserIcon,
     UserPlus,
     Users,
+    Sparkles,
     X
 } from "lucide-react";
+
 import { createPortal } from "react-dom";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
     acquireDocumentEditSession,
     createComment,
@@ -120,6 +125,7 @@ import {
     resolveComment,
     restoreDocumentVersion,
     searchProject,
+
     updateComment,
     updateDocument,
     updateProject,
@@ -129,7 +135,7 @@ import {
     transferDocumentOwner,
     uploadMediaAsset
 } from "./api";
-import { getErrorMessage } from "./apiError";
+import { getErrorMessage, translateText } from "./apiError";
 import { clearAuthSession, fetchCurrentUser, getAccessToken, getStoredUser, logout } from "./authApi";
 import { AuthPage } from "./AuthPage";
 import type { EditorTocItem } from "./DocumentEditor";
@@ -138,6 +144,8 @@ import { canPrefetch, prefetchQueue } from "./shared/prefetch/prefetchQueue";
 import type {
     ActivityLog,
     CommentThread,
+    DocumentEditingSession,
+    DocumentLanguage,
     DocumentStatus,
     DocumentTemplate,
     DocumentVersion,
@@ -230,16 +238,28 @@ const cacheKey = {
 
 const READING_PREFERENCES_KEY = "ba_docs_reading_preferences";
 const APP_THEME_KEY = "ba_docs_app_theme";
+const MERMAID_SVG_CACHE_PREFIX = "ba_docs_mermaid_svg:";
+const MAX_SESSION_MERMAID_CACHE_CHARS = 500_000;
+const MERMAID_RENDER_TIMEOUT_MS = 8_000;
+const MERMAID_PENDING_RETRY_MS = 8_000;
+const MERMAID_SIZING_PROFILES: Record<string, { maxW: number; maxH: number; minDesiredW?: number; scaleUpFactor?: number }> = {
+  sequence: { maxW: 1040, maxH: 700, minDesiredW: 880, scaleUpFactor: 1.0 },
+  "flowchart-horizontal": { maxW: 1040, maxH: 680, minDesiredW: 880, scaleUpFactor: 1.35 },
+  "flowchart-vertical": { maxW: 780, maxH: 650, minDesiredW: 580, scaleUpFactor: 1.15 },
+  "class-er": { maxW: 1080, maxH: 720, minDesiredW: 880, scaleUpFactor: 1.25 },
+  timeline: { maxW: 1100, maxH: 600, minDesiredW: 900, scaleUpFactor: 1.2 },
+  state: { maxW: 720, maxH: 600, minDesiredW: 360, scaleUpFactor: 1.1 },
+  pie: { maxW: 500, maxH: 500, minDesiredW: 380, scaleUpFactor: 1.0 },
+  generic: { maxW: 960, maxH: 640, minDesiredW: 720, scaleUpFactor: 1.15 }
+};
+const mermaidSvgMemoryCache = new Map<string, string>();
 
 function getInitialAppTheme(): AppTheme {
   try {
     const stored = localStorage.getItem(APP_THEME_KEY);
     if (stored === "light" || stored === "dark") return stored;
   } catch {
-    // Ignore storage errors
-  }
-  if (typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-    return "dark";
+    // Ignore storage errors and use the default light theme.
   }
   return "light";
 }
@@ -492,7 +512,7 @@ const DEFAULT_WORKBOARD_COLUMNS: WorkboardColumn[] = [
   { id: "BACKLOG", projectId: "", key: "BACKLOG", name: "Backlog", color: "#64748b", type: "OPEN", position: 0, isDefault: true, isDone: false },
   { id: "TODO", projectId: "", key: "TODO", name: "To Do", color: "#3b82f6", type: "OPEN", position: 1, isDefault: false, isDone: false },
   { id: "IN_PROGRESS", projectId: "", key: "IN_PROGRESS", name: "In Progress", color: "#f59e0b", type: "IN_PROGRESS", position: 2, isDefault: false, isDone: false },
-  { id: "REVIEW", projectId: "", key: "REVIEW", name: "Review / QA", color: "#8b5cf6", type: "REVIEW", position: 3, isDefault: false, isDone: false },
+  { id: "REVIEW", projectId: "", key: "REVIEW", name: "QA/Test", color: "#8b5cf6", type: "REVIEW", position: 3, isDefault: false, isDone: false },
   { id: "BLOCKED", projectId: "", key: "BLOCKED", name: "Blocked", color: "#ef4444", type: "BLOCKED", position: 4, isDefault: false, isDone: false },
   { id: "DONE", projectId: "", key: "DONE", name: "Done", color: "#10b981", type: "DONE", position: 5, isDefault: false, isDone: true }
 ];
@@ -501,7 +521,7 @@ const STATUS_BREAKDOWN_HINT: Record<WorkItemStatus, string> = {
   BACKLOG: "Chờ xử lý",
   TODO: "Cần làm",
   IN_PROGRESS: "Đang làm",
-  REVIEW: "Đang review",
+  REVIEW: "Đang QA/Test",
   BLOCKED: "Bị kẹt",
   DONE: "Đã xong"
 };
@@ -511,7 +531,7 @@ const WORKBOARD_COLUMN_TYPE_OPTIONS: Array<{ value: WorkboardColumnType; label: 
   { value: "READY", label: "Sẵn sàng làm" },
   { value: "OPEN", label: "Đang mở" },
   { value: "IN_PROGRESS", label: "Đang làm" },
-  { value: "REVIEW", label: "Review" },
+  { value: "REVIEW", label: "QA/Test" },
   { value: "QA", label: "Test / QA" },
   { value: "WAITING", label: "Chờ phản hồi" },
   { value: "BLOCKED", label: "Bị chặn" },
@@ -524,7 +544,7 @@ const WORKBOARD_COLUMN_TYPE_OPTIONS: Array<{ value: WorkboardColumnType; label: 
 const WORK_ITEM_TYPE_LABEL: Record<WorkItemType, string> = {
   TASK: "Task",
   BUG: "Bug",
-  REVIEW: "Review",
+  REVIEW: "QA/Test",
   CHANGE_REQUEST: "Change",
   QUESTION: "Question"
 };
@@ -1014,6 +1034,8 @@ function workItemLabelNames(item: WorkItem) {
 }
 
 function App() {
+  const { t, i18n } = useTranslation();
+  const [uiLanguage, setUiLanguage] = useState<"vi" | "en">(() => (i18n.resolvedLanguage === "en" || i18n.language === "en" ? "en" : "vi"));
   // Authentication State
   const [appTheme, setAppTheme] = useState<AppTheme>(() => getInitialAppTheme());
   const [currentUser, setCurrentUser] = useState<User | null>(() => getStoredUser());
@@ -1081,32 +1103,34 @@ function App() {
   const [showLibraryPanel, setShowLibraryPanel] = useState<boolean>(true);
   const [showCommentsPanel, setShowCommentsPanel] = useState<boolean>(true);
   const [fontSize, setFontSize] = useState<"sm" | "md" | "lg">(initialReadingPreferences.fontSize ?? "md");
-  const [readingTheme, setReadingTheme] = useState<ReadingTheme>(initialReadingPreferences.theme ?? "paper");
+  const [readingTheme, setReadingTheme] = useState<ReadingTheme>(
+    initialReadingPreferences.theme === "dark" && appTheme !== "dark"
+      ? "paper"
+      : initialReadingPreferences.theme ?? "paper"
+  );
   const [readingWidth, setReadingWidth] = useState<ReadingWidth>(initialReadingPreferences.width ?? "normal");
   const [showFocusToc, setShowFocusToc] = useState<boolean>(initialReadingPreferences.showToc ?? true);
   const [isZenMode, setIsZenMode] = useState<boolean>(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
-  // Listen to OS prefers-color-scheme changes dynamically if user hasn't explicitly set preference
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return;
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = (e: MediaQueryListEvent) => {
-      const stored = localStorage.getItem(APP_THEME_KEY);
-      if (!stored) {
-        setAppTheme(e.matches ? "dark" : "light");
-      }
-    };
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-
   useEffect(() => {
     document.documentElement.dataset.theme = appTheme;
     document.documentElement.style.colorScheme = appTheme;
     localStorage.setItem(APP_THEME_KEY, appTheme);
   }, [appTheme]);
+
+  useEffect(() => {
+    const applyLanguage = (language: string) => {
+      const normalized = language === "en" ? "en" : "vi";
+      setUiLanguage(normalized);
+      document.documentElement.lang = normalized;
+    };
+
+    applyLanguage(i18n.resolvedLanguage || i18n.language);
+    i18n.on("languageChanged", applyLanguage);
+    return () => i18n.off("languageChanged", applyLanguage);
+  }, [i18n]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -1127,24 +1151,104 @@ function App() {
   function toggleAppTheme() {
     setAppTheme((prev) => {
       const nextTheme: AppTheme = prev === "dark" ? "light" : "dark";
-      // Synchronize readingTheme to prevent blinding contrast jumps
       setReadingTheme(nextTheme === "dark" ? "dark" : "paper");
       return nextTheme;
     });
   }
 
-  function renderThemeToggle() {
+  function renderSystemConfigMenu() {
     const isDark = appTheme === "dark";
     return (
-      <button
-        className="theme-toggle-btn"
-        type="button"
-        aria-label={isDark ? "Chuyển sang giao diện sáng" : "Chuyển sang giao diện tối"}
-        title={isDark ? "Chuyển sang giao diện sáng" : "Chuyển sang giao diện tối"}
-        onClick={toggleAppTheme}
-      >
-        {isDark ? <Sun size={15} /> : <Moon size={15} />}
-      </button>
+      <div className="system-config-container" ref={systemConfigRef}>
+        <button
+          type="button"
+          className={`system-config-btn ${isSystemConfigOpen ? "active" : ""}`}
+          title={t("common.systemConfig", "Cấu hình hệ thống")}
+          aria-label={t("common.systemConfig", "Cấu hình hệ thống")}
+          onClick={(e) => {
+            e.stopPropagation();
+            updateConfigPosition();
+            setIsSystemConfigOpen((prev) => !prev);
+          }}
+        >
+          <Settings size={15} />
+        </button>
+
+        {isSystemConfigOpen &&
+          createPortal(
+            <div
+              className="system-config-popover"
+              ref={systemConfigPopoverRef}
+              style={{
+                position: "fixed",
+                bottom: `${configPosition.bottom}px`,
+                left: `${configPosition.left}px`,
+                top: "auto",
+                right: "auto",
+                zIndex: 9999
+              }}
+            >
+              <div className="system-config-header">
+                <Settings size={14} />
+                <strong>{t("common.systemConfig", "Cấu hình hệ thống")}</strong>
+              </div>
+
+              <div className="system-config-body">
+                {/* Option 1: Theme Toggle */}
+                <div className="system-config-item">
+                  <div className="system-config-item-info">
+                    {isDark ? <Moon size={14} /> : <Sun size={14} />}
+                    <span>{t("common.theme", "Giao diện")}</span>
+                  </div>
+                  <button
+                    className="system-config-action-btn"
+                    type="button"
+                    onClick={toggleAppTheme}
+                  >
+                    {isDark ? <Sun size={12} /> : <Moon size={12} />}
+                    <span>{isDark ? "Tối" : "Sáng"}</span>
+                  </button>
+                </div>
+
+                {/* Option 2: Language Switcher */}
+                <div className="system-config-item">
+                  <div className="system-config-item-info">
+                    <Languages size={14} />
+                    <span>{t("common.language", "Ngôn ngữ")}</span>
+                  </div>
+                  <button
+                    className="system-config-action-btn"
+                    type="button"
+                    onClick={() => {
+                      const nextLang = uiLanguage === "vi" ? "en" : "vi";
+                      setUiLanguage(nextLang);
+                      void i18n.changeLanguage(nextLang);
+                    }}
+                  >
+                    <span>{uiLanguage === "vi" ? "Tiếng Việt" : "English"}</span>
+                  </button>
+                </div>
+
+                {/* Divider */}
+                <div className="system-config-divider" />
+
+                {/* Option 3: Logout */}
+                <button
+                  type="button"
+                  className="system-config-logout-btn"
+                  onClick={() => {
+                    setIsSystemConfigOpen(false);
+                    setIsLogoutConfirmOpen(true);
+                  }}
+                >
+                  <LogOut size={14} />
+                  <span>{t("common.logout", "Đăng xuất")}</span>
+                </button>
+              </div>
+            </div>,
+            document.body
+          )}
+      </div>
     );
   }
 
@@ -1232,9 +1336,61 @@ function App() {
   const [documentDiff, setDocumentDiff] = useState<VersionDiff | null>(null);
   const [savedTags, setSavedTags] = useState<RequirementTag[]>([]);
   const [inferredTags, setInferredTags] = useState<RequirementTag[]>([]);
+
   const [traceLinks, setTraceLinks] = useState<TraceLink[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [isSystemConfigOpen, setIsSystemConfigOpen] = useState<boolean>(false);
+  const systemConfigRef = useRef<HTMLDivElement>(null);
+  const systemConfigPopoverRef = useRef<HTMLDivElement>(null);
+  const [configPosition, setConfigPosition] = useState<{ bottom: number; left: number }>({ bottom: 60, left: 16 });
+
+  const updateConfigPosition = useCallback(() => {
+    if (!systemConfigRef.current) return;
+    const rect = systemConfigRef.current.getBoundingClientRect();
+    const sidebarFooter = systemConfigRef.current.closest(".sidebar-footer");
+    const menuWidth = 216;
+    let left = 16;
+    if (sidebarFooter) {
+      const footerRect = sidebarFooter.getBoundingClientRect();
+      left = footerRect.left + 12;
+    } else {
+      left = rect.left;
+    }
+    if (left + menuWidth > window.innerWidth - 12) {
+      left = window.innerWidth - menuWidth - 12;
+    }
+    if (left < 12) left = 12;
+
+    const bottom = Math.max(12, window.innerHeight - rect.top + 8);
+    setConfigPosition({ bottom, left });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!isSystemConfigOpen) return;
+    updateConfigPosition();
+    window.addEventListener("resize", updateConfigPosition);
+    window.addEventListener("scroll", updateConfigPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateConfigPosition);
+      window.removeEventListener("scroll", updateConfigPosition, true);
+    };
+  }, [isSystemConfigOpen, updateConfigPosition]);
+
+  useEffect(() => {
+    if (!isSystemConfigOpen) return;
+    const handleClickOutsideConfig = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null;
+      if (systemConfigRef.current?.contains(target) || systemConfigPopoverRef.current?.contains(target)) return;
+      setIsSystemConfigOpen(false);
+    };
+    document.addEventListener("mousedown", handleClickOutsideConfig, true);
+    document.addEventListener("touchstart", handleClickOutsideConfig, true);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutsideConfig, true);
+      document.removeEventListener("touchstart", handleClickOutsideConfig, true);
+    };
+  }, [isSystemConfigOpen]);
   const [isNotificationMenuOpen, setIsNotificationMenuOpen] = useState<boolean>(false);
   const notificationCenterRef = useRef<HTMLDivElement>(null);
   const notificationMenuRef = useRef<HTMLDivElement>(null);
@@ -1243,7 +1399,7 @@ function App() {
   const updateNotiPosition = useCallback(() => {
     if (!notificationCenterRef.current) return;
     const rect = notificationCenterRef.current.getBoundingClientRect();
-    const menuWidth = Math.min(400, window.innerWidth - 32);
+    const menuWidth = Math.min(450, window.innerWidth - 32);
     const bellCenter = rect.left + rect.width / 2;
     let left = bellCenter - menuWidth / 2;
     if (left + menuWidth > window.innerWidth - 16) {
@@ -2106,7 +2262,11 @@ function App() {
         CACHE_TTL.workboardColumns,
         () => fetchWorkboardColumns(projectId)
       );
-      const normalized = columns.length ? columns : DEFAULT_WORKBOARD_COLUMNS.map((column) => ({ ...column, projectId }));
+      const rawColumns = columns.length ? columns : DEFAULT_WORKBOARD_COLUMNS.map((column) => ({ ...column, projectId }));
+      const normalized = rawColumns.map((col) => ({
+        ...col,
+        name: col.name === "Review / QA" ? "QA/Test" : col.name
+      }));
       setWorkboardColumnsByProject((prev) => ({ ...prev, [projectId]: normalized }));
       return normalized;
     } catch (error) {
@@ -2900,12 +3060,27 @@ function App() {
   const selectedDocument = useMemo(() => {
     const selected = projectDocuments.find((doc) => doc.id === selectedDocumentId);
     const doc = selected ?? projectDocuments[0] ?? EMPTY_DOCUMENT;
+    if (doc.id === "empty-document") {
+      return {
+        ...doc,
+        title: t("documents.noDocumentTitle"),
+        updatedAt: t("common.today"),
+        contentHtml: `<h3>${t("documents.noDocumentsInProject")}</h3><p>${t("documents.noDocumentsInstruction")}</p>`
+      };
+    }
     return {
       ...doc,
       title: normalizeVietnameseText(doc.title),
       contentHtml: normalizeVietnameseText(doc.contentHtml || "")
     };
-  }, [selectedDocumentId, projectDocuments]);
+  }, [selectedDocumentId, projectDocuments, t]);
+
+  const activeDocTitle = selectedDocument.title;
+  const activeDocContentHtml = selectedDocument.contentHtml;
+  const preparedDocContentHtml = useMemo(
+    () => prepareDocumentHtmlForReading(activeDocContentHtml || DEFAULT_DOC_CONTENT),
+    [activeDocContentHtml, t]
+  );
   const canEditSelectedDocumentContent =
     selectedDocument.id !== "empty-document" &&
     selectedDocument.sourceType !== "imported" &&
@@ -4762,7 +4937,10 @@ function App() {
   }
 
   function toastApiError(error: unknown, title: string, fallback: string) {
-    addToast("error", title, getErrorMessage(error, fallback));
+    const lang = i18n.language || "vi";
+    const translatedTitle = translateText(title, lang);
+    const translatedFallback = translateText(fallback, lang);
+    addToast("error", translatedTitle, getErrorMessage(error, translatedFallback));
   }
 
   function resetCreateProjectDraft() {
@@ -5035,7 +5213,7 @@ function App() {
   function requestDeleteProject(projectId: string, e: React.MouseEvent) {
     e.stopPropagation();
     if (projectsList.length <= 1) {
-      addToast("warning", "Không thể xóa", "Hệ thống cần giữ ít nhất 1 dự án.");
+      addToast("warning", t("projects.cannotDelete"), t("projects.mustKeepOneProject"));
       return;
     }
     const proj = projectsList.find((p) => p.id === projectId);
@@ -5043,8 +5221,8 @@ function App() {
       isOpen: true,
       type: "project",
       id: projectId,
-      title: "Xác nhận xóa dự án",
-      message: `Bạn có chắc chắn muốn xóa dự án "${proj?.name || projectId}"? Tất cả tài liệu liên quan sẽ bị xóa vĩnh viễn.`
+      title: t("projects.confirmDeleteTitle"),
+      message: t("projects.confirmDeleteMessage", { name: proj?.name || projectId })
     });
   }
 
@@ -5090,6 +5268,7 @@ function App() {
         projectId: newDocProjectId,
         title: newDocTitle.trim(),
         type: newDocType,
+        language: "vi",
         htmlContent: initialContent
       });
       invalidateProjectCache(newDocProjectId);
@@ -5174,6 +5353,8 @@ function App() {
       return;
     }
 
+
+
     setIsSavingDocumentContent(true);
     try {
       const saveGuard = documentSaveGuardRef.current?.id === selectedDocument.id
@@ -5230,6 +5411,8 @@ function App() {
       setIsSavingDocumentContent(false);
     }
   }
+
+
 
   async function handleDeploySelectedDocument() {
     if (selectedDocument.id === "empty-document" || selectedDocument.status === "Triển khai") return;
@@ -5755,15 +5938,89 @@ function App() {
     return "noti-icon-violet";
   }
 
+  function formatNotificationTitle(title?: string | null): string {
+    if (!title) return "";
+    const trimmedTitle = title.trim();
+    if (i18n.language === "en") {
+      const enMap: Record<string, string> = {
+        "Có phản hồi nhận xét mới": "New comment reply",
+        "Có nhận xét mới": "New document comment",
+        "Bạn được nhắc đến trong tài liệu": "You were mentioned in a document",
+        "Có phản hồi trong ticket": "New ticket reply",
+        "Có comment mới trong ticket": "New ticket comment",
+        "Bạn được nhắc đến trong ticket": "You were mentioned in a ticket",
+        "Bạn được nhắc đến": "You were mentioned",
+        "Bạn được cấp quyền dự án": "Project access granted",
+        "Bạn được cấp quyền tài liệu": "Document access granted",
+        "Bạn được gán ticket": "Ticket assigned to you",
+        "Bạn được giao công việc": "Work assigned to you",
+        "Thông báo mới": "New notification"
+      };
+      return enMap[trimmedTitle] || title;
+    }
+    const viMap: Record<string, string> = {
+      "New comment reply": "Có phản hồi nhận xét mới",
+      "New document comment": "Có nhận xét mới",
+      "You were mentioned in a document": "Bạn được nhắc đến trong tài liệu",
+      "New ticket reply": "Có phản hồi trong ticket",
+      "New ticket comment": "Có comment mới trong ticket",
+      "You were mentioned in a ticket": "Bạn được nhắc đến trong ticket",
+      "You were mentioned": "Bạn được nhắc đến",
+      "Project access granted": "Bạn được cấp quyền dự án",
+      "Document access granted": "Bạn được cấp quyền tài liệu",
+      "Ticket assigned to you": "Bạn được gán ticket",
+      "Work assigned to you": "Bạn được giao công việc",
+      "New notification": "Thông báo mới"
+    };
+    return viMap[trimmedTitle] || title;
+  }
+
+  function formatNotificationMessage(message?: string | null): string {
+    if (!message) return "";
+    let text = message;
+    if (i18n.language === "en") {
+      text = text.replace(/Nhân viên (\d+)/g, "Employee $1");
+      text = text.replace(/đã cấp quyền ([A-Z_]+) cho dự án/g, "granted $1 access for project");
+      text = text.replace(/đã cấp quyền ([A-Z_]+) cho tài liệu/g, "granted $1 access for document");
+      text = text.replace(/đã cấp quyền dự án cho bạn/g, "granted you project access.");
+      text = text.replace(/đã cấp quyền tài liệu cho bạn/g, "granted you document access.");
+      text = text.replace(/đã nhắc đến bạn trong một nhận xét\./g, "mentioned you in a comment.");
+      text = text.replace(/đã nhắc đến bạn trong nhận xét\./g, "mentioned you in a comment.");
+      text = text.replace(/đã nhắc đến bạn trong một ticket\./g, "mentioned you in a ticket.");
+      text = text.replace(/đã nhắc đến bạn trong ticket\./g, "mentioned you in a ticket.");
+      text = text.replace(/đã giao ticket cho bạn/g, "assigned a ticket to you.");
+      text = text.replace(/đã gán ticket cho bạn/g, "assigned a ticket to you.");
+      text = text.replace(/đã giao công việc cho bạn/g, "assigned a task to you.");
+      text = text.replace(/đã thêm bạn vào dự án/g, "added you to the project.");
+      text = text.replace(/đã cập nhật trạng thái/g, "updated status of");
+      text = text.replace(/đã tạo comment mới/g, "created a new comment");
+      return text;
+    }
+
+    // Translation for Vietnamese mode
+    text = text.replace(/Reviewer comment/gi, "Nhận xét của người kiểm duyệt");
+    text = text.replace(/Employee (\d+)/gi, "Nhân viên $1");
+    text = text.replace(/granted you project access/gi, "đã cấp quyền dự án cho bạn");
+    text = text.replace(/granted you document access/gi, "đã cấp quyền tài liệu cho bạn");
+    text = text.replace(/mentioned you in a comment/gi, "đã nhắc đến bạn trong nhận xét");
+    text = text.replace(/mentioned you in a ticket/gi, "đã nhắc đến bạn trong ticket");
+    text = text.replace(/assigned a ticket to you/gi, "đã gán ticket cho bạn");
+    text = text.replace(/assigned a task to you/gi, "đã giao công việc cho bạn");
+    text = text.replace(/added you to the project/gi, "đã thêm bạn vào dự án");
+    text = text.replace(/updated status of/gi, "đã cập nhật trạng thái");
+    text = text.replace(/created a new comment/gi, "đã tạo nhận xét mới");
+    return text;
+  }
+
   function renderNotificationCenter() {
     const unreadCount = notifications.filter((notification) => !notification.readAt).length;
     const notificationFilters: Array<{ key: NotificationFilter; label: string; count?: number }> = [
-      { key: "all", label: "Tất cả", count: notifications.length },
-      { key: "unread", label: "Chưa đọc", count: unreadCount },
+      { key: "all", label: i18n.language === "en" ? "All" : "Tất cả", count: notifications.length },
+      { key: "unread", label: i18n.language === "en" ? "Unread" : "Chưa đọc", count: unreadCount },
       { key: "mention", label: "Mention" },
       { key: "ticket", label: "Ticket" },
-      { key: "document", label: "Tài liệu" },
-      { key: "project", label: "Dự án" }
+      { key: "document", label: i18n.language === "en" ? "Documents" : "Tài liệu" },
+      { key: "project", label: i18n.language === "en" ? "Projects" : "Dự án" }
     ];
     const filteredNotifications = notifications.filter((notification) => {
       if (notificationFilter === "unread") return !notification.readAt;
@@ -5780,8 +6037,9 @@ function App() {
         <button
           className={`notification-bell ${unreadCount > 0 ? "has-unread" : ""}`}
           type="button"
-          title="Thông báo"
-          onClick={() => {
+          title={t("dashboard.notifications", "Thông báo")}
+          onClick={(e) => {
+            e.stopPropagation();
             updateNotiPosition();
             setIsNotificationMenuOpen((open) => !open);
           }}
@@ -5801,8 +6059,8 @@ function App() {
           >
             <div className="notification-menu-header">
               <div>
-                <strong>Thông báo</strong>
-                <span>{unreadCount > 0 ? `${unreadCount} chưa đọc` : "Tất cả đã đọc"}</span>
+                <strong>{t("dashboard.notifications", "Thông báo")}</strong>
+                <span>{unreadCount > 0 ? t("dashboard.unreadCountText", { count: unreadCount }) : t("dashboard.allRead")}</span>
               </div>
               <div className="notification-header-actions">
                 <button
@@ -5811,20 +6069,27 @@ function App() {
                   disabled={unreadCount === 0}
                   onClick={() => void handleMarkAllNotificationsRead()}
                 >
-                  <CheckCheck size={14} /> Đọc hết
+                  <CheckCheck size={14} /> {t("dashboard.markAllRead")}
                 </button>
                 <button
                   className="notification-close-btn"
                   type="button"
-                  aria-label="Đóng thông báo"
-                  title="Đóng thông báo"
+                  aria-label={t("common.close", "Đóng")}
+                  title={t("common.close", "Đóng")}
                   onClick={() => setIsNotificationMenuOpen(false)}
                 >
                   <X size={16} />
                 </button>
               </div>
             </div>
-            <div className="notification-filter-row">
+            <div
+              className="notification-filter-row"
+              onWheel={(e) => {
+                if (e.deltaY) {
+                  e.currentTarget.scrollLeft += e.deltaY;
+                }
+              }}
+            >
               {notificationFilters.map((filter) => (
                 <button
                   key={filter.key}
@@ -5841,8 +6106,8 @@ function App() {
               {filteredNotifications.length === 0 ? (
                 <div className="notification-empty">
                   <Bell size={18} />
-                  <strong>Chưa có thông báo</strong>
-                  <span>Các cập nhật phù hợp với bộ lọc sẽ hiện ở đây.</span>
+                  <strong>{t("dashboard.noNotificationsTitle")}</strong>
+                  <span>{t("dashboard.noNotificationsSub")}</span>
                 </div>
               ) : (
                 filteredNotifications.slice(0, 12).map((notification) => (
@@ -5854,8 +6119,8 @@ function App() {
                   >
                     <span className={`noti-item-icon ${notificationIconClass(notification)}`}>{notificationIcon(notification)}</span>
                     <span className="notification-menu-content">
-                      <strong>{notification.title}</strong>
-                      <small>{notification.message}</small>
+                      <strong>{formatNotificationTitle(notification.title)}</strong>
+                      <small>{formatNotificationMessage(notification.message)}</small>
                       <em>{relativeDashboardTime(notification.createdAt)}</em>
                     </span>
                     {!notification.readAt && <span className="notification-dot" />}
@@ -6107,7 +6372,7 @@ function App() {
               </div>
               {reply.status === "resolved" && (
                 <span className="comment-status-badge compact">
-                  <CheckCircle2 size={10} /> Đã xử lý
+                  <CheckCircle2 size={10} /> {t("documents.resolved")}
                 </span>
               )}
               <div className="reply-thread-actions">
@@ -6115,31 +6380,31 @@ function App() {
                   <button
                     className="btn-reply-micro"
                     type="button"
-                    title="Trả lời phản hồi này"
+                    title={t("documents.replyResponseTitle")}
                     onClick={() => openDocumentReplyComposer(reply.id)}
                   >
-                    <MessageSquarePlus size={11} /> Trả lời
+                    <MessageSquarePlus size={11} /> {t("documents.reply")}
                   </button>
                 )}
                 {reply.status === "open" && isOwnDocumentComment(reply) && (
                   <button
                     className="btn-reply-micro"
                     type="button"
-                    title="Chỉnh sửa phản hồi"
+                    title={t("documents.editReply")}
                     onClick={() => {
                       setReplyingCommentId(null);
                       setEditingCommentId(reply.id);
                       setEditingCommentText(reply.text);
                     }}
                   >
-                    <Pencil size={11} /> Sửa
+                    <Pencil size={11} /> {t("common.edit")}
                   </button>
                 )}
                 {isOwnDocumentComment(reply) && (
                   <button
                     className="btn-reply-micro danger"
                     type="button"
-                    title="Xóa phản hồi"
+                    title={t("documents.deleteReply")}
                     onClick={() => requestDeleteComment(reply.id)}
                   >
                     <Trash2 size={11} />
@@ -6164,14 +6429,14 @@ function App() {
                       setEditingCommentText("");
                     }}
                   >
-                    Hủy
+                    {t("common.cancel")}
                   </button>
                   <button
                     className="btn-comment-action primary"
                     type="button"
                     onClick={() => void handleSaveEditComment(reply.id)}
                   >
-                    Lưu
+                    {t("common.save")}
                   </button>
                 </div>
               </div>
@@ -6545,137 +6810,91 @@ function App() {
     if (!documentContainerRef.current) return;
 
     const nodes = Array.from(
-      documentContainerRef.current.querySelectorAll<HTMLElement>(".mermaid, pre, code")
+      documentContainerRef.current.querySelectorAll<HTMLElement>(".mermaid-container[data-mermaid-code], .mermaid-container[data-mermaid-code-uri], .mermaid, pre, code")
     );
 
     const seen = new Set<HTMLElement>();
-    const targetList: { container: HTMLElement; code: string }[] = [];
+    const targetList: { container: HTMLElement; code: string; diagramType: string; diagramKey: string }[] = [];
 
     nodes.forEach((node) => {
-      const pre = node.closest("pre") as HTMLElement | null;
-      const codeNode = node.tagName.toLowerCase() === "code"
+      const isPreparedContainer = node.matches(".mermaid-container[data-mermaid-code], .mermaid-container[data-mermaid-code-uri]");
+      if (!isPreparedContainer && node.closest(".mermaid-container, .mermaid-error")) return;
+
+      const pre = isPreparedContainer ? null : node.closest("pre") as HTMLElement | null;
+      const codeNode = !isPreparedContainer && node.tagName.toLowerCase() === "code"
         ? node
         : pre?.querySelector<HTMLElement>("code");
-      const container = pre ?? node;
+      const container = isPreparedContainer ? node : pre ?? node;
 
       const isRendered = container.getAttribute("data-mermaid-done") === "true";
       const renderedTheme = container.getAttribute("data-mermaid-theme");
-      if (seen.has(container) || container.getAttribute("data-mermaid-pending") === "true") return;
+      const pendingSince = Number(container.getAttribute("data-mermaid-pending-since") || "0");
+      const isPending = container.getAttribute("data-mermaid-pending") === "true";
+      if (seen.has(container) || (isPending && pendingSince > 0 && Date.now() - pendingSince < MERMAID_PENDING_RETRY_MS)) return;
       if (isRendered && renderedTheme === appTheme) return;
 
-      const rawSavedCode = container.getAttribute("data-mermaid-code");
+      const rawSavedCode = decodeMermaidDataCode(container);
       const textSource = codeNode ?? node;
       const cleanCode = rawSavedCode || normalizeMermaidCode(textSource.textContent || textSource.innerText || "");
       const className = `${node.className} ${codeNode?.className ?? ""}`;
 
       if (rawSavedCode || isMermaidDiagram(cleanCode, className)) {
         seen.add(container);
-        container.setAttribute("data-mermaid-code", cleanCode);
-        targetList.push({ container, code: cleanCode });
+        const diagramKey = getMermaidDiagramKey(cleanCode);
+        container.setAttribute("data-mermaid-key", diagramKey);
+        targetList.push({ container, code: cleanCode, diagramType: getMermaidDiagramType(cleanCode), diagramKey });
       }
     });
 
     if (targetList.length === 0) return;
 
-    targetList.forEach(({ container }) => container.setAttribute("data-mermaid-pending", "true"));
+    const uncachedTargets: typeof targetList = [];
+
+    targetList.forEach(({ container, code, diagramType, diagramKey }) => {
+      const cacheKey = getMermaidSvgCacheKey(code);
+      const cachedSvg = getCachedMermaidSvg(cacheKey);
+      if (cachedSvg) {
+        const liveContainer = getLiveMermaidContainer(container, diagramKey);
+        if (liveContainer) {
+          applyMermaidSvgToContainer(liveContainer, cachedSvg, diagramType, diagramKey, true);
+          return;
+        }
+      }
+      uncachedTargets.push({ container, code, diagramType, diagramKey });
+    });
+
+    if (uncachedTargets.length === 0) return;
+
+    uncachedTargets.forEach(({ container, diagramType, diagramKey }) => {
+      container.setAttribute("data-mermaid-pending", "true");
+      container.setAttribute("data-mermaid-pending-since", String(Date.now()));
+      container.removeAttribute("data-mermaid-done");
+      container.setAttribute("data-mermaid-key", diagramKey);
+      container.className = `mermaid-container mermaid-pending mermaid-type-${diagramType}`;
+      container.setAttribute("data-diagram-type", diagramType);
+      container.innerHTML = `<div class="mermaid-loading-card"><span class="mermaid-loading-spinner"></span><strong>${escapeHtml(t("documents.renderingDiagram"))}</strong></div>`;
+    });
 
     const isDark = appTheme === "dark";
     void loadMermaidRenderer(isDark)
       .then((mermaid) => {
         mermaid.initialize(getMermaidConfig(isDark));
-        targetList.forEach(({ container, code }, index) => {
+        uncachedTargets.forEach(({ container, code, diagramType, diagramKey }, index) => {
           const id = `mermaid-svg-${Date.now()}-${index}-${Math.floor(Math.random() * 10000)}`;
-          const trimmedCode = code.trim();
-          let diagramType = "generic";
-          if (/^sequenceDiagram\b/i.test(trimmedCode)) {
-            diagramType = "sequence";
-          } else if (/^(?:stateDiagram|stateDiagram-v2)\b/i.test(trimmedCode)) {
-            diagramType = "state";
-          } else if (/^(?:classDiagram|erDiagram)\b/i.test(trimmedCode)) {
-            diagramType = "class-er";
-          } else if (/^(?:flowchart|graph)\s+(?:LR|RL)\b/i.test(trimmedCode)) {
-            diagramType = "flowchart-horizontal";
-          } else if (/^(?:flowchart|graph)\s+(?:TD|TB|BT)\b/i.test(trimmedCode)) {
-            diagramType = "flowchart-vertical";
-          } else if (/^(?:gantt|timeline|gitGraph|journey|quadrantChart)\b/i.test(trimmedCode)) {
-            diagramType = "timeline";
-          } else if (/^pie\b/i.test(trimmedCode)) {
-            diagramType = "pie";
-          }
 
-          void mermaid
-            .render(id, code)
+          void withTimeout(mermaid.render(id, code), MERMAID_RENDER_TIMEOUT_MS)
             .then(({ svg }) => {
-              container.innerHTML = svg;
-              container.className = `mermaid-container mermaid-type-${diagramType}`;
-              container.setAttribute("data-diagram-type", diagramType);
-              container.setAttribute("data-mermaid-theme", appTheme);
-              const svgEl = container.querySelector("svg");
-              if (svgEl) {
-                const viewBox = svgEl.getAttribute("viewBox");
-                if (viewBox) {
-                  const parts = viewBox.split(/[\s,]+/).map(Number);
-                  if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
-                    const vbWidth = parts[2];
-                    const vbHeight = parts[3];
+              const liveContainer = getLiveMermaidContainer(container, diagramKey);
+              if (!liveContainer) return;
 
-                    // Profile-based sizing tailored to each diagram category:
-                    // Sequence diagrams: need wide width (1040px) so actors and message text are fully readable.
-                    // State diagrams: need comfortable vertical room (580px) and width (680px) for uncrowded state labels.
-                    // Flowcharts: horizontal (1000px) vs vertical (720px)
-                    const profiles: Record<string, { maxW: number; maxH: number; minDesiredW?: number; scaleUpFactor?: number }> = {
-                      sequence: { maxW: 1040, maxH: 700, minDesiredW: 880, scaleUpFactor: 1.0 },
-                      "flowchart-horizontal": { maxW: 1040, maxH: 680, minDesiredW: 880, scaleUpFactor: 1.35 },
-                      "flowchart-vertical": { maxW: 780, maxH: 650, minDesiredW: 580, scaleUpFactor: 1.15 },
-                      "class-er": { maxW: 1080, maxH: 720, minDesiredW: 880, scaleUpFactor: 1.25 },
-                      timeline: { maxW: 1100, maxH: 600, minDesiredW: 900, scaleUpFactor: 1.2 },
-                      state: { maxW: 720, maxH: 600, minDesiredW: 360, scaleUpFactor: 1.1 },
-                      pie: { maxW: 500, maxH: 500, minDesiredW: 380, scaleUpFactor: 1.0 },
-                      generic: { maxW: 960, maxH: 640, minDesiredW: 720, scaleUpFactor: 1.15 }
-                    };
-
-                    const profile = profiles[diagramType] || profiles.generic;
-                    const aspect = vbWidth / vbHeight;
-
-                    // Ensure diagrams that Mermaid rendered compactly (like graph LR) are scaled to comfortable reading width
-                    let initialW = vbWidth;
-                    if (profile.scaleUpFactor && profile.scaleUpFactor > 1.0) {
-                      initialW = Math.max(vbWidth * profile.scaleUpFactor, profile.minDesiredW || vbWidth);
-                    } else if (profile.minDesiredW && vbWidth < profile.minDesiredW) {
-                      if (aspect >= 0.95) {
-                        initialW = profile.minDesiredW;
-                      }
-                    }
-
-                    let targetW = Math.min(initialW, profile.maxW);
-                    let targetH = targetW / aspect;
-
-                    // Proportional bounds checking against profile maxH & maxW
-                    if (targetH > profile.maxH) {
-                      targetH = profile.maxH;
-                      targetW = targetH * aspect;
-                    }
-                    if (targetW > profile.maxW) {
-                      targetW = profile.maxW;
-                      targetH = targetW / aspect;
-                    }
-
-                    svgEl.style.setProperty("max-width", `min(${Math.round(targetW)}px, 100%)`, "important");
-                    svgEl.style.setProperty("max-height", `${Math.round(targetH)}px`, "important");
-                    svgEl.style.setProperty("width", "100%", "important");
-                    svgEl.style.setProperty("height", "auto", "important");
-                  }
-                }
-              }
-              container.removeAttribute("data-mermaid-pending");
-              container.setAttribute("data-mermaid-done", "true");
+              applyMermaidSvgToContainer(liveContainer, svg, diagramType, diagramKey);
+              sizeMermaidSvg(liveContainer, diagramType);
+              setCachedMermaidSvg(getMermaidSvgCacheKey(code), liveContainer.innerHTML);
             })
             .catch((err) => {
               console.error("Mermaid rendering failed:", err, code);
-              container.className = "mermaid-error";
-              container.innerHTML = `<strong>Không render được sơ đồ Mermaid.</strong><pre>${escapeHtml(code)}</pre>`;
-              container.removeAttribute("data-mermaid-pending");
-              container.setAttribute("data-mermaid-done", "true");
+              const liveContainer = getLiveMermaidContainer(container, diagramKey);
+              if (liveContainer) showMermaidError(liveContainer, t("documents.renderDiagramFailed"), code);
               const errEl = document.getElementById(`d${id}`);
               if (errEl) errEl.remove();
             });
@@ -6683,17 +6902,16 @@ function App() {
       })
       .catch((err) => {
         console.error("Cannot load Mermaid renderer:", err);
-        targetList.forEach(({ container, code }) => {
-          container.className = "mermaid-error";
-          container.innerHTML = `<strong>Không tải được engine Mermaid.</strong><pre>${escapeHtml(code)}</pre>`;
-          container.removeAttribute("data-mermaid-pending");
-          container.setAttribute("data-mermaid-done", "true");
+        uncachedTargets.forEach(({ container, code, diagramKey }) => {
+          const liveContainer = getLiveMermaidContainer(container, diagramKey);
+          if (liveContainer) showMermaidError(liveContainer, t("documents.loadDiagramEngineFailed"), code);
         });
       });
   }
 
-  // Render Mermaid diagrams whenever imported HTML mutates in the reader.
-  useEffect(() => {
+  // Render Mermaid diagrams after each reader paint. Refresh can replace the
+  // injected HTML with the same content string, so dependency-based reruns miss it.
+  useLayoutEffect(() => {
     if (activeTabNav !== "documents" || isEditingDocumentContent) return;
     let isCancelled = false;
     let raf = 0;
@@ -6708,22 +6926,16 @@ function App() {
       });
     };
 
-    scheduleRender();
-    [120, 400, 900].forEach((delay) => {
+    renderMermaidBlocks();
+    [80, 240, 700].forEach((delay) => {
       timers.push(window.setTimeout(scheduleRender, delay));
     });
-    const observer = new MutationObserver(scheduleRender);
-    if (documentContainerRef.current) {
-      observer.observe(documentContainerRef.current, { childList: true, subtree: true });
-    }
-
     return () => {
       isCancelled = true;
       window.cancelAnimationFrame(raf);
       timers.forEach((timer) => window.clearTimeout(timer));
-      observer.disconnect();
     };
-  }, [activeTabNav, selectedDocument.id, selectedDocument.contentHtml, fontSize, isEditingDocumentContent, appTheme]);
+  });
 
   useEffect(() => {
     if (isEditingDocumentContent) return;
@@ -6906,6 +7118,207 @@ function App() {
     );
   }
 
+  function getMermaidDiagramType(code: string) {
+    const trimmedCode = code.trim();
+    if (/^sequenceDiagram\b/i.test(trimmedCode)) return "sequence";
+    if (/^(?:stateDiagram|stateDiagram-v2)\b/i.test(trimmedCode)) return "state";
+    if (/^(?:classDiagram|erDiagram)\b/i.test(trimmedCode)) return "class-er";
+    if (/^(?:flowchart|graph)\s+(?:LR|RL)\b/i.test(trimmedCode)) return "flowchart-horizontal";
+    if (/^(?:flowchart|graph)\s+(?:TD|TB|BT)\b/i.test(trimmedCode)) return "flowchart-vertical";
+    if (/^(?:gantt|timeline|gitGraph|journey|quadrantChart)\b/i.test(trimmedCode)) return "timeline";
+    if (/^pie\b/i.test(trimmedCode)) return "pie";
+    return "generic";
+  }
+
+  function createMermaidPlaceholderHtml(code: string) {
+    const diagramType = getMermaidDiagramType(code);
+    const diagramKey = getMermaidDiagramKey(code);
+    return [
+      `<div class="mermaid-container mermaid-pending mermaid-type-${diagramType}"`,
+      ` data-diagram-type="${escapeHtml(diagramType)}"`,
+      ` data-mermaid-key="${escapeHtml(diagramKey)}"`,
+      ` data-mermaid-code-uri="${escapeHtml(encodeURIComponent(code))}">`,
+      `<div class="mermaid-loading-card">`,
+      `<span class="mermaid-loading-spinner"></span>`,
+      `<strong>${escapeHtml(t("documents.renderingDiagram"))}</strong>`,
+      `</div>`,
+      `</div>`
+    ].join("");
+  }
+
+  function applyMermaidSvgToContainer(container: HTMLElement, svg: string, diagramType: string, diagramKey: string, fromCache = false) {
+    container.innerHTML = svg;
+    container.className = `mermaid-container mermaid-type-${diagramType}`;
+    container.setAttribute("data-diagram-type", diagramType);
+    container.setAttribute("data-mermaid-theme", appTheme);
+    container.setAttribute("data-mermaid-key", diagramKey);
+    container.setAttribute("data-mermaid-cache", fromCache ? "hit" : "miss");
+    container.removeAttribute("data-mermaid-pending");
+    container.removeAttribute("data-mermaid-pending-since");
+    container.setAttribute("data-mermaid-done", "true");
+  }
+
+  function showMermaidError(container: HTMLElement, message: string, code: string) {
+    container.className = "mermaid-error";
+    container.innerHTML = `<strong>${escapeHtml(message)}</strong><pre>${escapeHtml(code)}</pre>`;
+    container.removeAttribute("data-mermaid-pending");
+    container.removeAttribute("data-mermaid-pending-since");
+    container.setAttribute("data-mermaid-done", "true");
+  }
+
+  function sizeMermaidSvg(container: HTMLElement, diagramType: string) {
+    const svgEl = container.querySelector("svg");
+    const viewBox = svgEl?.getAttribute("viewBox");
+    if (!svgEl || !viewBox) return;
+
+    const [, , vbWidth, vbHeight] = viewBox.split(/[\s,]+/).map(Number);
+    if (!vbWidth || !vbHeight) return;
+
+    const profile = MERMAID_SIZING_PROFILES[diagramType] || MERMAID_SIZING_PROFILES.generic;
+    const aspect = vbWidth / vbHeight;
+    const scaleUpFactor = profile.scaleUpFactor ?? 1;
+    const shouldScaleUp = scaleUpFactor > 1;
+    const desiredW = shouldScaleUp
+      ? Math.max(vbWidth * scaleUpFactor, profile.minDesiredW || vbWidth)
+      : profile.minDesiredW && vbWidth < profile.minDesiredW && aspect >= 0.95
+        ? profile.minDesiredW
+        : vbWidth;
+
+    let targetW = Math.min(desiredW, profile.maxW);
+    let targetH = targetW / aspect;
+
+    if (targetH > profile.maxH) {
+      targetH = profile.maxH;
+      targetW = targetH * aspect;
+    }
+    if (targetW > profile.maxW) {
+      targetW = profile.maxW;
+      targetH = targetW / aspect;
+    }
+
+    svgEl.style.setProperty("max-width", `min(${Math.round(targetW)}px, 100%)`, "important");
+    svgEl.style.setProperty("max-height", `${Math.round(targetH)}px`, "important");
+    svgEl.style.setProperty("width", "100%", "important");
+    svgEl.style.setProperty("height", "auto", "important");
+  }
+
+  function getLiveMermaidContainer(container: HTMLElement, diagramKey: string) {
+    if (container.isConnected) return container;
+    return documentContainerRef.current?.querySelector<HTMLElement>(`.mermaid-container[data-mermaid-key="${diagramKey}"]`) ?? null;
+  }
+
+  function getMermaidSvgCacheKey(code: string) {
+    return `${appTheme}:${getMermaidDiagramKey(code)}`;
+  }
+
+  function getCachedMermaidSvg(cacheKey: string) {
+    const memoryValue = mermaidSvgMemoryCache.get(cacheKey);
+    if (memoryValue) return memoryValue;
+
+    try {
+      const storedValue = sessionStorage.getItem(`${MERMAID_SVG_CACHE_PREFIX}${cacheKey}`);
+      if (storedValue) {
+        mermaidSvgMemoryCache.set(cacheKey, storedValue);
+        return storedValue;
+      }
+    } catch {
+      // Ignore storage access errors.
+    }
+
+    return null;
+  }
+
+  function setCachedMermaidSvg(cacheKey: string, svg: string) {
+    mermaidSvgMemoryCache.set(cacheKey, svg);
+
+    if (svg.length > MAX_SESSION_MERMAID_CACHE_CHARS) return;
+    try {
+      sessionStorage.setItem(`${MERMAID_SVG_CACHE_PREFIX}${cacheKey}`, svg);
+    } catch {
+      // Ignore quota/storage errors; memory cache still helps in-app refreshes.
+    }
+  }
+
+  function getMermaidDiagramKey(code: string) {
+    let hash = 0;
+    for (let index = 0; index < code.length; index += 1) {
+      hash = ((hash << 5) - hash + code.charCodeAt(index)) | 0;
+    }
+    return `mmd-${Math.abs(hash).toString(36)}-${code.length}`;
+  }
+
+  function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+    return new Promise<T>((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error("Mermaid render timed out")), timeoutMs);
+      promise.then(
+        (value) => {
+          window.clearTimeout(timeout);
+          resolve(value);
+        },
+        (error) => {
+          window.clearTimeout(timeout);
+          reject(error);
+        }
+      );
+    });
+  }
+
+  function decodeMermaidDataCode(container: HTMLElement) {
+    const encodedCode = container.getAttribute("data-mermaid-code-uri");
+    if (encodedCode) {
+      try {
+        return decodeURIComponent(encodedCode);
+      } catch {
+        return encodedCode;
+      }
+    }
+    return container.getAttribute("data-mermaid-code");
+  }
+
+  function prepareDocumentHtmlForReading(html: string) {
+    if (!html || typeof window === "undefined") return html;
+
+    const template = document.createElement("template");
+    template.innerHTML = html;
+
+    const replaceWithMermaidPlaceholder = (sourceElement: Element, rawCode: string) => {
+      const cleanCode = normalizeMermaidCode(rawCode);
+      if (!cleanCode) return false;
+
+      const wrapper = document.createElement("template");
+      wrapper.innerHTML = createMermaidPlaceholderHtml(cleanCode);
+      const placeholder = wrapper.content.firstElementChild;
+      if (!placeholder) return false;
+
+      sourceElement.replaceWith(placeholder);
+      return true;
+    };
+
+    Array.from(template.content.querySelectorAll<HTMLElement>("pre")).forEach((pre) => {
+      if (pre.closest(".mermaid-container, .mermaid-error")) return;
+      const codeNode = pre.querySelector<HTMLElement>("code");
+      const rawCode = pre.getAttribute("data-mermaid-code") || codeNode?.textContent || pre.textContent || "";
+      const className = `${pre.className} ${codeNode?.className ?? ""}`;
+      const cleanCode = normalizeMermaidCode(rawCode);
+      if (isMermaidDiagram(cleanCode, className)) {
+        replaceWithMermaidPlaceholder(pre, cleanCode);
+      }
+    });
+
+    Array.from(template.content.querySelectorAll<HTMLElement>("code, .mermaid")).forEach((node) => {
+      if (node.closest("pre, .mermaid-container, .mermaid-error")) return;
+      const rawCode = node.getAttribute("data-mermaid-code") || node.textContent || "";
+      const cleanCode = normalizeMermaidCode(rawCode);
+      if (isMermaidDiagram(cleanCode, node.className)) {
+        replaceWithMermaidPlaceholder(node, cleanCode);
+      }
+    });
+
+    const container = document.createElement("div");
+    container.append(template.content.cloneNode(true));
+    return container.innerHTML;
+  }
+
   function escapeHtml(value: string) {
     return value
       .replace(/&/g, "&amp;")
@@ -7055,16 +7468,17 @@ function App() {
 
   function relativeDashboardTime(value?: string | Date | null) {
     const date = parseDashboardDate(value);
-    if (!date) return "Chưa có cập nhật";
+    const isEn = i18n.language === "en";
+    if (!date) return isEn ? "No update" : "Chưa có cập nhật";
     const diffMs = Date.now() - date.getTime();
     const minutes = Math.max(Math.floor(diffMs / 60000), 0);
-    if (minutes < 1) return "Vừa xong";
-    if (minutes < 60) return `${minutes} phút trước`;
+    if (minutes < 1) return isEn ? "Just now" : "Vừa xong";
+    if (minutes < 60) return isEn ? `${minutes}m ago` : `${minutes} phút trước`;
     const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} giờ trước`;
+    if (hours < 24) return isEn ? `${hours}h ago` : `${hours} giờ trước`;
     const days = Math.floor(hours / 24);
-    if (days < 30) return `${days} ngày trước`;
-    return date.toLocaleDateString("vi-VN");
+    if (days < 30) return isEn ? `${days}d ago` : `${days} ngày trước`;
+    return date.toLocaleDateString(isEn ? "en-US" : "vi-VN");
   }
 
   function dashboardDocumentsSource() {
@@ -7471,9 +7885,6 @@ function App() {
       return;
     }
 
-    if (appTheme === "dark" && readingTheme === "paper") {
-      setReadingTheme("dark");
-    }
     setIsActionsDropdownOpen(false);
     setIsZenMode(true);
     setShowLibraryPanel(false);
@@ -7585,57 +7996,57 @@ function App() {
         </div>
 
         <div className="sidebar-main-nav">
-          <div className="nav-section-title">Danh mục</div>
+          <div className="nav-section-title">{t("nav.menu")}</div>
           <nav className="nav-list" aria-label="Project navigation">
             <button
               className={activeTabNav === "dashboard" ? "nav-item active" : "nav-item"}
               type="button"
-              title="Dashboard"
-              data-tooltip="Dashboard"
+              title={t("nav.dashboard")}
+              data-tooltip={t("nav.dashboard")}
               onClick={() => { setActiveTabNav("dashboard"); setIsMobileMenuOpen(false); }}
             >
               <div className="nav-item-content">
                 <LayoutDashboard size={17} />
-                <span>Dashboard</span>
+                <span>{t("nav.dashboard")}</span>
               </div>
             </button>
 
             <button
               className={activeTabNav === "projects" ? "nav-item active" : "nav-item"}
               type="button"
-              title="Dự án"
-              data-tooltip="Dự án"
+              title={t("nav.projects")}
+              data-tooltip={t("nav.projects")}
               onClick={() => { setActiveTabNav("projects"); setIsMobileMenuOpen(false); }}
             >
               <div className="nav-item-content">
                 <FolderKanban size={17} />
-                <span>Dự án</span>
+                <span>{t("nav.projects")}</span>
               </div>
             </button>
 
             <button
               className={activeTabNav === "documents" ? "nav-item active" : "nav-item"}
               type="button"
-              title="Tài liệu"
-              data-tooltip="Tài liệu"
+              title={t("nav.documents")}
+              data-tooltip={t("nav.documents")}
               onClick={() => { setActiveTabNav("documents"); setIsMobileMenuOpen(false); }}
             >
               <div className="nav-item-content">
                 <FileText size={17} />
-                <span>Tài liệu</span>
+                <span>{t("nav.documents")}</span>
               </div>
             </button>
 
             <button
               className={activeTabNav === "review" ? "nav-item active" : "nav-item"}
               type="button"
-              title="Workboard"
-              data-tooltip="Workboard"
+              title={t("nav.workboard")}
+              data-tooltip={t("nav.workboard")}
               onClick={() => { setActiveTabNav("review"); setIsMobileMenuOpen(false); }}
             >
               <div className="nav-item-content">
                 <Kanban size={17} />
-                <span>Workboard</span>
+                <span>{t("nav.workboard")}</span>
               </div>
             </button>
 
@@ -7643,13 +8054,13 @@ function App() {
               <button
                 className={activeTabNav === "admin" ? "nav-item active" : "nav-item"}
                 type="button"
-                title="Quản trị user"
-                data-tooltip="Quản trị user"
+                title={t("nav.adminUsers")}
+                data-tooltip={t("nav.adminUsers")}
                 onClick={() => { setActiveTabNav("admin"); setIsMobileMenuOpen(false); }}
               >
                 <div className="nav-item-content">
                   <Users size={17} />
-                  <span>Quản trị user</span>
+                  <span>{t("nav.adminUsers")}</span>
                 </div>
               </button>
             )}
@@ -7661,8 +8072,8 @@ function App() {
             <button
               className="sidebar-avatar-logout"
               type="button"
-              title={isSidebarCollapsed ? "Đăng xuất khỏi tài khoản" : currentUser.name}
-              aria-label={isSidebarCollapsed ? "Đăng xuất khỏi tài khoản" : currentUser.name}
+              title={isSidebarCollapsed ? t("common.logout") : currentUser.name}
+              aria-label={isSidebarCollapsed ? t("common.logout") : currentUser.name}
               onClick={() => {
                 if (isSidebarCollapsed) setIsLogoutConfirmOpen(true);
               }}
@@ -7672,22 +8083,14 @@ function App() {
                 alt={currentUser.name}
               />
             </button>
-            <div className="user-info" title={`${currentUser.name} (${currentUser.role === "ADMIN" ? "Admin" : currentUser.role === "MANAGER" ? "Manager" : "Nhân viên"})`}>
+            <div className="user-info" title={`${currentUser.name} (${currentUser.role === "ADMIN" ? t("common.admin") : currentUser.role === "MANAGER" ? t("common.manager") : t("common.employee")})`}>
               <strong title={currentUser.name}>{currentUser.name}</strong>
               <small style={{ color: "var(--accent-primary)", fontWeight: 500 }}>
-                {currentUser.role === "ADMIN" ? "Admin" : currentUser.role === "MANAGER" ? "Manager" : "Nhân viên"}
+                {currentUser.role === "ADMIN" ? t("common.admin") : currentUser.role === "MANAGER" ? t("common.manager") : t("common.employee")}
               </small>
             </div>
             <div className="user-actions-btns">
-              {renderThemeToggle()}
-              <button
-                type="button"
-                className="logout-icon-btn"
-                title="Đăng xuất khỏi tài khoản"
-                onClick={() => setIsLogoutConfirmOpen(true)}
-              >
-                <LogOut size={15} />
-              </button>
+              {renderSystemConfigMenu()}
             </div>
           </div>
         </div>
@@ -7700,17 +8103,17 @@ function App() {
       <section className="workspace">
         {/* Compact Topbar Header */}
         <header className="topbar">
-          <button className="mobile-hamburger" type="button" aria-label="Mở menu" onClick={() => setIsMobileMenuOpen((open) => !open)}>
+          <button className="mobile-hamburger" type="button" aria-label={t("common.openMenu")} onClick={() => setIsMobileMenuOpen((open) => !open)}>
             <Menu size={21} />
           </button>
           <div className="topbar-title-area">
             <p className="eyebrow">
               {activeTabNav === "dashboard"
-                ? `${currentUser.role === "ADMIN" ? "Admin" : currentUser.role === "MANAGER" ? "Manager" : "Nhân viên"} • ${roleDashboard?.scopeLabel ?? "Dashboard"}`
+                ? `${currentUser.role === "ADMIN" ? t("common.admin") : currentUser.role === "MANAGER" ? t("common.manager") : t("common.employee")} • ${(roleDashboard?.scopeLabel === "TOÀN BỘ CÔNG TY" && (i18n.resolvedLanguage === "en" || i18n.language === "en")) ? t("dashboard.allCompany") : (roleDashboard?.scopeLabel ?? "Dashboard")}`
                 : activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
-                  ? "Quản trị hệ thống • Users & Permissions"
+                  ? t("topbar.systemAdmin")
                   : activeTabNav === "projects"
-                    ? "Tổng quan danh mục dự án"
+                    ? t("topbar.projectCatalog")
                     : activeTabNav === "review"
                       ? `Project Workboard • ${selectedProject.code}`
                       : `${selectedProject.code} / ${selectedProject.client}`}
@@ -7719,19 +8122,19 @@ function App() {
               {activeTabNav === "dashboard"
                 ? (() => {
                   const h = new Date().getHours();
-                  const greeting = h < 12 ? "Chào buổi sáng" : h < 18 ? "Chào buổi chiều" : "Chào buổi tối";
+                  const greeting = h < 12 ? t("topbar.goodMorning") : h < 18 ? t("topbar.goodAfternoon") : t("topbar.goodEvening");
                   const nameParts = currentUser.name.trim().split(" ");
                   const lastName = nameParts.slice(-1)[0];
                   const displayName = /^\d+$/.test(lastName) || nameParts.length <= 1 ? currentUser.name : lastName;
                   return `${greeting}, ${displayName}!`;
                 })()
                 : activeTabNav === "admin" && (currentUser.role === "ADMIN" || currentUser.role === "MANAGER")
-                  ? "Quản Lý User & Phân Quyền"
+                  ? t("topbar.userAdminTitle")
                   : activeTabNav === "projects"
-                    ? "Quản Lý Dự Án"
+                    ? t("topbar.projectManagement")
                     : activeTabNav === "review"
                       ? (selectedProject?.name ?? "Workboard")
-                      : (selectedProject?.name ?? "Không gian làm việc")}
+                      : (selectedProject?.name ?? t("topbar.workspace"))}
             </h1>
           </div>
 
@@ -7742,17 +8145,17 @@ function App() {
                 className="exec-action secondary"
                 type="button"
                 disabled={isRefreshingDashboard}
-                title="Làm mới dữ liệu (Ctrl+R)"
+                title={`${t("common.refresh")} (Ctrl+R)`}
                 onClick={async () => {
                   await refreshWorkspaceDashboard();
                   addToast("success", "Đã làm mới dữ liệu", "Cập nhật dữ liệu Dashboard thành công.");
                 }}
               >
                 <RefreshCw size={14} className={isRefreshingDashboard ? "animate-spin" : ""} />
-                <span>{isRefreshingDashboard ? "Đang làm mới..." : "Làm mới"}</span>
+                <span>{isRefreshingDashboard ? t("common.refreshing") : t("common.refresh")}</span>
               </button>
-              <button className="exec-action primary" type="button" onClick={openCreateProjectModal} title="Tạo dự án mới (Ctrl+N)">
-                <Plus size={15} /> Tạo dự án mới
+              <button className="exec-action primary" type="button" onClick={openCreateProjectModal} title={`${t("topbar.createProject")} (Ctrl+N)`}>
+                <Plus size={15} /> {t("topbar.createProject")}
               </button>
             </div>
           )}
@@ -7764,23 +8167,23 @@ function App() {
                 className="exec-action secondary"
                 type="button"
                 disabled={isRefreshingDashboard}
-                title="Làm mới dữ liệu (Ctrl+R)"
+                title={`${t("common.refresh")} (Ctrl+R)`}
                 onClick={async () => {
                   await refreshWorkspaceDashboard();
                   addToast("success", "Đã làm mới dữ liệu", "Cập nhật dữ liệu danh sách dự án thành công.");
                 }}
               >
                 <RefreshCw size={14} className={isRefreshingDashboard ? "animate-spin" : ""} />
-                <span>{isRefreshingDashboard ? "Đang làm mới..." : "Làm mới"}</span>
+                <span>{isRefreshingDashboard ? t("common.refreshing") : t("common.refresh")}</span>
               </button>
               <button
                 className="exec-action primary"
                 type="button"
                 onClick={openCreateProjectModal}
-                title="Tạo dự án mới (Ctrl+N)"
+                title={`${t("topbar.createProject")} (Ctrl+N)`}
               >
                 <FolderPlus size={15} />
-                <span>Tạo dự án mới</span>
+                <span>{t("topbar.createProject")}</span>
               </button>
             </div>
           )}
@@ -7792,20 +8195,20 @@ function App() {
                 className="exec-action secondary"
                 type="button"
                 onClick={() => setAdminTriggerRefresh((prev) => prev + 1)}
-                title="Tải lại danh sách người dùng (Ctrl+R)"
+                title={`${t("common.refresh")} (Ctrl+R)`}
               >
                 <RefreshCw size={14} />
-                <span>Làm mới</span>
+                <span>{t("common.refresh")}</span>
               </button>
               {(currentUser.role === "ADMIN" || currentUser.role === "MANAGER") && (
                 <button
                   className="exec-action primary"
                   type="button"
                   onClick={() => setAdminTriggerCreate((prev) => prev + 1)}
-                  title="Tạo tài khoản (Ctrl+N)"
+                  title={`${t("topbar.createAccount")} (Ctrl+N)`}
                 >
                   <UserPlus size={15} />
-                  <span>Tạo Tài khoản</span>
+                  <span>{t("topbar.createAccount")}</span>
                 </button>
               )}
             </div>
@@ -7832,7 +8235,7 @@ function App() {
                 disabled={!selectedProject.id}
               >
                 <SlidersHorizontal size={14} />
-                <span>Tùy chỉnh board</span>
+                <span>{t("topbar.customizeBoard")}</span>
               </button>
               <button
                 className="exec-action secondary"
@@ -7843,20 +8246,20 @@ function App() {
                   addToast("success", "Đã làm mới Workboard", "Danh sách ticket đã được cập nhật.");
                 }}
                 disabled={!selectedProject.id || isLoadingWorkItems}
-                title="Làm mới Workboard (Ctrl+R)"
+                title={`${t("common.refresh")} Workboard (Ctrl+R)`}
               >
                 <RefreshCw size={14} className={isLoadingWorkItems ? "animate-spin" : ""} />
-                <span>{isLoadingWorkItems ? "Đang tải" : "Làm mới"}</span>
+                <span>{isLoadingWorkItems ? t("common.loading") : t("common.refresh")}</span>
               </button>
               <button
                 className="exec-action primary"
                 type="button"
                 onClick={() => openCreateWorkItemModal()}
                 disabled={!selectedProject.id}
-                title="Tạo ticket (Ctrl+N)"
+                title={`${t("topbar.createTicket")} (Ctrl+N)`}
               >
                 <Plus size={15} />
-                <span>Tạo ticket</span>
+                <span>{t("topbar.createTicket")}</span>
               </button>
             </div>
           )}
@@ -7868,7 +8271,7 @@ function App() {
                 <Search size={15} />
                 <input
                   id="main-search"
-                  placeholder="Tìm tài liệu, comment, tag..."
+                  placeholder={t("topbar.searchPlaceholder")}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onFocus={() => {
@@ -7881,13 +8284,13 @@ function App() {
               {isAdvancedSearchOpen && advancedSearchResults && (
                 <div className="advanced-search-popover">
                   <div className="advanced-search-header">
-                    <strong>Kết quả tìm kiếm</strong>
+                    <strong>{t("common.searchResults")}</strong>
                     <button type="button" onClick={() => setIsAdvancedSearchOpen(false)}><X size={13} /></button>
                   </div>
                   <div className="advanced-search-group">
-                    <span>Tài liệu</span>
+                    <span>{t("topbar.documentResults")}</span>
                     {advancedSearchResults.documents.length === 0 ? (
-                      <small>Không có tài liệu phù hợp.</small>
+                      <small>{t("topbar.noDocumentsFound")}</small>
                     ) : advancedSearchResults.documents.slice(0, 5).map((result) => (
                       <button
                         key={result.id}
@@ -7906,7 +8309,7 @@ function App() {
                     ))}
                   </div>
                   <div className="advanced-search-group">
-                    <span>Comment & Tag</span>
+                    <span>{t("topbar.commentTagResults")}</span>
                     {[...advancedSearchResults.comments.slice(0, 4).map((comment) => ({
                       id: comment.id,
                       documentId: comment.documentId,
@@ -7937,9 +8340,9 @@ function App() {
                     ))}
                   </div>
                   <div className="advanced-search-group">
-                    <span>Ticket</span>
+                    <span>{t("topbar.ticketResults")}</span>
                     {(advancedSearchResults.workItems?.length ?? 0) === 0 ? (
-                      <small>Không có ticket phù hợp.</small>
+                      <small>{t("topbar.noTicketsFound")}</small>
                     ) : advancedSearchResults.workItems.slice(0, 5).map((result) => (
                       <button
                         key={result.id}
@@ -7980,24 +8383,24 @@ function App() {
                 className="exec-action secondary"
                 type="button"
                 disabled={isRefreshingDashboard}
-                title="Làm mới dữ liệu (Ctrl+R)"
+                title={`${t("common.refresh")} (Ctrl+R)`}
                 onClick={async () => {
                   await refreshWorkspaceDashboard();
                   addToast("success", "Đã làm mới dữ liệu", "Cập nhật dữ liệu thành công.");
                 }}
               >
                 <RefreshCw size={14} className={isRefreshingDashboard ? "animate-spin" : ""} />
-                <span>{isRefreshingDashboard ? "Đang làm mới..." : "Làm mới"}</span>
+                <span>{isRefreshingDashboard ? t("common.refreshing") : t("common.refresh")}</span>
               </button>
               <button
                 className="exec-action primary"
                 type="button"
-                title="Import file vào dự án"
+                title={t("documents.importFile")}
                 disabled={!selectedProjectId}
                 onClick={openImportModal}
               >
                 <UploadCloud size={15} />
-                <span>Import File</span>
+                <span>{t("topbar.importFile")}</span>
               </button>
             </div>
           )}
@@ -8024,29 +8427,29 @@ function App() {
                     </svg>
                     <div className="dash-ring-label">
                       <strong>{empData.completionRate}%</strong>
-                      <small>hoàn thành</small>
+                      <small>{t("dashboard.completed")}</small>
                     </div>
                   </div>
                   <div className="dash-kpi-hero-info">
-                    <h3>Ticket của tôi</h3>
-                    <p>{empData.totalTickets} ticket được giao. {empData.doneCount} đã hoàn thành.</p>
+                    <h3>{t("dashboard.myTickets")}</h3>
+                    <p>{t("dashboard.assignedTicketSummary", { total: empData.totalTickets, done: empData.doneCount })}</p>
                     <div className="dash-kpi-hero-stats">
-                      <span><em>{empData.totalTickets - empData.doneCount}</em> đang mở</span>
-                      <span><em>{empData.doneCount}</em> done</span>
+                      <span><em>{empData.totalTickets - empData.doneCount}</em> {t("dashboard.openCount")}</span>
+                      <span><em>{empData.doneCount}</em> {t("dashboard.done")}</span>
                     </div>
                   </div>
                 </div>
                 <div className={`dash-kpi-sm kpi-blue dash-animate dash-delay-2${empData.inProgressCount > 0 ? " kpi-active" : ""}`}>
                   <div className="kpi-sm-icon"><Clock size={16} /></div>
                   <strong>{empData.inProgressCount}</strong>
-                  <span className="kpi-sm-label">Đang làm</span>
-                  <span className="kpi-sm-note">TODO + In Progress</span>
+                  <span className="kpi-sm-label">{t("dashboard.inProgress")}</span>
+                  <span className="kpi-sm-note">{t("dashboard.todoAndInProgress")}</span>
                 </div>
                 <div className={`dash-kpi-sm kpi-rose dash-animate dash-delay-3${empData.overdueCount > 0 ? " kpi-active" : ""}`}>
                   <div className="kpi-sm-icon"><AlertTriangle size={16} /></div>
                   <strong>{empData.overdueCount}</strong>
-                  <span className="kpi-sm-label">Quá hạn</span>
-                  <span className="kpi-sm-note">Cần xử lý gấp</span>
+                  <span className="kpi-sm-label">{t("dashboard.overdue")}</span>
+                  <span className="kpi-sm-note">{t("dashboard.urgent")}</span>
                 </div>
               </div>
 
@@ -8054,8 +8457,8 @@ function App() {
               <section className="dash-card dash-card-full dash-animate dash-delay-4">
                 <div className="dash-panel-header">
                   <div>
-                    <span className="dash-label">Công việc</span>
-                    <h3>Ticket đang mở</h3>
+                    <span className="dash-label">{t("dashboard.work")}</span>
+                    <h3>{t("dashboard.openTickets")}</h3>
                   </div>
                   <span className="dash-panel-badge">{empData.openItems.length} ticket</span>
                 </div>
@@ -8102,14 +8505,14 @@ function App() {
                       </button>
                     );
                   }) : (
-                    <div className="dash-empty">Không có ticket đang mở nào được giao cho bạn.</div>
+                    <div className="dash-empty">{t("dashboard.noOpenAssignedTickets")}</div>
                   )}
                 </div>
                 {empData.recentDoneItems.length > 0 && (
                   <>
                     <div className="dash-emp-done-divider">
                       <CheckCircle2 size={14} />
-                      <span>Hoàn thành gần đây</span>
+                      <span>{t("dashboard.recentlyCompleted")}</span>
                     </div>
                     <div className="dash-emp-ticket-list dash-emp-done-list">
                       {empData.recentDoneItems.map((item) => {
@@ -8136,11 +8539,11 @@ function App() {
               <div className="dash-main-grid">
                 <section className="dash-card dash-animate dash-delay-5">
                   <div className="dash-panel-header">
-                    <div>
-                      <span className="dash-label">Dự án</span>
-                      <h3>Dự án của tôi</h3>
+                  <div>
+                      <span className="dash-label">{t("dashboard.projects")}</span>
+                      <h3>{t("dashboard.myProjects")}</h3>
                     </div>
-                    <span className="dash-panel-badge">{empData.projectBreakdown.length} dự án</span>
+                    <span className="dash-panel-badge">{t("dashboard.projectCount", { count: empData.projectBreakdown.length })}</span>
                   </div>
                   <div className="dash-emp-project-list">
                     {empData.projectBreakdown.map((project) => (
@@ -8161,26 +8564,26 @@ function App() {
                           <span className="dash-emp-project-name">{project.name}</span>
                         </div>
                         <div className="dash-emp-project-stats">
-                          <span>{project.documents} tài liệu</span>
-                          {project.openComments > 0 && <span className="dash-chip dash-chip-amber">{project.openComments} comment</span>}
+                          <span>{project.documents} {t("dashboard.documents")}</span>
+                          {project.openComments > 0 && <span className="dash-chip dash-chip-amber">{project.openComments} {t("dashboard.comment")}</span>}
                         </div>
                         <ChevronRight size={14} className="dash-emp-project-arrow" />
                       </button>
                     ))}
                     {empData.projectBreakdown.length === 0 && (
-                      <div className="dash-empty">Bạn chưa được phân quyền vào dự án nào.</div>
+                      <div className="dash-empty">{t("dashboard.noAssignedProjects")}</div>
                     )}
                   </div>
                 </section>
 
                 <section className="dash-card dash-animate dash-delay-6">
                   <div className="dash-panel-header">
-                    <div>
-                      <span className="dash-label">Thông báo</span>
-                      <h3>Gần đây</h3>
+                  <div>
+                      <span className="dash-label">{t("dashboard.notifications")}</span>
+                      <h3>{t("dashboard.recent")}</h3>
                     </div>
                     {empData.unreadNotifications > 0 && (
-                      <span className="dash-panel-badge">{empData.unreadNotifications} chưa đọc</span>
+                      <span className="dash-panel-badge">{empData.unreadNotifications} {t("dashboard.unread")}</span>
                     )}
                   </div>
                   <div className="dash-emp-notif-list">
@@ -8192,21 +8595,13 @@ function App() {
                           {notificationIcon(notif)}
                         </div>
                         <div className="dash-emp-notif-content">
-                          <span className="dash-emp-notif-msg">{notif.message}</span>
-                          <span className="dash-emp-notif-time">
-                            {(() => {
-                              const d = new Date(notif.createdAt);
-                              const diff = Date.now() - d.getTime();
-                              if (diff < 3600000) return `${Math.max(1, Math.floor(diff / 60000))} phút trước`;
-                              if (diff < 86400000) return `${Math.floor(diff / 3600000)} giờ trước`;
-                              return `${Math.floor(diff / 86400000)} ngày trước`;
-                            })()}
-                          </span>
+                          <span className="dash-emp-notif-msg">{formatNotificationMessage(notif.message)}</span>
+                          <span className="dash-emp-notif-time">{relativeDashboardTime(notif.createdAt)}</span>
                         </div>
                       </button>
                     ))}
                     {empData.recentNotifications.length === 0 && (
-                      <div className="dash-empty">Chưa có thông báo nào.</div>
+                      <div className="dash-empty">{t("dashboard.noNotifications")}</div>
                     )}
                   </div>
                 </section>
@@ -8235,16 +8630,16 @@ function App() {
                   </svg>
                   <div className="dash-ring-label">
                     <strong>{executiveData.completionRate}%</strong>
-                    <small>hoàn thành</small>
+                    <small>{t("dashboard.completed")}</small>
                   </div>
                 </div>
                 <div className="dash-kpi-hero-info">
-                  <h3>Tiến độ tổng thể</h3>
-                  <p>Tỷ lệ ticket hoàn thành trên toàn bộ workboard. {executiveData.activeProjects} project đang hoạt động.</p>
+                  <h3>{t("dashboard.overallProgress")}</h3>
+                  <p>{t("dashboard.overallProgressNote", { count: executiveData.activeProjects })}</p>
                   <div className="dash-kpi-hero-stats">
-                    <span><em>{executiveData.openItems}</em> đang mở</span>
-                    <span><em>{executiveData.projectCount}</em> dự án</span>
-                    <span><em>{executiveData.totalDocuments}</em> tài liệu</span>
+                    <span><em>{executiveData.openItems}</em> {t("dashboard.openCount")}</span>
+                    <span><em>{executiveData.projectCount}</em> {t("dashboard.project")}</span>
+                    <span><em>{executiveData.totalDocuments}</em> {t("dashboard.documents")}</span>
                   </div>
                 </div>
               </div>
@@ -8253,16 +8648,16 @@ function App() {
               <div className="dash-kpi-sm kpi-blue dash-animate dash-delay-2">
                 <div className="kpi-sm-icon"><Clock size={16} /></div>
                 <strong>{executiveData.openItems}</strong>
-                <span className="kpi-sm-label">Ticket mở</span>
-                <span className="kpi-sm-note">Chưa hoàn thành</span>
+                <span className="kpi-sm-label">{t("dashboard.openTicketsMetric")}</span>
+                <span className="kpi-sm-note">{t("dashboard.unfinished")}</span>
               </div>
 
               {/* Small KPI — Bug critical */}
               <div className={`dash-kpi-sm kpi-rose dash-animate dash-delay-3${executiveData.criticalBugs > 0 ? " kpi-active" : ""}`}>
                 <div className="kpi-sm-icon"><AlertTriangle size={16} /></div>
                 <strong>{executiveData.criticalBugs}</strong>
-                <span className="kpi-sm-label">Bug critical</span>
-                <span className="kpi-sm-note">Cần ưu tiên xử lý</span>
+                <span className="kpi-sm-label">{t("dashboard.criticalBug")}</span>
+                <span className="kpi-sm-note">{t("dashboard.prioritize")}</span>
               </div>
 
 
@@ -8274,10 +8669,10 @@ function App() {
               <section className="dash-card dash-animate dash-delay-6">
                 <div className="dash-panel-header">
                   <div>
-                    <span className="dash-label">Tổng quan</span>
-                    <h3>Tài liệu theo dự án</h3>
+                    <span className="dash-label">{t("dashboard.overview")}</span>
+                    <h3>{t("dashboard.documentsByProject")}</h3>
                   </div>
-                  <span className="dash-panel-badge">{projectsList.length} dự án · {documentsList.length} tài liệu</span>
+                  <span className="dash-panel-badge">{t("dashboard.projectDocumentCount", { projects: projectsList.length, documents: documentsList.length })}</span>
                 </div>
                 <div className="dash-list">
                   {projectsList.map((project) => {
@@ -8306,13 +8701,13 @@ function App() {
                         </div>
                         <div className="dash-list-row-right">
                           {draftCount > 0 && <span className="dash-chip dash-chip-amber">{draftCount} Draft</span>}
-                          {deployedCount > 0 && <span className="dash-chip dash-chip-emerald">{deployedCount} Triển khai</span>}
-                          <span className="dash-list-count">{projectDocs.length} tài liệu</span>
+                          {deployedCount > 0 && <span className="dash-chip dash-chip-emerald">{deployedCount} {t("documents.deployed")}</span>}
+                          <span className="dash-list-count">{projectDocs.length} {t("dashboard.documents")}</span>
                         </div>
                       </button>
                     );
                   })}
-                  {projectsList.length === 0 && <div className="dash-empty">Chưa có dự án nào.</div>}
+                  {projectsList.length === 0 && <div className="dash-empty">{t("dashboard.noProjects")}</div>}
                 </div>
               </section>
 
@@ -8320,8 +8715,8 @@ function App() {
               <section className="dash-card dash-animate dash-delay-7">
                 <div className="dash-panel-header">
                   <div>
-                    <span className="dash-label">Trạng thái</span>
-                    <h3>Phân bổ ticket</h3>
+                    <span className="dash-label">{t("dashboard.status")}</span>
+                    <h3>{t("dashboard.ticketDistribution")}</h3>
                   </div>
                   <span className="dash-panel-badge">{executiveData.totalStatusBreakdown} ticket</span>
                 </div>
@@ -8375,9 +8770,9 @@ function App() {
                 <div className="dash-panel-header">
                   <div>
                     <span className="dash-label">Workload</span>
-                    <h3>Theo người phụ trách</h3>
+                    <h3>{t("dashboard.byAssignee")}</h3>
                   </div>
-                  <span className="dash-panel-badge">{filteredWorkloadRows.length}/{executiveData.workloadRows.length} người</span>
+                  <span className="dash-panel-badge">{filteredWorkloadRows.length}/{executiveData.workloadRows.length} {t("dashboard.people")}</span>
                 </div>
                 <div className="dash-workload-filters">
                   <div className="dash-workload-select">
@@ -8388,8 +8783,8 @@ function App() {
                     >
                       <span>
                         {workloadProjectFilter === "ALL"
-                          ? "Tất cả dự án"
-                          : projectsList.find((p) => p.id === workloadProjectFilter)?.name ?? "Dự án"}
+                          ? t("dashboard.allProjects")
+                          : projectsList.find((p) => p.id === workloadProjectFilter)?.name ?? t("nav.projects")}
                       </span>
                       <ChevronDown size={13} className={openFilterDropdown === "workloadProject" ? "rotate" : ""} />
                     </button>
@@ -8402,7 +8797,7 @@ function App() {
                             className={workloadProjectFilter === "ALL" ? "selected" : ""}
                             onClick={() => { setWorkloadProjectFilter("ALL"); setOpenFilterDropdown(null); }}
                           >
-                            <span>Tất cả dự án</span>
+                            <span>{t("dashboard.allProjects")}</span>
                             {workloadProjectFilter === "ALL" && <CheckCheck size={14} />}
                           </button>
                           {projectsList.map((project) => {
@@ -8431,10 +8826,10 @@ function App() {
                     >
                       <span>
                         {({
-                          ALL: "Tất cả % hoàn thiện",
-                          LOW: "Dưới 50%",
-                          MID: "50% – dưới 100%",
-                          DONE: "100% hoàn thiện"
+                          ALL: t("dashboard.allCompletion"),
+                          LOW: t("dashboard.below50"),
+                          MID: t("dashboard.midCompletion"),
+                          DONE: t("dashboard.fullCompletion")
                         } as Record<typeof workloadCompletionFilter, string>)[workloadCompletionFilter]}
                       </span>
                       <ChevronDown size={13} className={openFilterDropdown === "workloadCompletion" ? "rotate" : ""} />
@@ -8444,10 +8839,10 @@ function App() {
                         <div className="dash-workload-dropdown-scrim" onClick={() => setOpenFilterDropdown(null)} />
                         <div className="dash-workload-dropdown">
                           {([
-                            { value: "ALL", label: "Tất cả % hoàn thiện" },
-                            { value: "LOW", label: "Dưới 50%" },
-                            { value: "MID", label: "50% – dưới 100%" },
-                            { value: "DONE", label: "100% hoàn thiện" }
+                            { value: "ALL", label: t("dashboard.allCompletion") },
+                            { value: "LOW", label: t("dashboard.below50") },
+                            { value: "MID", label: t("dashboard.midCompletion") },
+                            { value: "DONE", label: t("dashboard.fullCompletion") }
                           ] as const).map((option) => {
                             const isSelected = workloadCompletionFilter === option.value;
                             return (
@@ -8471,7 +8866,7 @@ function App() {
                     <input
                       value={workloadNameFilter}
                       onChange={(e) => setWorkloadNameFilter(e.target.value)}
-                      placeholder="Lọc theo tên..."
+                      placeholder={t("dashboard.filterByName")}
                     />
                   </label>
                 </div>
@@ -8492,13 +8887,13 @@ function App() {
                         <div className="dash-wl-top">
                           <span className="dash-wl-name">{row.name}</span>
                           <div className="dash-wl-metrics">
-                            <span><em>{row.total}</em> Tổng</span>
-                            <span><em>{row.open}</em> Mở</span>
+                            <span><em>{row.total}</em> {t("dashboard.total")}</span>
+                            <span><em>{row.open}</em> {t("dashboard.open")}</span>
                             <span><em>{row.done}</em> Done</span>
                           </div>
                         </div>
                         <div className="dash-wl-progress-row">
-                          <span>Tiến độ</span>
+                          <span>{t("dashboard.progress")}</span>
                           <strong>{row.done}/{row.total} done · <em>{donePercent}%</em></strong>
                         </div>
                         <div className="dash-wl-bar-track">
@@ -8508,13 +8903,13 @@ function App() {
                           <span className="dash-chip dash-chip-default"><em>{row.backlog}</em> Backlog</span>
                           <span className="dash-chip dash-chip-blue"><em>{row.todo}</em> Todo</span>
                           <span className="dash-chip dash-chip-amber"><em>{row.inProgress}</em> In Progress</span>
-                          <span className="dash-chip dash-chip-violet"><em>{row.review}</em> Review</span>
+                          <span className="dash-chip dash-chip-violet"><em>{row.review}</em> QA/Test</span>
                           <span className="dash-chip dash-chip-emerald"><em>{row.done}</em> Done</span>
                         </div>
                       </button>
                     );
                   })}
-                  {filteredWorkloadRows.length === 0 && <div className="dash-empty">Không tìm thấy người phù hợp.</div>}
+                  {filteredWorkloadRows.length === 0 && <div className="dash-empty">{t("common.noResults")}</div>}
                 </div>
               </section>
 
@@ -8522,10 +8917,10 @@ function App() {
               <section className="dash-card dash-animate dash-delay-9">
                 <div className="dash-panel-header">
                   <div>
-                    <span className="dash-label">Tiến độ</span>
-                    <h3>Theo dự án</h3>
+                    <span className="dash-label">{t("dashboard.progressUpper")}</span>
+                    <h3>{t("dashboard.byProject")}</h3>
                   </div>
-                  <span className="dash-panel-badge">{executiveData.projectRows.length} dự án</span>
+                  <span className="dash-panel-badge">{executiveData.projectRows.length} {t("dashboard.project")}</span>
                 </div>
                 <div className="dash-proj-progress-list">
                   {executiveData.projectRows.map((project) => (
@@ -8548,7 +8943,7 @@ function App() {
                         <div className="dash-wl-bar-fill" style={{ width: `${project.completionRate}%` }} />
                       </div>
                       <div className="dash-proj-row-stats">
-                        <span><em>{project.items}</em> Tổng</span>
+                        <span><em>{project.items}</em> {t("dashboard.total")}</span>
                         <span>·</span>
                         <span><em>{project.doneItems}</em> Done</span>
                       </div>
@@ -8556,12 +8951,12 @@ function App() {
                         {project.backlogItems > 0 && <span className="dash-chip dash-chip-default"><em>{project.backlogItems}</em> Backlog</span>}
                         {project.todoItems > 0 && <span className="dash-chip dash-chip-blue"><em>{project.todoItems}</em> Todo</span>}
                         {project.inProgressItems > 0 && <span className="dash-chip dash-chip-amber"><em>{project.inProgressItems}</em> In Progress</span>}
-                        {project.reviewItems > 0 && <span className="dash-chip dash-chip-violet"><em>{project.reviewItems}</em> Review</span>}
+                        {project.reviewItems > 0 && <span className="dash-chip dash-chip-violet"><em>{project.reviewItems}</em> QA/Test</span>}
                         {project.doneItems > 0 && <span className="dash-chip dash-chip-emerald"><em>{project.doneItems}</em> Done</span>}
                       </div>
                     </button>
                   ))}
-                  {executiveData.projectRows.length === 0 && <div className="dash-empty">Chưa có dự án nào.</div>}
+                  {executiveData.projectRows.length === 0 && <div className="dash-empty">{t("dashboard.noProjects")}</div>}
                 </div>
               </section>
             </div>
@@ -8572,20 +8967,20 @@ function App() {
               <section className="dash-card dash-animate dash-delay-10">
                 <div className="dash-panel-header">
                   <div>
-                    <span className="dash-label">Cảnh báo</span>
-                    <h3>Rủi ro Workboard</h3>
+                    <span className="dash-label">{t("dashboard.alertLabel")}</span>
+                    <h3>{t("dashboard.workboardRisks")}</h3>
                   </div>
-                  <span className="dash-panel-badge">{executiveData.riskItems.length} item</span>
+                  <span className="dash-panel-badge">{executiveData.riskItems.length} {t("dashboard.itemCount")}</span>
                 </div>
                 <div className="dash-list">
                   {executiveData.riskItems.map((item) => {
                     const project = projectsList.find((p) => p.id === item.projectId);
                     const assignees = workItemAssigneeNames(item);
                     const isUnassigned = !assignees || assignees.length === 0;
-                    const riskReason = item.status === "BLOCKED" ? "Blocked"
-                      : isWorkItemOverdue(item) ? "Quá hạn"
-                      : item.type === "BUG" && item.priority === "CRITICAL" ? "Critical bug"
-                      : isUnassigned ? "Chưa giao"
+                    const riskReason = item.status === "BLOCKED" ? t("workboard.blocked", "Blocked")
+                      : isWorkItemOverdue(item) ? t("dashboard.overdue", "Quá hạn")
+                      : item.type === "BUG" && item.priority === "CRITICAL" ? t("workboard.criticalBug", "Critical bug")
+                      : isUnassigned ? t("dashboard.unassigned", "Chưa giao")
                       : `${WORK_ITEM_PRIORITY_LABEL[item.priority]} priority`;
                     const isHighRisk = item.status === "BLOCKED" || item.priority === "CRITICAL" || isWorkItemOverdue(item) || isUnassigned;
                     const chipClass = (item.status === "BLOCKED" || isWorkItemOverdue(item) || (item.type === "BUG" && item.priority === "CRITICAL"))
@@ -8606,7 +9001,7 @@ function App() {
                       </button>
                     );
                   })}
-                  {executiveData.riskItems.length === 0 && <div className="dash-empty">Không có ticket rủi ro.</div>}
+                  {executiveData.riskItems.length === 0 && <div className="dash-empty">{t("dashboard.noRiskTickets")}</div>}
                 </div>
               </section>
 
@@ -8614,10 +9009,10 @@ function App() {
               <section className="dash-card dash-animate dash-delay-10">
                 <div className="dash-panel-header">
                   <div>
-                    <span className="dash-label">Ticket</span>
-                    <h3>Ticket gần đây</h3>
+                    <span className="dash-label">{t("dashboard.ticketLabel")}</span>
+                    <h3>{t("dashboard.recentTickets")}</h3>
                   </div>
-                  <span className="dash-panel-badge">{executiveData.recentWorkItems.length} item</span>
+                  <span className="dash-panel-badge">{executiveData.recentWorkItems.length} {t("dashboard.itemCount")}</span>
                 </div>
                 <div className="dash-list">
                   {executiveData.recentWorkItems.map((item) => {
@@ -8640,7 +9035,7 @@ function App() {
                       </button>
                     );
                   })}
-                  {executiveData.recentWorkItems.length === 0 && <div className="dash-empty">Chưa có ticket nào gần đây.</div>}
+                  {executiveData.recentWorkItems.length === 0 && <div className="dash-empty">{t("dashboard.noRecentTickets")}</div>}
                 </div>
               </section>
 
@@ -8648,10 +9043,10 @@ function App() {
               <section className="dash-card dash-animate dash-delay-10">
                 <div className="dash-panel-header">
                   <div>
-                    <span className="dash-label">Ưu tiên</span>
-                    <h3>Project cần chú ý</h3>
+                    <span className="dash-label">{t("dashboard.priorityLabel")}</span>
+                    <h3>{t("dashboard.projectsNeedAttention")}</h3>
                   </div>
-                  <span className="dash-panel-badge">Risk</span>
+                  <span className="dash-panel-badge">{t("dashboard.riskBadge")}</span>
                 </div>
                 <div className="dash-list">
                   {executiveData.projectRows
@@ -8665,14 +9060,14 @@ function App() {
                           <span className="dash-list-name">{project.name}</span>
                         </div>
                         <div className="dash-list-row-right">
-                          {project.blockedItems > 0 && <span className="dash-chip dash-chip-rose">{project.blockedItems} blocked</span>}
-                          {project.overdueItems > 0 && <span className="dash-chip dash-chip-rose">{project.overdueItems} quá hạn</span>}
-                          {project.criticalBugs > 0 && <span className="dash-chip dash-chip-rose">{project.criticalBugs} critical</span>}
+                          {project.blockedItems > 0 && <span className="dash-chip dash-chip-rose">{project.blockedItems} {t("dashboard.blockedTag")}</span>}
+                          {project.overdueItems > 0 && <span className="dash-chip dash-chip-rose">{project.overdueItems} {t("dashboard.overdueTag")}</span>}
+                          {project.criticalBugs > 0 && <span className="dash-chip dash-chip-rose">{project.criticalBugs} {t("dashboard.criticalTag")}</span>}
                         </div>
                       </button>
                     ))}
                   {executiveData.projectRows.filter((p) => p.blockedItems > 0 || p.overdueItems > 0 || p.criticalBugs > 0).length === 0 && (
-                    <div className="dash-empty">Không có project cần cảnh báo.</div>
+                    <div className="dash-empty">{t("dashboard.noProjectAlerts")}</div>
                   )}
                 </div>
               </section>
@@ -8687,23 +9082,26 @@ function App() {
               <div className="hub-hero-card hero-primary">
                 <div className="hub-card-header">
                   <span className="hub-hero-icon"><FolderKanban size={18} /></span>
-                  <span className="hub-hero-label">Tổng số dự án</span>
+                  <span className="hub-hero-label">{t("projects.totalProjects")}</span>
                 </div>
                 <div className="hub-card-body">
                   <strong className="hub-hero-value">{visibleProjectsList.length}</strong>
-                  <span className="hub-hero-sub-pill">Đang vận hành</span>
+                  <span className="hub-hero-sub-pill">{t("projects.activeStatus")}</span>
                 </div>
               </div>
 
               <div className="hub-hero-card hero-emerald">
                 <div className="hub-card-header">
                   <span className="hub-hero-icon"><FileText size={18} /></span>
-                  <span className="hub-hero-label">Tài liệu hệ thống</span>
+                  <span className="hub-hero-label">{t("projects.systemDocuments")}</span>
                 </div>
                 <div className="hub-card-body">
                   <strong className="hub-hero-value">{documentsList.length}</strong>
                   <span className="hub-hero-sub-pill">
-                    {documentsList.filter((d) => d.status === "Triển khai").length} triển khai · {documentsList.filter((d) => d.status === "Draft").length} draft
+                    {t("projects.deployedAndDraft", {
+                      deployed: documentsList.filter((d) => d.status === "Triển khai").length,
+                      draft: documentsList.filter((d) => d.status === "Draft").length
+                    })}
                   </span>
                 </div>
               </div>
@@ -8711,25 +9109,25 @@ function App() {
               <div className="hub-hero-card hero-amber">
                 <div className="hub-card-header">
                   <span className="hub-hero-icon"><MessageSquareText size={18} /></span>
-                  <span className="hub-hero-label">Trao đổi cần xử lý</span>
+                  <span className="hub-hero-label">{t("projects.openDiscussions")}</span>
                 </div>
                 <div className="hub-card-body">
                   <strong className="hub-hero-value">
                     {visibleProjectsList.reduce((acc, p) => acc + (getProjectOpenCommentsCount(p.id) || p.openComments || 0), 0)}
                   </strong>
-                  <span className="hub-hero-sub-pill">Comment đang mở</span>
+                  <span className="hub-hero-sub-pill">{t("projects.openCommentsPill")}</span>
                 </div>
               </div>
 
               <div className="hub-hero-card hero-indigo">
                 <div className="hub-card-header">
                   <span className="hub-hero-icon"><Kanban size={18} /></span>
-                  <span className="hub-hero-label">Workboard Tickets</span>
+                  <span className="hub-hero-label">{t("projects.workboardTickets")}</span>
                 </div>
                 <div className="hub-card-body">
                   <strong className="hub-hero-value">{dashboardWorkItems.length}</strong>
                   <span className="hub-hero-sub-pill">
-                    {dashboardWorkItems.filter((i) => i.status === "DONE").length} đã hoàn thành
+                    {t("projects.completedCount", { count: dashboardWorkItems.filter((i) => i.status === "DONE").length })}
                   </span>
                 </div>
               </div>
@@ -8739,10 +9137,10 @@ function App() {
             <div className="project-hub-section-header">
               <div className="section-header-left">
                 <div className="section-title-wrap">
-                  <h3>Danh sách dự án</h3>
-                  <span className="project-count-badge">{filteredProjectsHub.length} dự án</span>
+                  <h3>{t("projects.projectList")}</h3>
+                  <span className="project-count-badge">{t("projects.projectCount", { count: filteredProjectsHub.length })}</span>
                 </div>
-                <p className="section-subtitle">Không gian làm việc & quản lý tài liệu chi tiết cho từng dự án</p>
+                <p className="section-subtitle">{t("projects.workspaceSubtitle")}</p>
               </div>
 
               <div className="project-hub-filter-bar">
@@ -8751,14 +9149,14 @@ function App() {
                   <input
                     value={projectHubSearch}
                     onChange={(e) => setProjectHubSearch(e.target.value)}
-                    placeholder="Tìm tên hoặc mã dự án..."
+                    placeholder={t("projects.searchPlaceholder")}
                   />
                   {projectHubSearch && (
                     <button
                       className="search-clear-btn"
                       type="button"
                       onClick={() => setProjectHubSearch("")}
-                      title="Xóa tìm kiếm"
+                      title={t("projects.clearSearchTitle")}
                     >
                       <X size={12} />
                     </button>
@@ -8770,9 +9168,9 @@ function App() {
                   onChange={setProjectHubFilter}
                   icon={Filter}
                   options={[
-                    { value: "all", label: "Tất cả dự án" },
-                    { value: "active", label: "Dự án có tài liệu" },
-                    { value: "has_comments", label: "Có trao đổi chưa xử lý" }
+                    { value: "all", label: t("projects.allProjects") },
+                    { value: "active", label: t("projects.projectsWithDocs") },
+                    { value: "has_comments", label: t("projects.hasOpenComments") }
                   ]}
                 />
 
@@ -8781,11 +9179,11 @@ function App() {
                   onChange={setProjectHubSort}
                   icon={SlidersHorizontal}
                   options={[
-                    { value: "newest", label: "Sắp xếp: Mới nhất" },
-                    { value: "oldest", label: "Sắp xếp: Cũ nhất" },
-                    { value: "name_asc", label: "Tên: A → Z" },
-                    { value: "name_desc", label: "Tên: Z → A" },
-                    { value: "docs_desc", label: "Nhiều tài liệu nhất" }
+                    { value: "newest", label: t("projects.sortNewest") },
+                    { value: "oldest", label: t("projects.sortOldest") },
+                    { value: "name_asc", label: t("projects.sortNameAsc") },
+                    { value: "name_desc", label: t("projects.sortNameDesc") },
+                    { value: "docs_desc", label: t("projects.sortDocsDesc") }
                   ]}
                 />
               </div>
@@ -8797,14 +9195,14 @@ function App() {
                   <div className="project-hub-empty-icon">
                     <FolderKanban size={36} />
                   </div>
-                  <h4>Không tìm thấy dự án phù hợp</h4>
-                  <p>Thử điều chỉnh từ khóa tìm kiếm hoặc tạo một không gian dự án mới cho team.</p>
+                  <h4>{t("projects.noMatchingProjects")}</h4>
+                  <p>{t("projects.noMatchingProjectsSub")}</p>
                   <button
                     className="btn-primary"
                     type="button"
                     onClick={openCreateProjectModal}
                   >
-                    <FolderPlus size={16} /> Tạo dự án mới
+                    <FolderPlus size={16} /> {t("projects.createProject")}
                   </button>
                 </div>
               ) : (
@@ -8828,14 +9226,14 @@ function App() {
                         <div className="project-hub-card-code">
                           <span className="code-tag">{project.code}</span>
                           <span className="active-pill">
-                            <span className="active-dot"></span> Vận hành
+                            <span className="active-dot"></span> {t("projects.active")}
                           </span>
                         </div>
                         <div className="project-hub-card-actions">
                           <button
                             type="button"
                             className="hub-card-btn"
-                            title="Sửa thông tin dự án"
+                            title={t("projects.editProjectInfo")}
                             onClick={(e) => openEditProjectModal(project, e)}
                           >
                             <Pencil size={13} />
@@ -8843,7 +9241,7 @@ function App() {
                           <button
                             type="button"
                             className="hub-card-btn danger"
-                            title="Xóa dự án"
+                            title={t("projects.deleteProject")}
                             onClick={(e) => requestDeleteProject(project.id, e)}
                           >
                             <Trash2 size={13} />
@@ -8854,7 +9252,7 @@ function App() {
                       <div className="project-hub-card-body">
                         <h3>{project.name}</h3>
                         <p className="project-hub-unit">
-                          <Layers size={13} /> {project.client || "Internal Team • Vận hành nội bộ"}
+                          <Layers size={13} /> {project.client || t("projects.internalTeamClient")}
                         </p>
                       </div>
 
@@ -8877,7 +9275,7 @@ function App() {
                       <div className="project-hub-card-footer">
                         {(() => {
                           const allMembers = members.length > 0 ? members : [{ id: currentUser.id, name: currentUser.name, email: currentUser.email, role: currentUser.role }];
-                          const tooltipText = allMembers.map((m) => `${m.name} (${m.projectRole || m.role || "Thành viên"})`).join("\n");
+                          const tooltipText = allMembers.map((m) => `${m.name} (${m.projectRole || m.role || t("projects.memberRole")})`).join("\n");
 
                           return (
                             <div className="project-members-stack">
@@ -8895,20 +9293,20 @@ function App() {
                                 <div className="members-tooltip-popup">
                                   <div className="tooltip-header">
                                     <Users size={12} />
-                                    <span>Người có quyền ({allMembers.length})</span>
+                                    <span>{t("projects.membersWithAccess", { count: allMembers.length })}</span>
                                   </div>
                                   <div className="tooltip-member-list">
                                     {allMembers.map((m, idx) => {
                                       const roleStr = m.projectRole || m.role;
                                       const roleLabel = roleStr === "MANAGER" || roleStr === "ADMIN"
-                                        ? "Quản trị viên dự án"
+                                        ? t("projects.projectManagerRole")
                                         : roleStr === "EDITOR"
-                                          ? "Chỉnh sửa (Editor)"
+                                          ? t("projects.editorRole")
                                           : roleStr === "REVIEWER"
-                                            ? "Xem & Duyệt (Reviewer)"
+                                            ? t("projects.reviewerRole")
                                             : roleStr === "VIEWER"
-                                              ? "Chỉ xem (Viewer)"
-                                              : "Thành viên";
+                                              ? t("projects.viewerRole")
+                                              : t("projects.memberRole");
                                       return (
                                         <div className="tooltip-member-item" key={m.id || idx}>
                                           <span className="mini-avatar">{m.name.charAt(0).toUpperCase()}</span>
@@ -8924,7 +9322,7 @@ function App() {
                               </div>
 
                               <span className="project-workitem-count">
-                                <Kanban size={12} /> {projectWorkItems.length} tickets
+                                <Kanban size={12} /> {t("projects.ticketsCount", { count: projectWorkItems.length })}
                               </span>
                             </div>
                           );
@@ -8935,7 +9333,7 @@ function App() {
                           className="btn-primary full-w hub-open-btn"
                           onClick={() => handleOpenProjectWorkspace(project.id)}
                         >
-                          <span>Truy cập dự án</span>
+                          <span>{t("projects.accessProject")}</span>
                           <ExternalLink size={14} />
                         </button>
                       </div>
@@ -8960,11 +9358,11 @@ function App() {
           <section className="project-workboard-page">
             <div className="workboard-metrics">
               {[
-                { label: "Đang mở", value: workboardMetrics.openItems.length, Icon: Clock, tone: "indigo" },
-                { label: "Bug critical", value: workboardMetrics.criticalBugs.length, Icon: AlertTriangle, tone: "rose" },
-                { label: "Quá hạn", value: workboardMetrics.overdueItems.length, Icon: AlertTriangle, tone: "amber" },
-                { label: "Blocked", value: workboardMetrics.blockedItems.length, Icon: GitBranch, tone: "violet" },
-                { label: "Hoàn thành", value: `${workboardMetrics.completionRate}%`, Icon: CheckCheck, tone: "emerald" }
+                { label: t("workboard.open"), value: workboardMetrics.openItems.length, Icon: Clock, tone: "indigo" },
+                { label: t("workboard.criticalBug"), value: workboardMetrics.criticalBugs.length, Icon: AlertTriangle, tone: "rose" },
+                { label: t("workboard.overdue"), value: workboardMetrics.overdueItems.length, Icon: AlertTriangle, tone: "amber" },
+                { label: t("workboard.blocked"), value: workboardMetrics.blockedItems.length, Icon: GitBranch, tone: "violet" },
+                { label: t("workboard.completed"), value: `${workboardMetrics.completionRate}%`, Icon: CheckCheck, tone: "emerald" }
               ].map(({ label, value, Icon, tone }) => (
                 <div className={`workboard-metric ${tone}`} key={label}>
                   <span><Icon size={16} /></span>
@@ -8978,7 +9376,7 @@ function App() {
               <div className="workboard-filter-menu-bar">
                 <div className="filter-bar-label">
                   <SlidersHorizontal size={14} />
-                  <span>Bộ lọc:</span>
+                  <span>{t("workboard.filters")}:</span>
                 </div>
 
 	                <label className="workboard-search-box">
@@ -8986,15 +9384,15 @@ function App() {
 	                  <input
 	                    value={workboardSearchQuery}
 	                    onChange={(event) => setWorkboardSearchQuery(event.target.value)}
-	                    placeholder="Tìm ticket..."
+	                    placeholder={t("workboard.searchTicket")}
 	                  />
 	                </label>
 
 	                <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
-	                  <span className="select-label">Trạng thái:</span>
+	                  <span className="select-label">{t("workboard.status")}:</span>
 	                  <button type="button" className="form-select-trigger" onClick={() => setOpenFilterDropdown(openFilterDropdown === "status" ? null : "status")}>
 	                    <span className="trigger-label-text">
-	                      {({ ALL: "Tất cả trạng thái", OPEN: "Đang mở", BLOCKED: "Blocked", OVERDUE: "Quá hạn", DONE: "Đã xong" } as Record<typeof workboardStatusFilter, string>)[workboardStatusFilter]}
+	                      {({ ALL: t("workboard.allStatuses"), OPEN: t("workboard.open"), BLOCKED: t("workboard.blocked"), OVERDUE: t("workboard.overdue"), DONE: t("workboard.done") } as Record<typeof workboardStatusFilter, string>)[workboardStatusFilter]}
 	                    </span>
 	                    <ChevronDown size={13} className={`trigger-arrow-icon${openFilterDropdown === "status" ? " rotate" : ""}`} />
 	                  </button>
@@ -9003,11 +9401,11 @@ function App() {
 	                      <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setOpenFilterDropdown(null)} />
 	                      <div className="custom-form-select-menu">
 	                        {([
-	                          { value: "ALL", label: "Tất cả trạng thái" },
-	                          { value: "OPEN", label: "Đang mở" },
-	                          { value: "BLOCKED", label: "Blocked" },
-	                          { value: "OVERDUE", label: "Quá hạn" },
-	                          { value: "DONE", label: "Đã xong" }
+	                          { value: "ALL", label: t("workboard.allStatuses") },
+	                          { value: "OPEN", label: t("workboard.open") },
+	                          { value: "BLOCKED", label: t("workboard.blocked") },
+	                          { value: "OVERDUE", label: t("workboard.overdue") },
+	                          { value: "DONE", label: t("workboard.done") }
 	                        ] as const).map((option) => {
 	                          const isSelected = workboardStatusFilter === option.value;
 	                          return (
@@ -9024,9 +9422,9 @@ function App() {
 
 	                {/* LOẠI filter */}
 	                <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
-                  <span className="select-label">Loại:</span>
+                  <span className="select-label">{t("workboard.type")}:</span>
                   <button type="button" className="form-select-trigger" onClick={() => setOpenFilterDropdown(openFilterDropdown === "type" ? null : "type")}>
-                    <span className="trigger-label-text">{workboardTypeFilter === "ALL" ? "Tất cả loại" : WORK_ITEM_TYPE_LABEL[workboardTypeFilter]}</span>
+                    <span className="trigger-label-text">{workboardTypeFilter === "ALL" ? t("workboard.allTypes") : WORK_ITEM_TYPE_LABEL[workboardTypeFilter]}</span>
                     <ChevronDown size={13} className={`trigger-arrow-icon${openFilterDropdown === "type" ? " rotate" : ""}`} />
                   </button>
                   {openFilterDropdown === "type" && (
@@ -9037,7 +9435,7 @@ function App() {
                           const isSelected = workboardTypeFilter === v;
                           return (
                             <button key={v} type="button" className={`custom-select-option${isSelected ? " selected" : ""}`} onClick={() => { setWorkboardTypeFilter(v as any); setOpenFilterDropdown(null); }}>
-                              <span>{v === "ALL" ? "Tất cả loại" : WORK_ITEM_TYPE_LABEL[v]}</span>
+                              <span>{v === "ALL" ? t("workboard.allTypes") : WORK_ITEM_TYPE_LABEL[v]}</span>
                               {isSelected && <CheckCheck size={14} className="option-check-mark" />}
                             </button>
                           );
@@ -9049,9 +9447,9 @@ function App() {
 
                 {/* PRIORITY filter */}
                 <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
-                  <span className="select-label">Priority:</span>
+                  <span className="select-label">{t("workboard.priority")}:</span>
                   <button type="button" className="form-select-trigger" onClick={() => setOpenFilterDropdown(openFilterDropdown === "priority" ? null : "priority")}>
-                    <span className="trigger-label-text">{workboardPriorityFilter === "ALL" ? "Tất cả độ ưu tiên" : WORK_ITEM_PRIORITY_LABEL[workboardPriorityFilter]}</span>
+                    <span className="trigger-label-text">{workboardPriorityFilter === "ALL" ? t("workboard.allPriorities") : WORK_ITEM_PRIORITY_LABEL[workboardPriorityFilter]}</span>
                     <ChevronDown size={13} className={`trigger-arrow-icon${openFilterDropdown === "priority" ? " rotate" : ""}`} />
                   </button>
                   {openFilterDropdown === "priority" && (
@@ -9062,7 +9460,7 @@ function App() {
                           const isSelected = workboardPriorityFilter === v;
                           return (
                             <button key={v} type="button" className={`custom-select-option${isSelected ? " selected" : ""}`} onClick={() => { setWorkboardPriorityFilter(v as any); setOpenFilterDropdown(null); }}>
-                              <span>{v === "ALL" ? "Tất cả độ ưu tiên" : WORK_ITEM_PRIORITY_LABEL[v]}</span>
+                              <span>{v === "ALL" ? t("workboard.allPriorities") : WORK_ITEM_PRIORITY_LABEL[v]}</span>
                               {isSelected && <CheckCheck size={14} className="option-check-mark" />}
                             </button>
                           );
@@ -9074,9 +9472,9 @@ function App() {
 
                 {/* GIAO filter */}
                 <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
-                  <span className="select-label">Giao:</span>
+                  <span className="select-label">{t("workboard.assignee")}:</span>
                   <button type="button" className="form-select-trigger" onClick={() => setOpenFilterDropdown(openFilterDropdown === "assignee" ? null : "assignee")}>
-                    <span className="trigger-label-text">{workboardAssigneeFilter === "ALL" ? "Tất cả người phụ trách" : workboardAssigneeFilter}</span>
+                    <span className="trigger-label-text">{workboardAssigneeFilter === "ALL" ? t("workboard.allAssignees") : workboardAssigneeFilter}</span>
                     <ChevronDown size={13} className={`trigger-arrow-icon${openFilterDropdown === "assignee" ? " rotate" : ""}`} />
                   </button>
                   {openFilterDropdown === "assignee" && (
@@ -9087,7 +9485,7 @@ function App() {
                           const isSelected = workboardAssigneeFilter === v;
                           return (
                             <button key={v} type="button" className={`custom-select-option${isSelected ? " selected" : ""}`} onClick={() => { setWorkboardAssigneeFilter(v); setOpenFilterDropdown(null); }}>
-                              <span>{v === "ALL" ? "Tất cả người phụ trách" : v}</span>
+                              <span>{v === "ALL" ? t("workboard.allAssignees") : v}</span>
                               {isSelected && <CheckCheck size={14} className="option-check-mark" />}
                             </button>
                           );
@@ -9099,9 +9497,9 @@ function App() {
 
                 {/* NGƯỜI TẠO filter */}
                 <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
-                  <span className="select-label">Người tạo:</span>
+                  <span className="select-label">{t("workboard.creator")}:</span>
                   <button type="button" className="form-select-trigger" onClick={() => setOpenFilterDropdown(openFilterDropdown === "creator" ? null : "creator")}>
-                    <span className="trigger-label-text">{workboardCreatorFilter === "ALL" ? "Tất cả người tạo" : workboardCreatorFilter}</span>
+                    <span className="trigger-label-text">{workboardCreatorFilter === "ALL" ? t("workboard.allCreators") : workboardCreatorFilter}</span>
                     <ChevronDown size={13} className={`trigger-arrow-icon${openFilterDropdown === "creator" ? " rotate" : ""}`} />
                   </button>
                   {openFilterDropdown === "creator" && (
@@ -9112,7 +9510,7 @@ function App() {
                           const isSelected = workboardCreatorFilter === v;
                           return (
                             <button key={v} type="button" className={`custom-select-option${isSelected ? " selected" : ""}`} onClick={() => { setWorkboardCreatorFilter(v); setOpenFilterDropdown(null); }}>
-                              <span>{v === "ALL" ? "Tất cả người tạo" : v}</span>
+                              <span>{v === "ALL" ? t("workboard.allCreators") : v}</span>
                               {isSelected && <CheckCheck size={14} className="option-check-mark" />}
                             </button>
                           );
@@ -9124,16 +9522,16 @@ function App() {
 
                 {/* SẮP XẾP filter */}
                 <div className="custom-form-select-wrapper filter-select-wrapper" style={{ position: "relative" }}>
-                  <span className="select-label">Sắp xếp:</span>
+                  <span className="select-label">{t("workboard.sort")}:</span>
                   <button type="button" className="form-select-trigger" onClick={() => setOpenFilterDropdown(openFilterDropdown === "sort" ? null : "sort")}>
-                    <span className="trigger-label-text">{({ BOARD_ORDER: "Thứ tự board", UPDATED_DESC: "Mới cập nhật", DUE_ASC: "Hạn gần nhất", PRIORITY_DESC: "Priority cao nhất" } as Record<string, string>)[workboardSortBy]}</span>
+                    <span className="trigger-label-text">{({ BOARD_ORDER: t("workboard.boardOrder"), UPDATED_DESC: t("workboard.updatedDesc"), DUE_ASC: t("workboard.dueAsc"), PRIORITY_DESC: t("workboard.priorityDesc") } as Record<string, string>)[workboardSortBy]}</span>
                     <ChevronDown size={13} className={`trigger-arrow-icon${openFilterDropdown === "sort" ? " rotate" : ""}`} />
                   </button>
                   {openFilterDropdown === "sort" && (
                     <>
                       <div style={{ position: "fixed", inset: 0, zIndex: 90 }} onClick={() => setOpenFilterDropdown(null)} />
                       <div className="custom-form-select-menu">
-                        {([{ value: "BOARD_ORDER", label: "Thứ tự board" }, { value: "UPDATED_DESC", label: "Mới cập nhật" }, { value: "DUE_ASC", label: "Hạn gần nhất" }, { value: "PRIORITY_DESC", label: "Priority cao nhất" }]).map(({ value, label }) => {
+                        {([{ value: "BOARD_ORDER", label: t("workboard.boardOrder") }, { value: "UPDATED_DESC", label: t("workboard.updatedDesc") }, { value: "DUE_ASC", label: t("workboard.dueAsc") }, { value: "PRIORITY_DESC", label: t("workboard.priorityDesc") }]).map(({ value, label }) => {
                           const isSelected = workboardSortBy === value;
                           return (
                             <button key={value} type="button" className={`custom-select-option${isSelected ? " selected" : ""}`} onClick={() => { setWorkboardSortBy(value as typeof workboardSortBy); setOpenFilterDropdown(null); }}>
@@ -9157,7 +9555,7 @@ function App() {
                     <button
                       className="btn-reset-filters"
                       type="button"
-                      title="Xóa tất cả bộ lọc"
+                      title={t("workboard.clearFilters")}
                       onClick={() => {
 	                        setWorkboardSearchQuery("");
 	                        setWorkboardStatusFilter("ALL");
@@ -9168,7 +9566,7 @@ function App() {
                         setWorkboardSortBy("BOARD_ORDER");
                       }}
                     >
-                      <X size={12} /> Reset
+                      <X size={12} /> {t("common.reset")}
                     </button>
                   )}
                 <button
@@ -9204,7 +9602,7 @@ function App() {
               </div>
 
               <div className="workboard-filter-summary">
-                <span>Hiển thị <strong>{visibleWorkItems.length}</strong> / {workItems.length} công việc</span>
+                <span>{t("workboard.visibleSummary", { visible: visibleWorkItems.length, total: workItems.length })}</span>
               </div>
             </div>
 
@@ -9301,7 +9699,7 @@ function App() {
                         </article>
                       ))}
                       {columnItems.length === 0 && (
-                        <div className="workboard-empty-column">Kéo ticket vào đây để đổi trạng thái.</div>
+                        <div className="workboard-empty-column">{t("workboard.emptyColumn")}</div>
                       )}
                     </div>
                   </section>
@@ -9317,7 +9715,7 @@ function App() {
               <button
                 className="focus-library-backdrop"
                 type="button"
-                aria-label="Đóng danh sách tài liệu"
+                aria-label={t("documents.collapseList")}
                 onClick={() => setShowLibraryPanel(false)}
               />
             )}
@@ -9326,31 +9724,31 @@ function App() {
               <div className="panel library">
                 <div className="panel-header">
                   <div className="panel-title">
-                    <h2>Tài liệu</h2>
+                    <h2>{t("documents.title")}</h2>
                   </div>
                   <div className="panel-action-group">
                     <button
                       className="btn-add-mini"
                       type="button"
-                      title="Tạo tài liệu thủ công từ mẫu (Ctrl+N)"
+                      title={`${t("documents.createManual")} (Ctrl+N)`}
                       disabled={!selectedProjectId}
                       onClick={() => openCreateDocumentModal()}
                     >
-                      <FilePlus size={13} /> Tạo
+                      <FilePlus size={13} /> {t("common.create")}
                     </button>
                     <button
                       className="btn-add-mini"
                       type="button"
-                      title="Import tệp tài liệu mới vào dự án"
+                      title={t("documents.importFile")}
                       disabled={!selectedProjectId}
                       onClick={openImportModal}
                     >
-                      <UploadCloud size={13} /> Import
+                      <UploadCloud size={13} /> {t("common.import")}
                     </button>
                     <button
                       className="panel-close-btn"
                       type="button"
-                      title="Thu gọn danh sách tài liệu"
+                      title={t("documents.collapseList")}
                       onClick={() => setShowLibraryPanel(false)}
                     >
                       <PanelLeftClose size={14} />
@@ -9373,7 +9771,7 @@ function App() {
                     onClick={() => setLeftPanelMode("docs")}
                   >
                     <FileText size={13} />
-                    <span>Tài liệu</span>
+                    <span>{t("documents.title")}</span>
                     <span className="mode-count">{filteredDocuments.length}</span>
                   </button>
                   <button
@@ -9382,7 +9780,7 @@ function App() {
                     onClick={() => setLeftPanelMode("toc")}
                   >
                     <ListTree size={13} />
-                    <span>Mục lục</span>
+                    <span>{t("documents.toc")}</span>
                     <span className="mode-count">{selectedDocument.id === "empty-document" ? 0 : tocItems.length}</span>
                   </button>
                 </div>
@@ -9397,7 +9795,7 @@ function App() {
                           type="button"
                           onClick={() => setStatusFilter(tab)}
                         >
-                          {tab === "All" ? "Tất cả" : tab}
+                          {tab === "All" ? t("documents.all") : tab === "Triển khai" ? t("documents.deployed") : t("documents.draft")}
                         </button>
 	                      ))}
 	                    </div>
@@ -9408,7 +9806,7 @@ function App() {
 	                        className="document-type-filter-trigger"
 	                        onClick={() => setOpenFilterDropdown(openFilterDropdown === "documentType" ? null : "documentType")}
 	                      >
-	                        <span>{documentTypeFilter === "ALL" ? "Tất cả loại tài liệu" : getDocumentTypeShortLabel(documentTypeFilter)}</span>
+	                        <span>{documentTypeFilter === "ALL" ? t("documents.allTypes") : getDocumentTypeShortLabel(documentTypeFilter)}</span>
 	                        <ChevronDown size={13} className={openFilterDropdown === "documentType" ? "rotate" : ""} />
 	                      </button>
 	                      {openFilterDropdown === "documentType" && (
@@ -9427,7 +9825,7 @@ function App() {
 	                                    setOpenFilterDropdown(null);
 	                                  }}
 	                                >
-	                                  <span>{type === "ALL" ? "Tất cả loại tài liệu" : getDocumentTypeShortLabel(type)}</span>
+	                                  <span>{type === "ALL" ? t("documents.allTypes") : getDocumentTypeShortLabel(type)}</span>
 	                                  {isSelected && <CheckCheck size={14} />}
 	                                </button>
 	                              );
@@ -9442,7 +9840,7 @@ function App() {
                       {filteredDocuments.length === 0 ? (
                         <div className="document-empty-state">
                           <BookOpen size={24} />
-                          <p>Không có tài liệu nào phù hợp.</p>
+                          <p>{t("documents.noMatches")}</p>
                         </div>
                       ) : (
                         filteredDocuments.map((doc) => {
@@ -9478,8 +9876,8 @@ function App() {
                                 <div className="doc-info">
                                   <strong title={fullTitle}>{fullTitle}</strong>
 	                                  <small title={docMetaTitle}>
-	                                    <span>Người phụ trách: {doc.owner}</span>
-	                                    <span>Cập nhật: {updatedLabel}</span>
+	                                    <span>{t("documents.owner")}: {doc.owner === "Người import tài liệu" ? t("documents.ownerImported") : doc.owner === "Người tạo tài liệu" ? t("documents.ownerCreated") : doc.owner}</span>
+	                                    <span>{t("documents.updated")}: {updatedLabel}</span>
 	                                  </small>
                                 </div>
                               </div>
@@ -9488,11 +9886,11 @@ function App() {
                                 <span className="version-tag">{doc.version}</span>
                                 <span className={`status-pill ${doc.status === "Triển khai" ? "deployed" : "draft"}`}>
                                   <span className="status-dot" />
-                                  {doc.status}
+                                  {doc.status === "Triển khai" ? t("documents.deployed") : t("documents.draft")}
                                 </span>
                                 {docCommentsCount > 0 && (
                                   <span className="doc-comments-badge">
-                                    <MessageSquareText size={10} /> {docCommentsCount} trao đổi
+                                    <MessageSquareText size={10} /> {docCommentsCount} {t("documents.commentsCount")}
                                   </span>
                                 )}
                               </div>
@@ -9507,7 +9905,7 @@ function App() {
                     {tocItems.length === 0 ? (
                       <div className="toc-empty-state">
                         <BookOpen size={24} color="var(--text-muted)" />
-                        <p>Tài liệu này chưa có tiêu đề (H1, H2, H3)</p>
+                        <p>{t("documents.noHeadings")}</p>
                       </div>
                     ) : (
                       <div className="toc-tree">
@@ -9538,27 +9936,27 @@ function App() {
                     <button
                       className="btn-secondary"
                       type="button"
-                      title="Hiện danh sách tài liệu"
+                      title={t("documents.showList")}
                       onClick={() => setShowLibraryPanel(true)}
                     >
-                      <PanelLeftOpen size={14} /> Danh sách
+                      <PanelLeftOpen size={14} /> {t("documents.list")}
                     </button>
                   )}
                   {isZenMode && !showLibraryPanel && (
                     <button
                       className="btn-secondary focus-library-toggle"
                       type="button"
-                      title="Mở danh sách tài liệu"
+                      title={t("documents.openList")}
                       onClick={toggleFocusLibraryPanel}
                     >
                       <PanelLeftOpen size={14} />
-                      <span>Danh sách</span>
+                      <span>{t("documents.list")}</span>
                     </button>
                   )}
                   <div className="doc-toolbar-meta">
-                    <h2>{selectedDocument.title}</h2>
+                    <h2>{activeDocTitle}</h2>
                     <span className="eyebrow" style={{ color: "var(--text-muted)", fontWeight: 600 }}>
-                      PHIÊN BẢN {selectedDocument.version} • CẬP NHẬT {selectedDocument.updatedAt}
+                      {t("documents.version")} {selectedDocument.version} • {t("documents.updated")} {selectedDocument.updatedAt}
                     </span>
                   </div>
                 </div>
@@ -9573,9 +9971,9 @@ function App() {
                     onMouseEnter={prefetchShareAccess}
                     onFocus={prefetchShareAccess}
                     onClick={openShareAccessModal}
-                    title={selectedDocument.id === "empty-document" ? "Chia sẻ quyền truy cập dự án" : "Chia sẻ quyền truy cập tài liệu"}
+                    title={selectedDocument.id === "empty-document" ? t("documents.shareProject") : t("documents.shareDocument")}
                   >
-                    <Share2 size={15} /> Chia sẻ
+                    <Share2 size={15} /> {t("common.share")}
                   </button>
 
                   {/* Grouped Surrounding Actions Dropdown */}
@@ -9584,9 +9982,9 @@ function App() {
                       className={`btn-secondary doc-more-actions-btn ${isActionsDropdownOpen ? "active" : ""}`}
                       type="button"
                       onClick={() => setIsActionsDropdownOpen((open) => !open)}
-                      title="Các thao tác khác"
+                      title={t("documents.otherActions")}
                     >
-                      <span>Thao tác</span>
+                      <span>{t("common.actions")}</span>
                       <ChevronDown size={14} className={`dropdown-chevron ${isActionsDropdownOpen ? "open" : ""}`} />
                     </button>
 
@@ -9600,7 +9998,7 @@ function App() {
                             openEditDocumentModal(selectedDocument);
                           }}
                         >
-                          <Pencil size={14} /> Sửa thông tin tài liệu
+                          <Pencil size={14} /> {t("documents.editInfo")}
                         </button>
 
                         {selectedDocument.status !== "Triển khai" && (
@@ -9612,7 +10010,7 @@ function App() {
                               void handleDeploySelectedDocument();
                             }}
                           >
-                            <CheckCircle2 size={14} /> Chuyển sang Triển khai
+                            <CheckCircle2 size={14} /> {t("documents.deploy")}
                           </button>
                         )}
 
@@ -9626,7 +10024,7 @@ function App() {
                             setIsExportModalOpen(true);
                           }}
                         >
-                          <Download size={14} /> Xuất tài liệu
+                          <Download size={14} /> {t("documents.export")}
                         </button>
 
                         <button
@@ -9637,7 +10035,7 @@ function App() {
                             void openVersionHistoryModal();
                           }}
                         >
-                          <Layers size={14} /> Lịch sử phiên bản
+                          <Layers size={14} /> {t("documents.versionHistory")}
                         </button>
 
                         {canEditSelectedDocumentContent && (
@@ -9645,13 +10043,13 @@ function App() {
                             type="button"
                             className="menu-item"
                             disabled={!canPublishSelectedDocumentVersion}
-                            title={isEditingDocumentContent ? "Đóng trình soạn thảo sau khi tự lưu xong để tạo phiên bản mới" : undefined}
+                            title={isEditingDocumentContent ? t("documents.backToRead") : undefined}
                             onClick={() => {
                               setIsActionsDropdownOpen(false);
                               openPublishVersionModal();
                             }}
                           >
-                            <GitBranch size={14} /> Tạo phiên bản mới
+                            <GitBranch size={14} /> {t("documents.publishVersion")}
                           </button>
                         )}
 
@@ -9665,7 +10063,7 @@ function App() {
                             requestDeleteDocument(selectedDocument.id);
                           }}
                         >
-                          <Trash2 size={14} /> Xóa tài liệu này
+                          <Trash2 size={14} /> {t("documents.deleteThis")}
                         </button>
                       </div>
                     )}
@@ -9675,10 +10073,10 @@ function App() {
                     className={`btn-secondary focus-read-btn ${isZenMode ? "active" : ""}`}
                     type="button"
                     onClick={toggleFocusReadingMode}
-                    title={isZenMode ? "Thoát chế độ tập trung đọc" : "Bật chế độ tập trung đọc"}
+                    title={isZenMode ? t("documents.focusReadOff") : t("documents.focusReadOn")}
                   >
                     <BookOpen size={14} />
-                    <span>{isZenMode ? "Thoát đọc" : "Tập trung đọc"}</span>
+                    <span>{isZenMode ? t("documents.exitRead") : t("documents.focusRead")}</span>
                   </button>
                 </div>
               </div>
@@ -9686,28 +10084,28 @@ function App() {
               <div className="reader-controls-bar">
                 {isZenMode && (
                   <div className="reader-controls-group">
-                    <span className="reader-control-label">Cỡ chữ</span>
-                    <div className="segmented-control" role="group" aria-label="Cỡ chữ tài liệu">
+                    <span className="reader-control-label">{t("documents.fontSize")}</span>
+                    <div className="segmented-control" role="group" aria-label={t("documents.fontSize")}>
                       <button
                         className={fontSize === "sm" ? "font-size-btn active" : "font-size-btn"}
                         type="button"
                         onClick={() => setFontSize("sm")}
                       >
-                        Nhỏ
+                        {t("documents.small")}
                       </button>
                       <button
                         className={fontSize === "md" ? "font-size-btn active" : "font-size-btn"}
                         type="button"
                         onClick={() => setFontSize("md")}
                       >
-                        Vừa
+                        {t("documents.medium")}
                       </button>
                       <button
                         className={fontSize === "lg" ? "font-size-btn active" : "font-size-btn"}
                         type="button"
                         onClick={() => setFontSize("lg")}
                       >
-                        Lớn
+                        {t("documents.large")}
                       </button>
                     </div>
                   </div>
@@ -9726,20 +10124,20 @@ function App() {
                     disabled={isSelectedDocumentLockedByOther}
                     title={
                       isSelectedDocumentLockedByOther && selectedDocumentEditingSession
-                        ? `${selectedDocumentEditingSession.userName} đang chỉnh sửa tài liệu này`
+                        ? t("documents.lockedBy", { name: selectedDocumentEditingSession.userName })
                         : isEditingDocumentContent
-                          ? "Quay lại chế độ đọc"
-                          : "Sửa nội dung tài liệu"
+                          ? t("documents.backToRead")
+                          : t("documents.editContent")
                     }
                     style={{ marginLeft: "auto" }}
                   >
                     <PenLine size={14} />
                     <span>
                       {isSelectedDocumentLockedByOther && selectedDocumentEditingSession
-                        ? `Đang sửa bởi ${selectedDocumentEditingSession.userName}`
+                        ? t("documents.editingBy", { name: selectedDocumentEditingSession.userName })
                         : isEditingDocumentContent
-                          ? "Đang sửa"
-                          : "Sửa nội dung"}
+                          ? t("documents.editing")
+                          : t("documents.editContent")}
                     </span>
                   </button>
                 )}
@@ -9749,7 +10147,7 @@ function App() {
               {isSelectedDocumentLockedByOther && selectedDocumentEditingSession && (
                 <div className="document-edit-session-banner">
                   <UserCheck size={14} />
-                  <span>{selectedDocumentEditingSession.userName} đang chỉnh sửa tài liệu này. Bạn có thể đọc/bình luận và quay lại sửa sau.</span>
+                  <span>{t("documents.lockedBy", { name: selectedDocumentEditingSession.userName })}</span>
                 </div>
               )}
 
@@ -9770,13 +10168,13 @@ function App() {
               {/* Pure Document Reader Body with Responsive TOC Sidebar */}
               <div className="doc-viewer-body">
                 {isZenMode && showFocusToc && tocItems.length > 0 && !isEditingDocumentContent && (
-                  <nav className="focus-reading-toc" aria-label="Mục lục tài liệu">
+                  <nav className="focus-reading-toc" aria-label={t("documents.toc")}>
                     <div className="focus-reading-toc-header">
                       <div className="focus-reading-toc-title">
                         <ListTree size={14} />
-                        <span>Mục lục</span>
+                        <span>{t("documents.toc")}</span>
                       </div>
-                      <button type="button" title="Ẩn mục lục" onClick={() => setShowFocusToc(false)}>
+                      <button type="button" title={t("documents.hideToc")} onClick={() => setShowFocusToc(false)}>
                         <X size={14} />
                       </button>
                     </div>
@@ -9798,10 +10196,10 @@ function App() {
 
                 <div className="doc-page">
                 {isEditingDocumentContent && canEditSelectedDocumentContent ? (
-                  <Suspense fallback={<div className="content-loading">Đang tải trình soạn thảo...</div>}>
+                  <Suspense fallback={<div className="content-loading">{t("documents.loadingEditor")}</div>}>
                     <DocumentEditor
                       documentId={selectedDocument.id}
-                      initialHtml={selectedDocument.contentHtml || DEFAULT_DOC_CONTENT}
+                      initialHtml={activeDocContentHtml || DEFAULT_DOC_CONTENT}
                       fontSize={fontSize}
                       isSaving={isSavingDocumentContent}
                       contentRef={documentContainerRef}
@@ -9830,7 +10228,7 @@ function App() {
                         }
                       }}
                       dangerouslySetInnerHTML={{
-                        __html: selectedDocument.contentHtml || DEFAULT_DOC_CONTENT
+                        __html: preparedDocContentHtml
                       }}
                     />
                     {selectionHighlightRects.length > 0 && (
@@ -9921,8 +10319,8 @@ function App() {
             <aside className="panel comments-panel" aria-hidden={!showCommentsPanel}>
               <div className="panel-header">
                 <div className="panel-title">
-                  <p className="eyebrow">Thảo luận Team</p>
-                  <h2>Ghi chú & Phản hồi</h2>
+                  <p className="eyebrow">{t("documents.teamDiscussion")}</p>
+                  <h2>{t("documents.notesAndReplies")}</h2>
                 </div>
                 <div className="panel-action-group">
                   <UserCheck size={16} color="var(--accent-emerald)" />
@@ -9941,10 +10339,10 @@ function App() {
               <>
                 <div className="comment-filter-strip">
                   {[
-                    ["all", "Tất cả"],
-                    ["open", "Đang mở"],
-	                    ["resolved", "Đã xử lý"],
-                    ["mine", "Của tôi"]
+                    ["all", t("common.all")],
+                    ["open", t("documents.openComments")],
+                    ["resolved", t("documents.resolvedComments")],
+                    ["mine", t("documents.myComments")]
                   ].map(([id, label]) => (
                     <button
                       key={id}
@@ -9982,11 +10380,11 @@ function App() {
                         <div className="comment-top-meta">
                           {comment.status === "resolved" ? (
                             <span className="comment-status-badge resolved">
-	                              <CheckCircle2 size={11} /> Đã xử lý
+	                              <CheckCircle2 size={11} /> {t("documents.resolved")}
                             </span>
                           ) : (
                             <span className="comment-status-badge open">
-                              <MessageSquareText size={11} /> Đang trao đổi
+                              <MessageSquareText size={11} /> {t("documents.inDiscussion")}
                             </span>
                           )}
                           <span className="req-tag">{comment.blockId}</span>
@@ -10017,7 +10415,7 @@ function App() {
                                 setEditingCommentId(null);
                               }}
                             >
-                              Hủy
+                              {t("common.cancel")}
                             </button>
                             <button
                               className="btn-comment-action"
@@ -10028,7 +10426,7 @@ function App() {
                                 handleSaveEditComment(comment.id);
                               }}
                             >
-                              Lưu
+                              {t("common.save")}
                             </button>
                           </div>
                         </div>
@@ -10042,26 +10440,26 @@ function App() {
                                 <button
                                   className="btn-comment-action success"
                                   type="button"
-	                                  title="Đánh dấu nhận xét đã xử lý"
+	                                  title={t("documents.markResolvedTitle")}
                                   onClick={(event) => {
                                     event.stopPropagation();
                                     void handleResolveComment(comment);
                                   }}
                                 >
-	                                  <CheckCircle2 size={11} /> Đã xử lý
+	                                  <CheckCircle2 size={11} /> {t("documents.resolved")}
                                 </button>
                               )}
                               {comment.status === "open" && (
                                 <button
                                   className="btn-comment-action"
                                   type="button"
-                                  title="Trả lời nhận xét này"
+                                  title={t("documents.replyCommentTitle")}
                                   onClick={(event) => {
                                     event.stopPropagation();
                                     openDocumentReplyComposer(comment.id);
                                   }}
                                 >
-                                  <MessageSquarePlus size={11} /> Trả lời
+                                  <MessageSquarePlus size={11} /> {t("documents.reply")}
                                 </button>
                               )}
                               {isOwnDocumentComment(comment) && (
@@ -10069,7 +10467,7 @@ function App() {
                                   <button
                                     className="btn-comment-action icon-only"
                                     type="button"
-                                    title="Tùy chọn (Sửa / Xóa)"
+                                    title={t("documents.options")}
                                     onClick={(event) => {
                                       event.stopPropagation();
                                       setActiveCommentMenuId(activeCommentMenuId === comment.id ? null : comment.id);
@@ -10091,7 +10489,7 @@ function App() {
                                             setEditingCommentText(comment.text);
                                           }}
                                         >
-                                          <Pencil size={12} /> Sửa nhận xét
+                                          <Pencil size={12} /> {t("documents.editComment")}
                                         </button>
                                       )}
                                       <button
@@ -10103,7 +10501,7 @@ function App() {
                                           requestDeleteComment(comment.id);
                                         }}
                                       >
-                                        <Trash2 size={12} /> Xóa nhận xét
+                                        <Trash2 size={12} /> {t("documents.deleteComment")}
                                       </button>
                                     </div>
                                   )}
@@ -10132,8 +10530,8 @@ function App() {
                   {displayedComments.length === 0 && (
 	                    <div className="comment-empty-state">
 	                      <MessageSquareText size={20} />
-	                      <strong>Không có nhận xét phù hợp</strong>
-	                      <span>Nhận xét mới sẽ hiện ở đây khi bạn bôi đen nội dung và gửi trao đổi.</span>
+	                      <strong>{t("documents.noCommentsFound")}</strong>
+	                      <span>{t("documents.noCommentsInstruction")}</span>
 	                    </div>
                   )}
                 </div>
@@ -10153,7 +10551,7 @@ function App() {
                   <Download size={20} />
                 </div>
                 <div>
-                  <h3>Xuất tài liệu</h3>
+                  <h3>{t("export.title")}</h3>
                   <p className="modal-subtitle">{selectedDocument.title}</p>
                 </div>
               </div>
@@ -10178,7 +10576,7 @@ function App() {
                   <FileText size={22} />
                   <span>
                     <strong>PDF</strong>
-                    <small>Phù hợp để gửi, ký duyệt hoặc lưu trữ bản cố định.</small>
+                    <small>{t("export.pdfNote")}</small>
                   </span>
                 </button>
                 <button
@@ -10190,22 +10588,22 @@ function App() {
                   <FileCheck2 size={22} />
                   <span>
                     <strong>Word DOCX</strong>
-                    <small>Phù hợp khi cần tiếp tục chỉnh sửa nội dung.</small>
+                    <small>{t("export.wordNote")}</small>
                   </span>
                 </button>
               </div>
 
               <div className="export-summary">
                 <div>
-                  <strong>Tài liệu</strong>
+                  <strong>{t("export.document", "Tài liệu")}</strong>
                   <span>{selectedDocument.title}</span>
                 </div>
                 <div>
-                  <strong>Phiên bản</strong>
+                  <strong>{t("export.version", "Phiên bản")}</strong>
                   <span>{selectedDocument.version}</span>
                 </div>
                 <div>
-                  <strong>Loại</strong>
+                  <strong>{t("export.type", "Loại")}</strong>
                   <span>{selectedDocument.type}</span>
                 </div>
               </div>
@@ -10218,7 +10616,7 @@ function App() {
                 onClick={() => setIsExportModalOpen(false)}
                 disabled={isExporting}
               >
-                Hủy
+                {t("common.cancel")}
               </button>
               <button
                 className="btn-primary"
@@ -10227,7 +10625,7 @@ function App() {
                 disabled={isExporting}
               >
                 <Download size={14} />
-                {isExporting ? "Đang tạo file..." : `Xuất ${exportType === "pdf" ? "PDF" : "Word"}`}
+                {isExporting ? t("export.generating") : t("export.exportFormat", { format: exportType === "pdf" ? "PDF" : "Word" })}
               </button>
             </div>
           </div>
@@ -10243,9 +10641,9 @@ function App() {
                   <GitBranch size={20} />
                 </div>
                 <div>
-                  <h3>Tạo phiên bản mới</h3>
+                  <h3>{t("versions.publishTitle")}</h3>
                   <p className="modal-subtitle">
-                    {selectedDocument.title} • phiên bản hiện tại {selectedDocument.version}
+                    {t("versions.publishSub", { title: selectedDocument.title, version: selectedDocument.version })}
                   </p>
                 </div>
               </div>
@@ -10262,22 +10660,22 @@ function App() {
             <div className="modal-body publish-version-body">
               <div className="version-publish-summary">
                 <div>
-                  <span>Đang lưu nội dung ở</span>
+                  <span>{t("versions.savingCurrent")}</span>
                   <strong>{selectedDocument.version}</strong>
                 </div>
                 <ChevronRight size={18} />
                 <div>
-                  <span>Sẽ tạo mốc mới</span>
-                  <strong>phiên bản kế tiếp</strong>
+                  <span>{t("versions.willCreate")}</span>
+                  <strong>{t("versions.nextVersion")}</strong>
                 </div>
               </div>
               <div className="form-group">
-                <label>Ghi chú phiên bản</label>
+                <label>{t("versions.versionNote")}</label>
                 <textarea
                   className="form-input publish-version-note"
                   value={publishVersionNote}
                   onChange={(event) => setPublishVersionNote(event.target.value)}
-                  placeholder="Ví dụ: Chốt nội dung AC sau review lần 1..."
+                  placeholder={t("versions.versionNotePlaceholder")}
                   maxLength={500}
                   disabled={isPublishingVersion}
                 />
@@ -10291,7 +10689,7 @@ function App() {
                 onClick={() => setIsPublishVersionModalOpen(false)}
                 disabled={isPublishingVersion}
               >
-                Hủy
+                {t("common.cancel")}
               </button>
               <button
                 className="btn-primary"
@@ -10300,7 +10698,7 @@ function App() {
                 disabled={isPublishingVersion}
               >
                 <GitBranch size={14} />
-                {isPublishingVersion ? "Đang tạo..." : "Tạo phiên bản"}
+                {isPublishingVersion ? t("versions.publishing") : t("versions.publishBtn")}
               </button>
             </div>
           </div>
@@ -10316,7 +10714,7 @@ function App() {
                   <Layers size={20} />
                 </div>
                 <div>
-                  <h3>Lịch sử phiên bản</h3>
+                  <h3>{t("versions.historyTitle")}</h3>
                   <p className="modal-subtitle">{selectedDocument.title}</p>
                 </div>
               </div>
@@ -10332,9 +10730,9 @@ function App() {
 
             <div className="modal-body">
               {isLoadingVersions ? (
-                <div className="version-empty-state">Đang tải lịch sử phiên bản...</div>
+                <div className="version-empty-state">{t("versions.loadingHistory")}</div>
               ) : documentVersions.length === 0 ? (
-                <div className="version-empty-state">Tài liệu chưa có phiên bản nào được lưu.</div>
+                <div className="version-empty-state">{t("versions.noVersions")}</div>
               ) : (
                 <div className="version-list">
                   {documentVersions.map((version, index) => {
@@ -10344,11 +10742,11 @@ function App() {
                         <div className="version-row-main">
                           <div>
                             <strong>{version.version}</strong>
-                            {isCurrentVersion && <span className="version-current-badge">Hiện tại</span>}
+                            {isCurrentVersion && <span className="version-current-badge">{t("versions.currentVersion")}</span>}
                           </div>
-                          <p>{version.changeNote || (index === documentVersions.length - 1 ? "Phiên bản khởi tạo" : "Cập nhật tài liệu")}</p>
+                          <p>{version.changeNote || (index === documentVersions.length - 1 ? t("versions.initVersionNote") : t("versions.updateDocNote"))}</p>
                           <small>
-                            {version.createdBy || "Hệ thống"} • {new Date(version.createdAt).toLocaleString("vi-VN")}
+                            {version.createdBy || t("versions.system")} • {new Date(version.createdAt).toLocaleString(i18n.language === "en" ? "en-US" : "vi-VN")}
                           </small>
                         </div>
                         <button
@@ -10357,7 +10755,7 @@ function App() {
                           disabled={isCurrentVersion || Boolean(restoringVersionId)}
                           onClick={() => void handleRestoreVersion(version)}
                         >
-                          {restoringVersionId === version.id ? "Đang khôi phục..." : "Khôi phục"}
+                          {restoringVersionId === version.id ? t("versions.restoring") : t("versions.restore")}
                         </button>
                       </div>
                     );
@@ -10373,7 +10771,7 @@ function App() {
                 onClick={() => setIsVersionModalOpen(false)}
                 disabled={Boolean(restoringVersionId)}
               >
-                Đóng
+                {t("common.close")}
               </button>
             </div>
           </div>
@@ -10390,8 +10788,8 @@ function App() {
                   <FolderPlus size={20} />
                 </div>
                 <div>
-                  <h3>Tạo Dự Án Mới</h3>
-                  <p className="modal-subtitle">Dự án sẽ nằm trong phạm vi công ty/phòng ban của tài khoản hiện tại</p>
+                  <h3>{t("projects.createProjectTitle")}</h3>
+                  <p className="modal-subtitle">{t("projects.createProjectSub")}</p>
                 </div>
               </div>
               <button className="icon-btn" type="button" onClick={closeCreateProjectModal}>
@@ -10400,10 +10798,10 @@ function App() {
             </div>
             <div className="modal-body">
               <div className="form-group project-name-priority">
-                <label>Tên Dự Án (Project Name)</label>
+                <label>{t("projects.projectName")}</label>
                 <input
                   className="form-input"
-                  placeholder="Ví dụ: Nền tảng tuyển sinh trung tâm..."
+                  placeholder={t("projects.projectNamePlaceholder")}
                   value={newProjName}
                   onChange={(e) => { setNewProjName(e.target.value); setModalFieldErrors((prev) => { const { projectName: _, ...rest } = prev; return rest; }); }}
                 />
@@ -10413,19 +10811,19 @@ function App() {
               </div>
 
               <div className="form-group">
-                <label>Mã Dự Án (Project Code)</label>
+                <label>{t("projects.projectCode")}</label>
                 <input
                   className="form-input"
-                  placeholder="Để trống hệ thống sẽ tự sinh mã"
+                  placeholder={t("projects.projectCodePlaceholder")}
                   value={newProjCode}
                   onChange={(e) => setNewProjCode(e.target.value)}
                 />
-                <small className="field-hint">Có thể nhập mã riêng, hoặc bỏ trống để tự tạo từ tên dự án.</small>
+                <small className="field-hint">{t("projects.projectCodeHint")}</small>
               </div>
 
               <div className="form-row">
                 <div className="form-group">
-                  <label>Khách Hàng / Thị Trường</label>
+                  <label>{t("projects.customerMarket")}</label>
                   <select
                     className="form-select"
                     value={newProjCustomer}
@@ -10438,7 +10836,7 @@ function App() {
                 </div>
 
                 <div className="form-group">
-                  <label>Khối Nghiệp Vụ</label>
+                  <label>{t("projects.businessUnit")}</label>
                   <select
                     className="form-select"
                     value={newProjBusinessUnit}
@@ -10459,7 +10857,7 @@ function App() {
                 disabled={isCreatingProject}
                 onClick={closeCreateProjectModal}
               >
-                Hủy
+                {t("common.cancel")}
               </button>
               <button
                 className="btn-primary"
@@ -10469,11 +10867,11 @@ function App() {
               >
                 {isCreatingProject ? (
                   <>
-                    <Loader2 className="spin-icon" size={16} /> Đang tạo...
+                    <Loader2 className="spin-icon" size={16} /> {t("projects.creating")}
                   </>
                 ) : (
                   <>
-                    <FolderPlus size={16} /> Tạo Dự Án
+                    <FolderPlus size={16} /> {t("projects.createProject")}
                   </>
                 )}
               </button>
@@ -10492,8 +10890,8 @@ function App() {
                   <Pencil size={20} />
                 </div>
                 <div>
-                  <h3>Chỉnh Sửa Thông Tin Dự Án</h3>
-                  <p className="modal-subtitle">Cập nhật thông tin mã dự án, khách hàng và khối nghiệp vụ</p>
+                  <h3>{t("projects.editProjectTitle")}</h3>
+                  <p className="modal-subtitle">{t("projects.editProjectSub")}</p>
                 </div>
               </div>
               <button className="icon-btn" type="button" disabled={isSavingEditProject} onClick={closeEditProjectModal}>
@@ -10502,7 +10900,7 @@ function App() {
             </div>
             <div className="modal-body">
               <div className="form-group project-name-priority">
-                <label>Tên Dự Án (Project Name)</label>
+                <label>{t("projects.projectName")}</label>
                 <input
                   className="form-input"
                   value={editProjName}
@@ -10512,20 +10910,20 @@ function App() {
               </div>
 
               <div className="form-group">
-                <label>Mã Dự Án (Project Code)</label>
+                <label>{t("projects.projectCode")}</label>
                 <input
                   className="form-input"
-                  placeholder="Để trống hệ thống sẽ tự sinh mã"
+                  placeholder={t("projects.projectCodePlaceholder")}
                   value={editProjCode}
                   disabled={isSavingEditProject}
                   onChange={(e) => setEditProjCode(e.target.value)}
                 />
-                <small className="field-hint">Có thể nhập mã riêng, hoặc bỏ trống để tự tạo từ tên dự án.</small>
+                <small className="field-hint">{t("projects.projectCodeHint")}</small>
               </div>
 
               <div className="form-row">
                 <div className="form-group">
-                  <label>Khách Hàng / Thị Trường</label>
+                  <label>{t("projects.customerMarket")}</label>
                   <select
                     className="form-select"
                     value={editProjCustomer}
@@ -10539,7 +10937,7 @@ function App() {
                 </div>
 
                 <div className="form-group">
-                  <label>Khối Nghiệp Vụ</label>
+                  <label>{t("projects.businessUnit")}</label>
                   <select
                     className="form-select"
                     value={editProjBusinessUnit}
@@ -10561,7 +10959,7 @@ function App() {
                 disabled={isSavingEditProject}
                 onClick={closeEditProjectModal}
               >
-                Hủy
+                {t("common.cancel")}
               </button>
               <button
                 className="btn-primary"
@@ -10571,11 +10969,11 @@ function App() {
               >
                 {isSavingEditProject ? (
                   <>
-                    <Loader2 className="spin-icon" size={16} /> Đang lưu...
+                    <Loader2 className="spin-icon" size={16} /> {t("common.saving")}
                   </>
                 ) : (
                   <>
-                    <Pencil size={16} /> Lưu Thay Đổi
+                    <Pencil size={16} /> {t("share.saveChanges")}
                   </>
                 )}
               </button>
@@ -10594,8 +10992,8 @@ function App() {
                   <FilePlus size={20} />
                 </div>
                 <div>
-                  <h3>Tạo Tài Liệu Mới Cho Dự Án</h3>
-                  <p className="modal-subtitle">Khởi tạo tài liệu nghiệp vụ mới vào dự án được chọn</p>
+                  <h3>{t("docModal.createTitle")}</h3>
+                  <p className="modal-subtitle">{t("docModal.createSub")}</p>
                 </div>
               </div>
               <button className="icon-btn" type="button" onClick={closeCreateDocumentModal}>
@@ -10604,7 +11002,7 @@ function App() {
             </div>
             <div className="modal-body">
               <div className="form-group">
-                <label>Chọn Dự Án Thuộc Về</label>
+                <label>{t("docModal.selectProject")}</label>
                 <CustomProjectSelect
                   projects={projectsList}
                   selectedProjectId={newDocProjectId}
@@ -10613,10 +11011,10 @@ function App() {
               </div>
 
               <div className="form-group">
-                <label>Tên / Tiêu Đề Tài Liệu</label>
+                <label>{t("docModal.docTitle")}</label>
                 <input
                   className="form-input"
-                  placeholder="Ví dụ: System Architecture & Data Flow..."
+                  placeholder={t("docModal.docTitlePlaceholder")}
                   value={newDocTitle}
                   onChange={(e) => { setNewDocTitle(e.target.value); setModalFieldErrors((prev) => { const { docTitle: _, ...rest } = prev; return rest; }); }}
                 />
@@ -10627,7 +11025,7 @@ function App() {
 
               <div className="form-row">
                 <div className="form-group">
-                  <label>Loại Tài Liệu</label>
+                  <label>{t("docModal.docType")}</label>
                   <CustomFormSelect
                     value={newDocType}
                     onChange={(value) => {
@@ -10639,10 +11037,10 @@ function App() {
                 </div>
 
                 <div className="form-group">
-                  <label>Người Phụ Trách (Owner)</label>
+                  <label>{t("docModal.docOwner")}</label>
                   <input
                     className="form-input"
-                    placeholder="Ví dụ: BA Lead"
+                    placeholder={t("docModal.docOwnerPlaceholder")}
                     value={newDocOwner}
                     onChange={(e) => setNewDocOwner(e.target.value)}
                   />
@@ -10651,7 +11049,7 @@ function App() {
 
               {documentTemplates.length > 0 && (
                 <div className="template-picker">
-                  <div className="collab-section-title">Tạo nhanh từ mẫu</div>
+                  <div className="collab-section-title">{t("docModal.quickTemplate")}</div>
                   <div className="template-grid">
                     {sortedDocumentTemplates.map((template) => (
                       <article
@@ -10678,14 +11076,14 @@ function App() {
                             type="button"
                             onClick={() => setPreviewTemplate(template)}
                           >
-                            <Eye size={13} /> Xem
+                            <Eye size={13} /> {t("common.edit")}
                           </button>
                           <button
                             className="template-card-action primary"
                             type="button"
                             onClick={() => void handleCreateDocumentFromTemplate(template)}
                           >
-                            <FilePlus size={13} /> Tạo
+                            <FilePlus size={13} /> {t("common.create")}
                           </button>
                         </div>
                       </article>
@@ -10697,10 +11095,10 @@ function App() {
 
             <div className="modal-footer">
               <button className="btn-secondary" type="button" onClick={closeCreateDocumentModal}>
-                Hủy
+                {t("common.cancel")}
               </button>
               <button className="btn-primary" type="button" onClick={handleCreateDocument}>
-                <FilePlus size={16} /> Tạo Tài Liệu
+                <FilePlus size={16} /> {t("docModal.createDocBtn")}
               </button>
             </div>
           </div>
@@ -10717,8 +11115,8 @@ function App() {
                   <FileText size={20} />
                 </div>
                 <div>
-                  <h3>Xem trước mẫu tài liệu</h3>
-                  <p className="modal-subtitle">Kiểm tra cấu trúc trước khi tạo tài liệu cho dự án</p>
+                  <h3>{t("docModal.previewTemplateTitle")}</h3>
+                  <p className="modal-subtitle">{t("docModal.previewTemplateSub")}</p>
                 </div>
               </div>
               <button className="icon-btn" type="button" onClick={() => setPreviewTemplate(null)}>
@@ -10728,11 +11126,11 @@ function App() {
             <div className="modal-body template-preview-body">
               <div className="template-preview-summary">
                 <div>
-                  <span>Loại tài liệu</span>
+                  <span>{t("docModal.templateType")}</span>
                   <strong>{getDocumentTypeShortLabel(previewTemplate.type)}</strong>
                 </div>
                 <div>
-                  <span>Tên mẫu</span>
+                  <span>{t("docModal.templateName")}</span>
                   <strong>{previewTemplate.name}</strong>
                 </div>
               </div>
@@ -10746,14 +11144,14 @@ function App() {
             </div>
             <div className="modal-footer">
               <button className="btn-secondary" type="button" onClick={() => setPreviewTemplate(null)}>
-                Đóng
+                {t("common.close")}
               </button>
               <button
                 className="btn-primary"
                 type="button"
                 onClick={() => void handleCreateDocumentFromTemplate(previewTemplate)}
               >
-                <FilePlus size={15} /> Tạo từ mẫu này
+                <FilePlus size={15} /> {t("docModal.createFromTemplate")}
               </button>
             </div>
           </div>
@@ -10770,8 +11168,8 @@ function App() {
                   <FileText size={20} />
                 </div>
                 <div>
-                  <h3>Chỉnh Sửa Thuộc Tính Tài Liệu</h3>
-                  <p className="modal-subtitle">Cập nhật thông tin lưu trữ, phân loại và trạng thái tài liệu</p>
+                  <h3>{t("docModal.editMetaTitle")}</h3>
+                  <p className="modal-subtitle">{t("docModal.editMetaSub")}</p>
                 </div>
               </div>
               <button className="icon-btn" type="button" onClick={closeEditDocumentModal}>
@@ -10780,7 +11178,7 @@ function App() {
             </div>
             <div className="modal-body">
               <div className="form-group project-name-priority document-title-priority">
-                <label>Tên / Tiêu Đề Tài Liệu</label>
+                <label>{t("docModal.docTitle")}</label>
                 <input
                   className="form-input"
                   placeholder="Ví dụ: Mở rộng tính năng web..."
@@ -10794,12 +11192,12 @@ function App() {
 
               <div className="form-group-section document-property-section">
                 <div className="form-section-header">
-                  <Layers size={15} /> THÔNG TIN THUỘC TÍNH & PHÂN LOẠI
+                  <Layers size={15} /> {t("docModal.propHeader")}
                 </div>
 
                 <div className="document-property-grid">
                   <div className="form-group">
-                    <label>Loại Tài Liệu</label>
+                    <label>{t("docModal.docType")}</label>
                     <div className="input-with-icon-wrapper document-property-select-wrapper">
                       <FileText size={16} className="field-icon" />
                       <CustomFormSelect
@@ -10812,7 +11210,7 @@ function App() {
                   </div>
 
                   <div className="form-group">
-                    <label>Trạng Thái</label>
+                    <label>{t("dashboard.status")}</label>
                     <div className="input-with-icon-wrapper document-property-select-wrapper">
                       <CheckCircle2 size={16} className="field-icon" />
                       <CustomFormSelect<DocumentStatus>
@@ -10820,15 +11218,15 @@ function App() {
                         value={editDocStatus}
                         onChange={setEditDocStatus}
                         options={[
-                          { value: "Draft", label: "Draft" },
-                          { value: "Triển khai", label: "Triển khai" }
+                          { value: "Draft", label: t("documents.draft") },
+                          { value: "Triển khai", label: t("documents.deployed") }
                         ]}
                       />
                     </div>
                   </div>
 
                   <div className="form-group">
-                    <label>Chủ sở hữu</label>
+                    <label>{t("docModal.ownerLabel")}</label>
                     <div className="input-with-icon-wrapper document-property-select-wrapper">
                       <Users size={16} className="field-icon" />
                       {editingDoc.effectiveRole === "MANAGER" && documentOwnerOptions.length > 0 ? (
@@ -10848,7 +11246,7 @@ function App() {
                       ) : (
                         <input
                           className="form-input document-owner-readonly"
-                          value={editDocOwner || "Người tạo/import tài liệu"}
+                          value={editDocOwner || t("docModal.defaultCreator")}
                           readOnly
                         />
                       )}
@@ -10856,7 +11254,7 @@ function App() {
                   </div>
 
                   <div className="form-group">
-                    <label>Phiên Bản (Version)</label>
+                    <label>{t("docModal.versionLabel")}</label>
                     <div className="input-with-icon-wrapper">
                       <Clock size={16} className="field-icon" />
                       <input
@@ -10865,7 +11263,7 @@ function App() {
                         readOnly
                       />
                     </div>
-                    <p className="form-helper-text">Phiên bản chỉ tăng khi dùng thao tác “Tạo phiên bản mới”.</p>
+                    <p className="form-helper-text">{t("docModal.versionHelper")}</p>
                   </div>
                 </div>
               </div>
@@ -10873,10 +11271,10 @@ function App() {
 
             <div className="modal-footer">
               <button className="btn-secondary" type="button" onClick={closeEditDocumentModal}>
-                Hủy
+                {t("common.cancel")}
               </button>
               <button className="btn-primary" type="button" onClick={handleSaveEditDocument}>
-                <Pencil size={16} /> Lưu Thay Đổi
+                <Pencil size={16} /> {t("share.saveChanges")}
               </button>
             </div>
           </div>
@@ -10891,7 +11289,7 @@ function App() {
                 <div className="logout-confirm-icon">
                   <LogOut size={22} />
                 </div>
-                <h3 style={{ color: "var(--accent-primary)" }}>Xác nhận đăng xuất</h3>
+                <h3 style={{ color: "var(--accent-primary)" }}>{t("common.confirmLogoutTitle")}</h3>
               </div>
               <button
                 className="icon-btn"
@@ -10904,7 +11302,7 @@ function App() {
 
             <div className="modal-body">
               <p style={{ fontSize: "0.88rem", lineHeight: 1.5, color: "var(--text-primary)" }}>
-                Bạn có chắc muốn đăng xuất khỏi tài khoản <strong>{currentUser.name}</strong> không?
+                {t("common.confirmLogoutMessage", { name: currentUser.name })}
               </p>
 
               <div className="modal-footer">
@@ -10913,14 +11311,14 @@ function App() {
                   type="button"
                   onClick={() => setIsLogoutConfirmOpen(false)}
                 >
-                  Hủy bỏ
+                  {t("common.cancel")}
                 </button>
                 <button
                   className="btn-primary"
                   type="button"
                   onClick={() => void executeLogout()}
                 >
-                  <LogOut size={15} /> Đăng xuất
+                  <LogOut size={15} /> {t("common.logout")}
                 </button>
               </div>
             </div>
@@ -10949,11 +11347,11 @@ function App() {
               </div>
               <div className="modal-header-actions">
                 <button className="btn-secondary" type="button" onClick={() => void handleDuplicateWorkItem(viewingWorkItem)}>
-                  <Copy size={14} /> Nhân bản
+                  <Copy size={14} /> {t("ticketModal.duplicate")}
                 </button>
                 {isOwnWorkItem(viewingWorkItem) && (
                   <button className="btn-secondary" type="button" onClick={() => openEditWorkItemModal(viewingWorkItem)}>
-                    <Pencil size={14} /> Sửa
+                    <Pencil size={14} /> {t("ticketModal.edit")}
                   </button>
                 )}
                 <button className="icon-btn" type="button" onClick={closeWorkItemDetailModal}>
@@ -10965,37 +11363,37 @@ function App() {
             <div className="modal-body">
               <div className="workitem-detail-summary">
                 <div className={`summary-card priority-${viewingWorkItem.priority.toLowerCase()}`}>
-                  <span className="summary-label"><AlertTriangle size={12} /> Priority</span>
+                  <span className="summary-label"><AlertTriangle size={12} /> {t("ticketModal.priorityLabel")}</span>
                   <strong className="summary-value priority-badge">{WORK_ITEM_PRIORITY_LABEL[viewingWorkItem.priority]}</strong>
                 </div>
                 <div className="summary-card">
-                  <span className="summary-label"><UserIcon size={12} /> Người phụ trách</span>
+                  <span className="summary-label"><UserIcon size={12} /> {t("ticketModal.assignee")}</span>
                   <strong className="summary-value">{workItemAssigneeLabel(viewingWorkItem)}</strong>
                 </div>
                 <div className="summary-card">
-                  <span className="summary-label"><ShieldCheck size={12} /> Người tạo</span>
-                  <strong className="summary-value">{viewingWorkItem.createdByName ?? viewingWorkItem.createdBy?.name ?? viewingWorkItem.createdByEmail ?? "Không rõ"}</strong>
+                  <span className="summary-label"><ShieldCheck size={12} /> {t("ticketModal.creator")}</span>
+                  <strong className="summary-value">{viewingWorkItem.createdByName ?? viewingWorkItem.createdBy?.name ?? viewingWorkItem.createdByEmail ?? "N/A"}</strong>
                 </div>
                 <div className="summary-card">
-                  <span className="summary-label"><Calendar size={12} /> Ngày tạo</span>
+                  <span className="summary-label"><Calendar size={12} /> {t("ticketModal.createdDate")}</span>
                   <strong className="summary-value">{formatWorkItemDate(viewingWorkItem.createdAt)}</strong>
                 </div>
                 <div className="summary-card">
-                  <span className="summary-label"><Clock size={12} /> Hạn xử lý</span>
+                  <span className="summary-label"><Clock size={12} /> {t("ticketModal.dueDate")}</span>
                   <strong className="summary-value">{formatWorkItemDate(viewingWorkItem.dueDate)}</strong>
                 </div>
               </div>
 
               <div className="workitem-detail-block">
-                <label className="block-label"><FileText size={13} /> Mô tả công việc</label>
-                <div className="description-content">{viewingWorkItem.description || "Chưa có mô tả."}</div>
+                <label className="block-label"><FileText size={13} /> {t("ticketModal.description")}</label>
+                <div className="description-content">{viewingWorkItem.description || t("ticketModal.noDescription")}</div>
               </div>
 
               {viewingWorkItem.document && (
                 <div className="workitem-source-note">
                   <BookOpen size={15} />
                   <div>
-                    <span>Tài liệu đính kèm liên quan:</span>
+                    <span>{t("ticketModal.attachedDoc")}</span>
                     <strong>{viewingWorkItem.document.title}</strong>
                   </div>
                 </div>
@@ -11027,7 +11425,7 @@ function App() {
               )}
 
               <div className="workitem-detail-block">
-                <label>Ảnh / Video đính kèm</label>
+                <label>{t("ticketModal.attachments")}</label>
                 {(viewingWorkItem.attachments ?? []).length > 0 ? (
                   <div className="workitem-attachment-grid">
                     {(viewingWorkItem.attachments ?? []).map((attachment) => (
@@ -11044,20 +11442,20 @@ function App() {
                         ) : isVideoAttachment(attachment) ? (
                           <video src={attachment.url} controls />
                         ) : (
-                          <span>{attachment.name ?? "Mở link đính kèm"}</span>
+                          <span>{attachment.name ?? t("ticketModal.openAttachment")}</span>
                         )}
                       </a>
                     ))}
                   </div>
                 ) : (
-                  <div className="empty-collab-state">Chưa có ảnh hoặc video đính kèm.</div>
+                  <div className="empty-collab-state">{t("ticketModal.noAttachments")}</div>
                 )}
               </div>
 
               <div className="workitem-detail-block">
                 <div className="block-header-with-action">
                   <label className="block-label">
-                    <ActivityIcon size={13} /> Activity history
+                    <ActivityIcon size={13} /> {t("ticketModal.activityHistory")}
                     {workItemActivity.length > 0 && <span className="activity-count-badge">{workItemActivity.length}</span>}
                   </label>
                   {workItemActivity.length > 3 && (
@@ -11067,9 +11465,9 @@ function App() {
                       onClick={() => setShowAllWorkItemActivity((prev) => !prev)}
                     >
                       {showAllWorkItemActivity ? (
-                        <>Thu gọn <ChevronUp size={13} /></>
+                        <>{t("ticketModal.collapse")} <ChevronUp size={13} /></>
                       ) : (
-                        <>Xem tất cả ({workItemActivity.length}) <ChevronDown size={13} /></>
+                        <>{t("ticketModal.showAll", { count: workItemActivity.length })} <ChevronDown size={13} /></>
                       )}
                     </button>
                   )}
@@ -11077,16 +11475,16 @@ function App() {
 
                 <div className="workitem-activity-list">
                   {isLoadingWorkItemActivity ? (
-                    <div className="empty-collab-state">Đang tải lịch sử ticket...</div>
+                    <div className="empty-collab-state">{t("ticketModal.loadingActivity")}</div>
                   ) : workItemActivity.length === 0 ? (
-                    <div className="empty-collab-state">Chưa có lịch sử thay đổi cho ticket này.</div>
+                    <div className="empty-collab-state">{t("ticketModal.noActivity")}</div>
                   ) : (
                     (showAllWorkItemActivity ? workItemActivity : workItemActivity.slice(0, 3)).map((activity) => (
                       <div className="workitem-activity-row" key={activity.id}>
                         <span className="activity-dot"></span>
                         <div className="activity-row-content">
                           <strong>{workItemActivityLabel(activity)}</strong>
-                          <small>{activity.actor?.name ?? activity.actor?.email ?? "Hệ thống"} · {relativeDashboardTime(activity.createdAt)}</small>
+                          <small>{activity.actor?.name ?? activity.actor?.email ?? t("versions.system")} · {relativeDashboardTime(activity.createdAt)}</small>
                           {workItemActivityDetail(activity) && <small className="activity-detail-text">{workItemActivityDetail(activity)}</small>}
                         </div>
                       </div>
@@ -11098,8 +11496,8 @@ function App() {
               <div className="workitem-comments-section">
                 <div className="section-subheader">
                   <div>
-                    <h4>Comment & trả lời</h4>
-                    <p>Trao đổi xử lý ticket này.</p>
+                    <h4>{t("ticketModal.commentsTitle")}</h4>
+                    <p>{t("ticketModal.commentsSub")}</p>
                   </div>
                 </div>
 
@@ -11120,12 +11518,12 @@ function App() {
                         setActiveWorkItemMentionTarget(getMentionTrigger(text) ? "comment" : null);
                       }}
                       onBlur={() => window.setTimeout(() => setActiveWorkItemMentionTarget(null), 150)}
-                      data-placeholder="Nhập comment... Gõ @ để mention người xử lý"
+                      data-placeholder={t("ticketModal.commentPlaceholder")}
                     />
                     {renderWorkItemMentionMenu("comment")}
                   </div>
                   <button className="btn-primary" type="button" onClick={() => void handleAddWorkItemComment()}>
-                    <Send size={14} /> Gửi
+                    <Send size={14} /> {t("ticketModal.send")}
                   </button>
                 </div>
 
@@ -11133,7 +11531,7 @@ function App() {
                   {groupedWorkItemComments().map((comment) => renderWorkItemCommentThread(comment))}
 
                   {groupedWorkItemComments().length === 0 && (
-                    <div className="empty-collab-state">Chưa có comment nào cho ticket này.</div>
+                    <div className="empty-collab-state">{t("ticketModal.noComments")}</div>
                   )}
                 </div>
               </div>
@@ -11152,8 +11550,8 @@ function App() {
                   <SlidersHorizontal size={20} />
                 </div>
                 <div>
-                  <h3>Tùy chỉnh Workboard</h3>
-                  <p className="modal-subtitle">{selectedProject.code} • Cấu hình cột Kanban theo project</p>
+                  <h3>{t("workboardConfig.title")}</h3>
+                  <p className="modal-subtitle">{t("workboardConfig.subtitle", { code: selectedProject.code })}</p>
                 </div>
               </div>
               <button className="icon-btn" type="button" onClick={closeWorkboardConfigModal}>
@@ -11197,19 +11595,19 @@ function App() {
                         <GripVertical size={14} className="wbcfg-grip-icon" />
                         <span className="wbcfg-order-num">{index + 1}</span>
                         <div className="wbcfg-color-dot" style={{ background: draft.color }} />
-                        <span className="wbcfg-card-title">{draft.name || "Cột mới"}</span>
+                        <span className="wbcfg-card-title">{draft.name || t("workboardConfig.newColumn")}</span>
                       </div>
                       <div className="wbcfg-card-actions">
-                        <button className="wbcfg-move-btn" type="button" onClick={() => moveWorkboardColumnDraft(index, -1)} disabled={index === 0} title="Di chuyển lên">
+                        <button className="wbcfg-move-btn" type="button" onClick={() => moveWorkboardColumnDraft(index, -1)} disabled={index === 0} title={t("workboardConfig.moveUp")}>
                           <ChevronUp size={14} />
                         </button>
-                        <button className="wbcfg-move-btn" type="button" onClick={() => moveWorkboardColumnDraft(index, 1)} disabled={index === workboardColumnDrafts.length - 1} title="Di chuyển xuống">
+                        <button className="wbcfg-move-btn" type="button" onClick={() => moveWorkboardColumnDraft(index, 1)} disabled={index === workboardColumnDrafts.length - 1} title={t("workboardConfig.moveDown")}>
                           <ChevronDown size={14} />
                         </button>
                         <button
                           className="wbcfg-move-btn wbcfg-delete-btn"
                           type="button"
-                          title="Xóa cột"
+                          title={t("workboardConfig.deleteCol")}
                           onClick={() => requestRemoveWorkboardColumn(index)}
                           disabled={workboardColumnDrafts.length <= 1}
                         >
@@ -11219,16 +11617,16 @@ function App() {
                     </div>
                     <div className="wbcfg-card-body">
                       <div className="wbcfg-field wbcfg-field-name">
-                        <label>Tên cột</label>
+                        <label>{t("workboardConfig.colName")}</label>
                         <input
                           className="form-input"
                           value={draft.name}
                           onChange={(event) => updateWorkboardColumnDraft(index, { name: event.target.value })}
-                          placeholder="Tên hiển thị..."
+                          placeholder={t("workboardConfig.colNamePlaceholder")}
                         />
                       </div>
                       <div className="wbcfg-field wbcfg-field-color">
-                        <label>Màu</label>
+                        <label>{t("workboardConfig.color")}</label>
                         <div className="wbcfg-color-wrapper">
                           <input
                             type="color"
@@ -11238,7 +11636,7 @@ function App() {
                         </div>
                       </div>
                       <div className="wbcfg-field wbcfg-field-type">
-                        <label>Nhóm trạng thái</label>
+                        <label>{t("workboardConfig.statusGroup")}</label>
                         <div className="custom-form-select-wrapper" style={{ position: "relative" }}>
                           <button
                             type="button"
@@ -11246,7 +11644,7 @@ function App() {
                             onClick={() => setWbcfgOpenDropdown(wbcfgOpenDropdown === index ? null : index)}
                           >
                             <span className="trigger-label-text">
-                              {WORKBOARD_COLUMN_TYPE_OPTIONS.find((o) => o.value === draft.type)?.label ?? "Chọn..."}
+                              {WORKBOARD_COLUMN_TYPE_OPTIONS.find((o) => o.value === draft.type)?.label ?? "..."}
                             </span>
                             <ChevronDown size={14} className={`trigger-arrow-icon${wbcfgOpenDropdown === index ? " rotate" : ""}`} />
                           </button>
@@ -11283,7 +11681,7 @@ function App() {
                             checked={draft.isDefault}
                             onChange={(event) => updateWorkboardColumnDraft(index, { isDefault: event.target.checked })}
                           />
-                          Mặc định
+                          {t("workboardConfig.default")}
                         </label>
                         <label className={`wbcfg-pill${draft.isDone ? " active" : ""}`}>
                           <input
@@ -11299,15 +11697,15 @@ function App() {
                 ))}
               </div>
               <button className="wbcfg-add-btn" type="button" onClick={addWorkboardColumnDraft}>
-                <Plus size={15} /> Thêm cột mới
+                <Plus size={15} /> {t("workboardConfig.addColumn")}
               </button>
             </div>
             <div className="modal-footer">
               <button className="btn-secondary" type="button" onClick={closeWorkboardConfigModal} disabled={isSavingWorkboardColumns}>
-                Hủy
+                {t("common.cancel")}
               </button>
               <button className="btn-primary" type="button" onClick={() => void handleSaveWorkboardColumns()} disabled={isSavingWorkboardColumns}>
-                {isSavingWorkboardColumns ? <><Loader2 className="spin-icon" size={15} /> Đang lưu...</> : <><CheckCircle2 size={15} /> Lưu board</>}
+                {isSavingWorkboardColumns ? <><Loader2 className="spin-icon" size={15} /> {t("common.saving")}</> : <><CheckCircle2 size={15} /> {t("workboardConfig.saveBoard")}</>}
               </button>
             </div>
 
@@ -11318,14 +11716,14 @@ function App() {
                   <div className="wbcfg-confirm-icon">
                     <Trash2 size={22} />
                   </div>
-                  <h4>Xóa cột "{workboardColumnDrafts[pendingDeleteColumnIndex]?.name || "Cột mới"}"?</h4>
-                  <p>Cột này sẽ bị xóa khỏi board. Các ticket trong cột cần được di chuyển trước khi lưu.</p>
+                  <h4>{t("workboardConfig.confirmDeleteTitle", { name: workboardColumnDrafts[pendingDeleteColumnIndex]?.name || t("workboardConfig.newColumn") })}</h4>
+                  <p>{t("workboardConfig.confirmDeleteSub")}</p>
                   <div className="wbcfg-confirm-actions">
                     <button className="btn-secondary" type="button" onClick={cancelRemoveWorkboardColumn}>
-                      Giữ lại
+                      {t("workboardConfig.keep")}
                     </button>
                     <button className="wbcfg-confirm-delete-btn" type="button" onClick={confirmRemoveWorkboardColumn}>
-                      <Trash2 size={14} /> Xóa cột
+                      <Trash2 size={14} /> {t("workboardConfig.deleteColBtn")}
                     </button>
                   </div>
                 </div>
@@ -11344,8 +11742,8 @@ function App() {
                   <FolderKanban size={20} />
                 </div>
                 <div>
-                  <h3>{workItemDraft.id ? "Cập nhật ticket" : "Tạo ticket mới"}</h3>
-                  <p className="modal-subtitle">{selectedProject.code} • Task, bug, review và thay đổi phát sinh</p>
+                  <h3>{workItemDraft.id ? t("ticketModal.updateTicketTitle") : t("ticketModal.createTicketTitle")}</h3>
+                  <p className="modal-subtitle">{t("ticketModal.ticketSub", { code: selectedProject.code })}</p>
                 </div>
               </div>
               <button className="icon-btn" type="button" onClick={closeWorkItemModal}>
@@ -11356,13 +11754,13 @@ function App() {
               {/* Primary Title Field */}
               <div className="workitem-title-field">
                 <label>
-                  <PenLine size={13} /> Tiêu đề ticket <span style={{ color: "#ef4444" }}>*</span>
+                  <PenLine size={13} /> {t("ticketModal.titleLabel")} <span style={{ color: "#ef4444" }}>*</span>
                 </label>
                 <input
                   className={`form-input ${modalFieldErrors.ticketTitle ? "has-error" : ""}`}
                   value={workItemDraft.title}
                   onChange={(event) => { setWorkItemDraft({ ...workItemDraft, title: event.target.value }); setModalFieldErrors((prev) => { const { ticketTitle: _, ...rest } = prev; return rest; }); }}
-                  placeholder="Ví dụ: Sửa validation ngày hết hạn"
+                  placeholder={t("ticketModal.titlePlaceholder")}
                   autoFocus
                 />
                 {modalFieldErrors.ticketTitle && (
@@ -11373,7 +11771,7 @@ function App() {
               {/* 2-Column Property Grid */}
               <div className="workitem-form-grid">
                 <div className="form-group">
-                  <label><Tags size={13} /> Loại item</label>
+                  <label><Tags size={13} /> {t("ticketModal.typeLabel")}</label>
                   <CustomFormSelect
                     value={workItemDraft.type}
                     onChange={(val) => setWorkItemDraft({ ...workItemDraft, type: val })}
@@ -11385,7 +11783,7 @@ function App() {
                 </div>
 
                 <div className="form-group">
-                  <label><FolderKanban size={13} /> Trạng thái</label>
+                  <label><FolderKanban size={13} /> {t("ticketModal.statusLabel")}</label>
                   <CustomFormSelect
                     value={workItemDraft.columnId}
                     onChange={(colId) => {
@@ -11404,7 +11802,7 @@ function App() {
                 </div>
 
                 <div className="form-group">
-                  <label><AlertTriangle size={13} /> Priority</label>
+                  <label><AlertTriangle size={13} /> {t("ticketModal.priorityLabel")}</label>
                   <CustomFormSelect
                     value={workItemDraft.priority}
                     onChange={(pri) => setWorkItemDraft({ ...workItemDraft, priority: pri })}
@@ -11416,7 +11814,7 @@ function App() {
                 </div>
 
                 <div className="form-group">
-                  <label><Calendar size={13} /> Hạn xử lý</label>
+                  <label><Calendar size={13} /> {t("ticketModal.dueDateLabel")}</label>
                   <CustomDatePicker
                     value={workItemDraft.dueDate}
                     onChange={(val) => setWorkItemDraft({ ...workItemDraft, dueDate: val })}
@@ -11424,12 +11822,12 @@ function App() {
                 </div>
 
                 <div className="form-group">
-                  <label><FileText size={13} /> Tài liệu liên quan</label>
+                  <label><FileText size={13} /> {t("ticketModal.relatedDoc")}</label>
                   <CustomFormSelect
                     value={workItemDraft.documentId ?? ""}
                     onChange={(docId) => setWorkItemDraft({ ...workItemDraft, documentId: docId })}
                     options={[
-                      { value: "", label: "Không gắn tài liệu" },
+                      { value: "", label: t("ticketModal.noDocAttached") },
                       ...projectDeployedDocuments.map((doc) => ({
                         value: doc.id,
                         label: doc.title
@@ -11439,7 +11837,7 @@ function App() {
                 </div>
 
                 <div className="form-group">
-                  <label><UserCheck size={13} /> Người phụ trách</label>
+                  <label><UserCheck size={13} /> {t("ticketModal.assigneeLabel")}</label>
                   <div className="workitem-assignee-select" ref={workItemAssigneeDropdownRef}>
                     <button
                       className="workitem-assignee-summary"
@@ -11449,7 +11847,7 @@ function App() {
                       <span>
                         {selectedWorkItemAssignees.length > 0
                           ? selectedWorkItemAssignees.join(", ")
-                          : "Chọn người phụ trách"}
+                          : t("ticketModal.selectAssignee")}
                       </span>
                       <ChevronDown size={15} />
                     </button>
@@ -11468,14 +11866,14 @@ function App() {
                                 <strong>{member.name}</strong>
                                 <small>
                                   {member.email}
-                                  {!isProjectAssigneeOption(member) ? " · Quyền tài liệu" : ""}
+                                  {!isProjectAssigneeOption(member) ? ` · ${t("ticketModal.docPermission")}` : ""}
                                 </small>
                               </span>
                             </label>
                           );
                         })}
                         {workItemAssigneeOptions.length === 0 && (
-                          <div className="workitem-assignee-empty">Dự án chưa có thành viên có thể gán.</div>
+                          <div className="workitem-assignee-empty">{t("ticketModal.noAssignees")}</div>
                         )}
                       </div>
                     )}
@@ -11486,14 +11884,14 @@ function App() {
               {/* Description */}
               <div className="form-group">
                 <label style={{ fontSize: "0.72rem", fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
-                  <FileText size={13} /> Mô tả công việc
+                  <FileText size={13} /> {t("ticketModal.description")}
                 </label>
                 <textarea
                   className="form-textarea"
                   rows={4}
                   value={workItemDraft.description}
                   onChange={(event) => setWorkItemDraft({ ...workItemDraft, description: event.target.value })}
-                  placeholder="Mô tả chi tiết nội dung cần xử lý..."
+                  placeholder={t("ticketModal.descPlaceholder")}
                 />
               </div>
 
@@ -11505,7 +11903,7 @@ function App() {
                     rows={2}
                     value={workItemDraft.labelsText}
                     onChange={(event) => setWorkItemDraft({ ...workItemDraft, labelsText: event.target.value })}
-                    placeholder="Frontend, API, UAT..."
+                    placeholder={t("ticketModal.labelsPlaceholder")}
                   />
                 </div>
                 <div className="form-group">
@@ -11515,7 +11913,7 @@ function App() {
                     rows={2}
                     value={workItemDraft.checklistText}
                     onChange={(event) => setWorkItemDraft({ ...workItemDraft, checklistText: event.target.value })}
-                    placeholder="[ ] Việc cần làm&#10;[x] Việc đã xong"
+                    placeholder={t("ticketModal.checklistPlaceholder")}
                   />
                 </div>
               </div>
@@ -11523,12 +11921,12 @@ function App() {
               {/* Attachments Section Box */}
               <div className="workitem-attachments-box">
                 <label style={{ fontSize: "0.72rem", fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: "0.04em", display: "flex", alignItems: "center", gap: 6 }}>
-                  <Paperclip size={13} /> Ảnh / Video đính kèm
+                  <Paperclip size={13} /> {t("ticketModal.attachments")}
                 </label>
                 <div className="workitem-upload-row" style={{ margin: 0 }}>
                   <label className={`workitem-upload-btn ${isUploadingWorkItemAttachment ? "disabled" : ""}`}>
                     <UploadCloud size={14} />
-                    {isUploadingWorkItemAttachment ? "Đang upload..." : "Upload tệp đính kèm"}
+                    {isUploadingWorkItemAttachment ? t("ticketModal.uploading") : t("ticketModal.uploadBtn")}
                     <input
                       type="file"
                       accept="image/*,video/mp4,video/webm,video/quicktime"
@@ -11540,30 +11938,30 @@ function App() {
                       }}
                     />
                   </label>
-                  <small style={{ color: "#64748b", fontSize: "0.72rem" }}>URL sau khi upload sẽ tự động chèn bên dưới.</small>
+                  <small style={{ color: "#64748b", fontSize: "0.72rem" }}>{t("ticketModal.uploadHelper")}</small>
                 </div>
                 <textarea
                   className="form-textarea"
                   rows={2}
                   value={workItemDraft.attachmentsText}
                   onChange={(event) => setWorkItemDraft({ ...workItemDraft, attachmentsText: event.target.value })}
-                  placeholder="Dán URL ảnh hoặc video, mỗi dòng một file..."
+                  placeholder={t("ticketModal.attachmentsPlaceholder")}
                 />
-                <small className="field-helper" style={{ color: "#94a3b8", fontSize: "0.7rem", margin: 0 }}>Hỗ trợ preview ảnh (.png, .jpg, .webp) và video (.mp4, .webm, .mov).</small>
+                <small className="field-helper" style={{ color: "#94a3b8", fontSize: "0.7rem", margin: 0 }}>{t("ticketModal.attachmentsHelper")}</small>
               </div>
             </div>
             <div className="modal-footer">
               <button className="btn-secondary" type="button" disabled={isSavingWorkItem} onClick={closeWorkItemModal}>
-                Hủy
+                {t("common.cancel")}
               </button>
               <button className="btn-primary" type="button" disabled={isSavingWorkItem} onClick={() => void handleSaveWorkItem()}>
                 {isSavingWorkItem ? (
                   <>
-                    <Loader2 className="spin-icon" size={15} /> {workItemDraft.id ? "Đang cập nhật..." : "Đang lưu..."}
+                    <Loader2 className="spin-icon" size={15} /> {workItemDraft.id ? t("ticketModal.updating") : t("common.saving")}
                   </>
                 ) : (
                   <>
-                    <CheckCircle2 size={15} /> {workItemDraft.id ? "Cập nhật ticket" : "Lưu ticket"}
+                    <CheckCircle2 size={15} /> {workItemDraft.id ? t("ticketModal.updatingTicketBtn") : t("ticketModal.saveTicketBtn")}
                   </>
                 )}
               </button>
@@ -11572,6 +11970,7 @@ function App() {
         </div>
       )}
 
+      {/* Modal 5: Confirmation Delete Popup Modal */}
       {/* Modal 5: Confirmation Delete Popup Modal */}
       {confirmDeleteModal.isOpen && (
         <div className="modal-backdrop">
@@ -11603,14 +12002,14 @@ function App() {
                   type="button"
                   onClick={() => setConfirmDeleteModal({ isOpen: false, type: null, id: null, title: "", message: "" })}
                 >
-                  Hủy bỏ
+                  {t("common.cancel")}
                 </button>
                 <button
                   className="btn-danger"
                   type="button"
                   onClick={executeConfirmDelete}
                 >
-                  <Trash2 size={15} /> Xóa Vĩnh Viễn
+                  <Trash2 size={15} /> {t("confirmDelete.deletePermanently")}
                 </button>
               </div>
             </div>
@@ -11623,7 +12022,7 @@ function App() {
         <div className="modal-backdrop">
           <div className="modal-content import-modal-content import-file-modal">
             <div className="modal-header">
-              <h3>Import tệp vào Dự Án</h3>
+              <h3>{t("importModal.title")}</h3>
               <button
                 className="icon-btn"
                 type="button"
@@ -11637,7 +12036,7 @@ function App() {
               {/* Project Target Dropdown Selector */}
               <div className="form-group">
                 <label style={{ fontWeight: 700, color: "var(--accent-primary)" }}>
-                  Chọn Dự Án Đích để Import vào:
+                  {t("importModal.targetProject")}
                 </label>
                 <CustomProjectSelect
                   projects={projectsList}
@@ -11648,7 +12047,7 @@ function App() {
               </div>
 
               <div className="form-group">
-                <label style={{ fontWeight: 700, color: "var(--text-primary)" }}>Cách xử lý file import</label>
+                <label style={{ fontWeight: 700, color: "var(--text-primary)" }}>{t("importModal.handlingMode")}</label>
                 <div className="import-mode-grid">
                   <button
                     type="button"
@@ -11656,8 +12055,8 @@ function App() {
                     disabled={isImporting}
                     onClick={() => setImportMode("create")}
                   >
-                    <strong>Tạo tài liệu mới</strong>
-                    <small>File import sẽ xuất hiện như một tài liệu riêng trong dự án.</small>
+                    <strong>{t("importModal.createTitle")}</strong>
+                    <small>{t("importModal.createSub")}</small>
                   </button>
                   <button
                     type="button"
@@ -11665,8 +12064,8 @@ function App() {
                     disabled={isImporting || !importTargetDocuments.length}
                     onClick={() => setImportMode("update")}
                   >
-                    <strong>Cập nhật tài liệu đang có</strong>
-                    <small>Thay nội dung HTML, giữ nguyên comment và lịch sử tài liệu.</small>
+                    <strong>{t("importModal.updateTitle")}</strong>
+                    <small>{t("importModal.updateSub")}</small>
                   </button>
                 </div>
               </div>
@@ -11674,7 +12073,7 @@ function App() {
               {importMode === "update" && (
                 <div className="form-group">
                   <label style={{ fontWeight: 700, color: "var(--text-primary)" }}>
-                    Chọn tài liệu cần cập nhật:
+                    {t("importModal.selectUpdateDoc")}
                   </label>
                   <CustomFormSelect
                     value={importTargetDocumentId}
@@ -11691,7 +12090,7 @@ function App() {
               {importMode === "create" && (
                 <div className="form-group">
                   <label style={{ fontWeight: 700, color: "var(--text-primary)" }}>
-                    Loại tài liệu sau khi import:
+                    {t("importModal.docTypeAfterImport")}
                   </label>
                   <CustomFormSelect
                     value={importDocType}
@@ -11731,10 +12130,10 @@ function App() {
                 </div>
                 <div>
                   <strong style={{ fontSize: "0.95rem" }}>
-                    {isImporting ? "Đang import tài liệu..." : "Kéo & thả tệp vào đây hoặc Click để chọn"}
+                    {isImporting ? t("importModal.dropzoneActive") : t("importModal.dropzoneIdle")}
                   </strong>
                   <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 4 }}>
-                    {isImporting ? importStatusText : "Hỗ trợ định dạng `.md`, `.doc`, `.docx`, `.pdf`"}
+                    {isImporting ? importStatusText : t("importModal.supportedFormats")}
                   </p>
                 </div>
               </label>
@@ -11743,17 +12142,17 @@ function App() {
                 <div className="import-progress-panel" role="status" aria-live="polite">
                   <div className="import-progress-header">
                     <span className="import-spinner" />
-                    <strong>Đang xử lý, vui lòng giữ nguyên cửa sổ</strong>
+                    <strong>{t("importModal.progressHeader")}</strong>
                   </div>
                   <div className="import-progress-bar">
                     <span />
                   </div>
-                  <p>{importStatusText || "Đang upload, chuyển đổi HTML và lưu vào Neon..."}</p>
+                  <p>{importStatusText || t("importModal.progressDefaultText")}</p>
                 </div>
               )}
 
               <div style={{ background: "var(--bg-surface)", padding: 12, borderRadius: 8, fontSize: "0.78rem", color: "var(--text-secondary)" }}>
-                <strong>Quy trình:</strong> Tệp được chọn sẽ được tự động chuyển đổi sang giao diện đọc chuẩn để team xem và thảo luận comment trực tiếp.
+                <strong>{t("importModal.workflowTitle")}</strong> {t("importModal.workflowSub")}
               </div>
             </div>
           </div>
@@ -11786,8 +12185,8 @@ function App() {
                   <ListChecks size={20} />
                 </div>
                 <div>
-                  <h3>Việc cần làm</h3>
-                  <p className="modal-subtitle">{myTasksList.length} công việc đang chờ xử lý</p>
+                  <h3>{t("myTasks.title")}</h3>
+                  <p className="modal-subtitle">{t("myTasks.pendingCount", { count: myTasksList.length })}</p>
                 </div>
               </div>
               <button className="icon-btn" type="button" onClick={() => setIsMyTasksPopupOpen(false)}>
@@ -11798,19 +12197,19 @@ function App() {
               {isLoadingMyTasks ? (
                 <div className="my-tasks-loading">
                   <Loader2 className="spin-icon" size={24} />
-                  <span>Đang tải công việc...</span>
+                  <span>{t("myTasks.loading")}</span>
                 </div>
               ) : myTasksList.length === 0 ? (
                 <div className="my-tasks-empty">
                   <CheckCircle2 size={40} />
-                  <p>Không có việc cần làm 🎉</p>
-                  <small>Bạn đã hoàn thành tất cả công việc!</small>
+                  <p>{t("myTasks.emptyTitle")}</p>
+                  <small>{t("myTasks.emptySub")}</small>
                 </div>
               ) : (
                 <div className="my-tasks-list">
                   {myTasksList.map((task) => {
                     const dueState = getWorkItemDueState(task);
-                    const dueStateLabel = dueState === "expired" ? "Hết hạn" : dueState === "due-soon" ? "Sắp hết hạn" : "";
+                    const dueStateLabel = dueState === "expired" ? t("myTasks.expired") : dueState === "due-soon" ? t("myTasks.dueSoon") : "";
                     const priorityClass = `priority-${task.priority.toLowerCase()}`;
                     const projectName = (task as any).project?.name ?? '';
                     return (
@@ -11831,7 +12230,7 @@ function App() {
                             {task.dueDate && (
                               <span className={`my-tasks-due ${dueState !== "normal" ? dueState : ""}`}>
                                 <Calendar size={12} />
-                                {new Date(task.dueDate).toLocaleDateString('vi-VN')}
+                                {new Date(task.dueDate).toLocaleDateString(i18n.language === "en" ? "en-US" : "vi-VN")}
                               </span>
                             )}
                             {dueStateLabel && <span className={`my-tasks-due-badge ${dueState}`}>{dueStateLabel}</span>}
@@ -11846,12 +12245,14 @@ function App() {
             </div>
             <div className="modal-footer">
               <button className="btn-secondary" type="button" onClick={() => setIsMyTasksPopupOpen(false)}>
-                Đóng
+                {t("common.close")}
               </button>
             </div>
           </div>
         </div>
       )}
+
+
 
       {/* Floating Toast Notifications */}
       <div className="toast-container">

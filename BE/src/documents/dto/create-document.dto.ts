@@ -16,6 +16,11 @@ export class CreateDocumentDto {
   htmlContent: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(12)
+  language?: string;
+
+  @IsOptional()
   @IsIn(["manual", "template", "imported"])
   sourceType?: string;
 

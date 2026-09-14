@@ -17,4 +17,9 @@ export class ImportDocumentDto {
   @IsString()
   @MaxLength(40)
   type?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(12)
+  language?: string;
 }
