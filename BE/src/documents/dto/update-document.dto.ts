@@ -13,6 +13,11 @@ export class UpdateDocumentDto {
   type?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(12)
+  language?: string;
+
+  @IsOptional()
   @IsEnum(DocumentStatus)
   status?: DocumentStatus;
 

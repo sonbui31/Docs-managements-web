@@ -1,5 +1,6 @@
 export type DocumentStatus = "Draft" | "Triển khai";
 export type DocumentSourceType = "manual" | "template" | "imported";
+export type DocumentLanguage = "vi" | "en" | string;
 export type ProjectRole = "VIEWER" | "REVIEWER" | "EDITOR" | "MANAGER";
 
 export type DocumentEditingSession = {
@@ -39,6 +40,7 @@ export type ProjectDocument = {
   ownerId?: string | null;
   status: DocumentStatus;
   sourceType?: DocumentSourceType;
+  language?: DocumentLanguage;
   effectiveRole?: ProjectRole | null;
   editingSession?: DocumentEditingSession | null;
   version: string;

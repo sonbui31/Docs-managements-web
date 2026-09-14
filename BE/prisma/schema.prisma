@@ -123,6 +123,7 @@ model Document {
   type                 String
   status               DocumentStatus       @default(DRAFT)
   currentVersion       String               @default("v0.1")
+  language             String               @default("vi")
   htmlContent          String
   sourceType           String               @default("manual")
   sourceFileName       String?
@@ -133,6 +134,7 @@ model Document {
   createdByEmail       String?
   editingSession       DocumentEditingSession?
   versions             DocumentVersion[]
+  translations         DocumentTranslation[]
   comments             Comment[]
   mediaAssets          MediaAsset[]
   requirementTags      RequirementTag[]
@@ -282,12 +284,31 @@ model DocumentVersion {
   documentId  String
   document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   version     String
+  language    String   @default("vi")
   htmlContent String
   changeNote  String?
   createdBy   String?
   createdAt   DateTime @default(now())
 
   @@unique([documentId, version])
+}
+
+model DocumentTranslation {
+  id            String   @id @default(cuid())
+  documentId    String
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  language      String
+  title         String
+  htmlContent   String
+  sourceVersion String
+  status        String   @default("DRAFT")
+  createdBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([documentId, language])
+  @@index([documentId])
+  @@index([language])
 }
 
 model Comment {

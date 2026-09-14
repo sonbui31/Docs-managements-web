@@ -2,6 +2,7 @@ import type {
   ActivityLog,
   CommentThread,
   DocumentCommentContext,
+  DocumentLanguage,
   DocumentStatus,
   DocumentTemplate,
   DocumentVersion,
@@ -51,6 +52,7 @@ type BackendDocument = {
   projectId: string;
   title: string;
   type: string;
+  language?: DocumentLanguage | null;
   status: "DRAFT" | "IN_REVIEW" | "CHANGES_REQUESTED" | "DEPLOYED" | "APPROVED" | "SIGNED_OFF" | "ARCHIVED";
   currentVersion: string;
   htmlContent: string;
@@ -174,6 +176,7 @@ export function mapDocument(document: BackendDocument): ProjectDocument {
     id: document.id,
     title,
     type: document.type,
+    language: document.language ?? "vi",
     owner: importOwner || (document.sourceType === "imported" ? "Người import tài liệu" : "Người tạo tài liệu"),
     ownerId: document.ownerId ?? null,
     status: mapDocumentStatus(document.status),
@@ -304,6 +307,7 @@ export async function createDocument(payload: {
   projectId: string;
   title: string;
   type: string;
+  language?: DocumentLanguage;
   htmlContent: string;
 }) {
   const document = await apiFetch<BackendDocument>("/documents", {
@@ -318,6 +322,7 @@ export async function updateDocument(
   payload: Partial<{
     title: string;
     type: string;
+    language: DocumentLanguage;
     status: DocumentStatus;
     expectedUpdatedAt: string;
     expectedVersion: string;
@@ -385,12 +390,13 @@ export async function restoreDocumentVersion(documentId: string, versionId: stri
   return mapDocument(document);
 }
 
-export async function importDocument(file: File, projectId: string, documentId?: string, type?: string) {
+export async function importDocument(file: File, projectId: string, documentId?: string, type?: string, language?: DocumentLanguage) {
   const body = new FormData();
   body.append("file", file);
   body.append("projectId", projectId);
   if (documentId) body.append("documentId", documentId);
   if (type) body.append("type", type);
+  if (language) body.append("language", language);
 
   const document = await apiFetch<BackendDocument>("/imports/documents", {
     method: "POST",

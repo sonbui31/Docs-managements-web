@@ -11,7 +11,7 @@ const defaultColumns = [
   { key: "BACKLOG", name: "Backlog", color: "#64748b", type: "OPEN", position: 0, isDefault: true, isDone: false },
   { key: "TODO", name: "To Do", color: "#3b82f6", type: "OPEN", position: 1, isDefault: false, isDone: false },
   { key: "IN_PROGRESS", name: "In Progress", color: "#f59e0b", type: "IN_PROGRESS", position: 2, isDefault: false, isDone: false },
-  { key: "REVIEW", name: "Review / QA", color: "#8b5cf6", type: "REVIEW", position: 3, isDefault: false, isDone: false },
+  { key: "REVIEW", name: "QA/Test", color: "#8b5cf6", type: "REVIEW", position: 3, isDefault: false, isDone: false },
   { key: "BLOCKED", name: "Blocked", color: "#ef4444", type: "BLOCKED", position: 4, isDefault: false, isDone: false },
   { key: "DONE", name: "Done", color: "#10b981", type: "DONE", position: 5, isDefault: false, isDone: true }
 ] satisfies Array<{
@@ -112,7 +112,13 @@ export class WorkboardColumnsService {
 
   async ensureDefaultColumns(projectId: string) {
     const count = await this.prisma.workboardColumn.count({ where: { projectId } });
-    if (count > 0) return;
+    if (count > 0) {
+      await this.prisma.workboardColumn.updateMany({
+        where: { projectId, key: "REVIEW", name: "Review / QA" },
+        data: { name: "QA/Test" }
+      });
+      return;
+    }
     await this.prisma.workboardColumn.createMany({
       data: defaultColumns.map((column) => ({ ...column, projectId }))
     });
