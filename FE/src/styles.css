@@ -24726,9 +24726,27 @@ html[data-theme="dark"] .tiptap.ProseMirror {
 
 /* 3. Dashboard UI Fixes */
 html[data-theme="dark"] .dash-list-icon {
-  background: #1f2a3d !important;
-  color: #94a3b8 !important;
-  border: 1px solid #26354d !important;
+  background: rgba(99, 102, 241, 0.16) !important;
+  color: #c7d2fe !important;
+  border: 1px solid rgba(99, 102, 241, 0.28) !important;
+}
+
+html[data-theme="dark"] .dash-list-sub {
+  background: rgba(99, 102, 241, 0.16) !important;
+  color: #c7d2fe !important;
+  border: 1px solid rgba(99, 102, 241, 0.28) !important;
+}
+
+html[data-theme="dark"] .dash-list-idx {
+  background: rgba(99, 102, 241, 0.16) !important;
+  color: #c7d2fe !important;
+  border: 1px solid rgba(99, 102, 241, 0.28) !important;
+}
+
+html[data-theme="dark"] .dash-list-row:hover .dash-list-sub,
+html[data-theme="dark"] .dash-list-row:hover .dash-list-idx {
+  background: rgba(99, 102, 241, 0.28) !important;
+  color: #ffffff !important;
 }
 
 html[data-theme="dark"] .dash-wl-bar-track {
